@@ -1,0 +1,18 @@
+{
+  "name": "ticket-loop",
+  "description": "Loop-engineering harness: take a ticket end-to-end (intake → frozen spec → TDD → verify → adversarial QA → evidence report) with guardrail hooks, human gates by blast radius, an attempt ledger, and cross-run memory. Stack-agnostic via a per-repo .agents/ticket-loop.config.json profile.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Syed Muhammad Rehan",
+    "email": "syedrehan55.rs@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "loop-engineering",
+    "spec-driven",
+    "autonomous-coding",
+    "tdd",
+    "code-review",
+    "workflow"
+  ]
+}

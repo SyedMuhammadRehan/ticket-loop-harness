@@ -1,0 +1,51 @@
+{
+  "//": "Copy to <repoRoot>/.agents/ticket-loop.config.json and edit for your stack. This is what makes ticket-loop work beyond Flutter/Figma. Three examples below — keep ONE.",
+
+  "//flutter-frontend": {
+    "stack": "flutter",
+    "ticketSource": "jira",
+    "designSource": "figma",
+    "verify": {
+      "analyze": "dart analyze",
+      "test": "flutter test --exclude-tags golden",
+      "pubGet": "flutter pub get",
+      "codegen": "dart run build_runner build --delete-conflicting-outputs"
+    },
+    "riskPaths": ["lib/ui/auth/**", "lib/data/services/api/**", "pubspec.yaml"],
+    "worktreePrefix": "../ticket-",
+    "buildResolverAgent": "dart-build-resolver",
+    "memoryFile": ".agents/ticket-loop-memory.md"
+  },
+
+  "//python-backend": {
+    "stack": "python",
+    "ticketSource": "github",
+    "designSource": "openapi",
+    "verify": {
+      "analyze": "ruff check . && mypy .",
+      "test": "pytest -q",
+      "pubGet": "pip install -e .",
+      "codegen": null
+    },
+    "riskPaths": ["**/migrations/**", "**/auth/**", "**/settings*.py", "pyproject.toml"],
+    "worktreePrefix": "../ticket-",
+    "buildResolverAgent": "django-build-resolver",
+    "memoryFile": ".agents/ticket-loop-memory.md"
+  },
+
+  "//go-service": {
+    "stack": "go",
+    "ticketSource": "gitlab",
+    "designSource": "none",
+    "verify": {
+      "analyze": "go vet ./...",
+      "test": "go test ./...",
+      "pubGet": "go mod download",
+      "codegen": "go generate ./..."
+    },
+    "riskPaths": ["**/auth/**", "**/migrations/**", "go.mod"],
+    "worktreePrefix": "../ticket-",
+    "buildResolverAgent": "go-build-resolver",
+    "memoryFile": ".agents/ticket-loop-memory.md"
+  }
+}

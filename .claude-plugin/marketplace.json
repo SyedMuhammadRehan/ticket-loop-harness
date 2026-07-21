@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ticket-loop-harness",
+  "description": "A loop-engineering harness for Claude Code — ticket to reviewed branch, stack-agnostic.",
+  "owner": {
+    "name": "Syed Muhammad Rehan",
+    "email": "syedrehan55.rs@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "ticket-loop",
+      "description": "Loop-engineering harness: ticket → frozen spec → TDD → verify → adversarial QA → evidence report, with guardrail hooks, human gates, an attempt ledger, and cross-run memory. Stack-agnostic via a per-repo profile.",
+      "author": { "name": "Syed Muhammad Rehan" },
+      "category": "workflow",
+      "source": {
+        "source": "directory",
+        "path": "./plugins/ticket-loop"
+      }
+    }
+  ]
+}

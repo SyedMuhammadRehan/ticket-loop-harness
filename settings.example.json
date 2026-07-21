@@ -1,0 +1,28 @@
+{
+  "//": "Merge this 'hooks' block into your .claude/settings.json (or settings.local.json). Do NOT copy this whole file over an existing settings file — merge only the hooks key.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/dart_post_edit.js", "timeout": 120 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/freeze_guard.js", "timeout": 15 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/stop_gate.js", "timeout": 300 }
+        ]
+      }
+    ]
+  }
+}

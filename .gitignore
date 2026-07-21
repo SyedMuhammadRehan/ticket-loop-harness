@@ -1,0 +1,11 @@
+# ticket-loop run state — never commit
+.agents/ticket-runs/
+.claude/hooks/state/
+
+# local Claude settings (machine-specific; may hold permission allowlists)
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+*.log
+node_modules/
