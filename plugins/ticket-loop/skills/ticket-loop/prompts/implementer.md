@@ -8,6 +8,9 @@ You implement ONE slice inside the worktree at {WORKTREE_PATH}. Work ONLY there.
 ## Contract (read-only — you may not change these)
 {DONE_LIST}
 
+## Existing-code context (build WITH the grain of this — conventions, patterns, files)
+{CODEBASE_MAP}
+
 ## Design values (use EXACTLY these; no guessed hex/sizes)
 {DESIGN_EXCERPT}
 

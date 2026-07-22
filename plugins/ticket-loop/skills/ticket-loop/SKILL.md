@@ -10,11 +10,6 @@ You are the ORCHESTRATOR. You dispatch subagents; you do not implement code your
 Autonomy: hands-off. Never ask "should I continue?" — the loop policy decides. Ask a human
 ONLY at the gates defined below.
 
-**`<SKILL_DIR>`** below = this skill's own base directory (Claude Code shows it as
-"Base directory for this skill: …" when the skill loads). Substitute that absolute path
-wherever you see `<SKILL_DIR>` — this makes the scripts resolve whether the harness is
-installed as a plugin, globally in `~/.claude/`, or copied into a single repo.
-
 **Run constants:** STRIKES_PER_CLASS=3, MAX_REPLANS=2, MAX_DISPATCHES=25.
 **Working directory rule:** run every script/tool invocation from the MAIN repo root; reach the worktree via 'git -C' or absolute paths — never cd into it.
 **Failure classes:** BUILD, TEST, TOKEN, RUNTIME, QA_BLOCK, GOLDEN_UPDATE_REQUIRED, FLAKY_VERIFIER.
@@ -117,6 +112,34 @@ rather than assuming Flutter.
    append to `assumptions.md` immediately, format:
    `- Q: <question you would have asked> → default: <what you chose> (risk: low)`
 
+## Stage 1.5 — SURVEY (understand the existing code, PROPORTIONALLY)
+
+Learn the slice of the codebase the ticket touches so the loop builds WITH the grain of
+the existing architecture/conventions — not a fresh-repo guess. Scale the effort to blast
+radius; over-scanning wastes budget and dilutes focus.
+
+1. From `ticket-brief.md`, estimate the change's footprint:
+   - **Trivial** (1–2 files, obvious area): SKIP the survey subagent — read the neighbours
+     inline during Stage 4. Note "survey: skipped (trivial)" in the ledger. Do NOT burn a
+     dispatch.
+   - **Feature/subsystem** (a screen, a repo+service, a module): dispatch ONE read-only
+     explorer (e.g. the `code-explorer` or `Explore` agent) scoped to that area. It counts
+     as a dispatch. It writes `codebase-map.md`: the relevant architecture layer, the
+     conventions to follow (state mgmt, file layout, naming, error handling), the files
+     likely to change, the patterns neighbouring code uses, and any gotchas. Read-only —
+     it never edits.
+   - **Whole-system / "redesign|rewrite|migrate everything"**: this is NOT one ticket.
+     STOP and tell the human: a full redesign must be decomposed into sub-tickets first
+     (a planning task), then run the loop once per sub-ticket. Do not attempt it in one
+     worktree — it will exhaust the budget and produce low-quality work. Escalate; do not
+     proceed.
+2. The map is CONTEXT for the implementer/QA, NOT a contract. The frozen done-list stays
+   the single source of "done" — a survey finding never silently becomes an acceptance
+   criterion (if it should be one, add it in Stage 3 before the freeze, or via
+   `done-additions.md` after).
+3. Also fold genuinely reusable findings into memory (`memory.js add ... convention ...`)
+   so future runs inherit them.
+
 ## Stage 2 — DESIGN
 
 Skip (mark SKIPPED in report) if LOGIC-ONLY. For each Figma link in the brief:
@@ -166,7 +189,8 @@ dispatch an IMPLEMENTER subagent with `prompts/implementer.md`, filling:
 {TICKET}, {WORKTREE_PATH}, {SLICE} (the criterion text), {SLICE_ID} (the criterion id, e.g. C3),
 {DONE_LIST} (done.md +
 done-additions.md contents), {DESIGN_EXCERPT} (relevant design-spec lines),
-{LEDGER_FORBIDDEN} (all `forbidden-now` lines from ledger.md).
+{CODEBASE_MAP} (relevant lines from codebase-map.md, or "n/a — trivial change" if the
+survey was skipped), {LEDGER_FORBIDDEN} (all `forbidden-now` lines from ledger.md).
 Increment `dispatches:` in ledger.md for EVERY subagent dispatch (implementer, fixer, QA).
 
 **GATE C — continuous path-guard:** if any planned or in-progress edit touches a
@@ -249,6 +273,7 @@ Ledger entry after every attempt (append under `## Attempts`):
 Dispatch a FRESH-context QA subagent (counts against the dispatch budget) with
 `prompts/qa_agent.md`. Provide ONLY these inputs (paste contents, not paths):
 ticket-brief.md, design-spec.md, done.approved.md, done-additions.md, assumptions.md,
+codebase-map.md (if the survey produced one — lets QA judge convention-adherence),
 the full implementation diff (`git -C ../ticket-<TICKET> diff <base>..HEAD`, where
 `<base>` is the `base:` SHA from the ledger header), and the stage-5 check results table. NEVER include ledger.md or any implementer output —
 the judge must not see the implementer's reasoning.
