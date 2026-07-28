@@ -10,7 +10,9 @@ You are the ORCHESTRATOR. You dispatch subagents; you do not implement code your
 Autonomy: hands-off. Never ask "should I continue?" — the loop policy decides. Ask a human
 ONLY at the gates defined below.
 
-**Run constants:** STRIKES_PER_CLASS=3, MAX_REPLANS=2, MAX_DISPATCHES=25.
+**Run constants:** STRIKES_PER_CLASS=3, MAX_REPLANS=2, MAX_DISPATCHES=25. The dispatch
+and re-plan caps are ENFORCED IN CODE by `scripts/ledger.js` (counters live in the run
+dir's `budget.json`, which is hook-protected — never edit it by hand).
 **Working directory rule:** run every script/tool invocation from the MAIN repo root; reach the worktree via 'git -C' or absolute paths — never cd into it.
 **Failure classes:** BUILD, TEST, TOKEN, RUNTIME, QA_BLOCK, GOLDEN_UPDATE_REQUIRED, FLAKY_VERIFIER.
 **Run dir:** `.agents/ticket-runs/<TICKET>/` — create at stage 0 with `screenshots/` subdir.
@@ -71,19 +73,24 @@ rather than assuming Flutter.
    - If any of these fail → STOP (spec §13); never fall back to the user's tree.
      ALL implementation happens inside the worktree. The run dir stays in the MAIN repo
      (it is gitignored).
-4. Initialize `ledger.md`:
+4. Initialize the ledger + budget:
+   `node <SKILL_DIR>/scripts/ledger.js init .agents/ticket-runs/<TICKET> <base-sha>`
+   This writes `budget.json` (dispatch/re-plan counters — SCRIPT-MANAGED and
+   hook-protected; change them only via `ledger.js`) and this `ledger.md` skeleton:
 
    ```markdown
    # Ledger — <TICKET>
    base: <sha recorded at worktree creation>
    started: <ISO timestamp at run start>
-   dispatches: 0
-   replans: 0
+   counters: budget.json (script-managed via ledger.js — never edit by hand)
    ## Check history
    | check | results (oldest→newest) |
    |---|---|
    ## Attempts
    ```
+
+   On RESUME, skip init — it refuses to reset an existing budget.json, so prior counts
+   stand. CLEAN RESTART archives the old run dir first, so init starts fresh.
 
 ## Stage 1 — INTAKE
 
@@ -191,7 +198,10 @@ dispatch an IMPLEMENTER subagent with `prompts/implementer.md`, filling:
 done-additions.md contents), {DESIGN_EXCERPT} (relevant design-spec lines),
 {CODEBASE_MAP} (relevant lines from codebase-map.md, or "n/a — trivial change" if the
 survey was skipped), {LEDGER_FORBIDDEN} (all `forbidden-now` lines from ledger.md).
-Increment `dispatches:` in ledger.md for EVERY subagent dispatch (implementer, fixer, QA).
+BEFORE EVERY subagent dispatch (implementer, fixer, QA, survey) run
+`node <SKILL_DIR>/scripts/ledger.js dispatch .agents/ticket-runs/<TICKET> "<kind>: <slice-or-check>"`
+— exit 2 means the dispatch budget is exhausted: do NOT dispatch; go to Stage 7 with
+status INCOMPLETE. Never track the count anywhere else.
 
 **GATE C — continuous path-guard:** if any planned or in-progress edit touches a
 risk-tier path (the profile's `riskPaths` — example (from config `riskPaths`): auth `<auth-dirs>`; API DTOs
@@ -256,11 +266,15 @@ Ledger entry after every attempt (append under `## Attempts`):
 **Policy (hard rules):**
 - Inject ALL `forbidden-now` lines into every retry prompt. A retry that repeats a
   forbidden approach is invalid — reject and re-dispatch.
-- 3 failed attempts in one class → RE-PLAN: write a materially different approach for
-  that slice (different widget structure / different state placement / different data
-  flow — not a parameter tweak), increment `replans:`, continue.
-- a failure class needing a 3rd re-plan (replans already at MAX_REPLANS=2) → CIRCUIT BREAKER: do not re-plan again; go to Stage 7 with status INCOMPLETE.
-- dispatches ≥ 25 → HARD BUDGET: stop looping, go to Stage 7 with status INCOMPLETE.
+- 3 failed attempts in one class → RE-PLAN: first run
+  `node <SKILL_DIR>/scripts/ledger.js replan .agents/ticket-runs/<TICKET>` — exit 2 is
+  the CIRCUIT BREAKER (re-plan budget exhausted): do NOT re-plan; go to Stage 7 with
+  status INCOMPLETE. Otherwise write a materially different approach for that slice
+  (different widget structure / different state placement / different data flow — not a
+  parameter tweak) and continue.
+- HARD BUDGET: `ledger.js dispatch` exits 2 when the 25-dispatch cap is hit — stop
+  looping, go to Stage 7 with status INCOMPLETE. The script is authoritative; never
+  bypass it by dispatching without the call.
 - Flake rule: RUNTIME/visual failures retry once free (not an attempt, not a dispatch
   if no subagent was used). Alternating pass/fail → FLAKY_VERIFIER. When you flag
   FLAKY_VERIFIER, also record it (if `memoryFile` set):
@@ -270,8 +284,11 @@ Ledger entry after every attempt (append under `## Attempts`):
 
 ## Stage 5.5 — ADVERSARIAL QA
 
-Dispatch a FRESH-context QA subagent (counts against the dispatch budget) with
-`prompts/qa_agent.md`. Provide ONLY these inputs (paste contents, not paths):
+Dispatch a FRESH-context QA subagent (counts against the dispatch budget — run
+`ledger.js dispatch` first) with `prompts/qa_agent.md`. Fill `{CONVENTIONS}` with the
+conventions recorded in codebase-map.md plus the profile's `stack`; if the survey was
+skipped, fill it with "the conventions evident in the surrounding code — no
+stack-specific assumptions". Provide ONLY these inputs (paste contents, not paths):
 ticket-brief.md, design-spec.md, done.approved.md, done-additions.md, assumptions.md,
 codebase-map.md (if the survey produced one — lets QA judge convention-adherence),
 the full implementation diff (`git -C ../ticket-<TICKET> diff <base>..HEAD`, where
@@ -288,7 +305,8 @@ APPROVE → stage 7.
    PASS / FAIL / SKIPPED(reason); assumptions echoed verbatim from assumptions.md;
    tamper check = `git diff --no-index done.approved.md done.md` (must be empty — any
    drift is flagged TAMPERED); include ledger summary counts, FLAKY/GOLDEN flags,
-   toolchain line from stage 0, wall-clock duration, final `dispatches:` count.
+   toolchain line from stage 0, wall-clock duration, and the final counters from
+   `node <SKILL_DIR>/scripts/ledger.js status .agents/ticket-runs/<TICKET>`.
 2. Embed side-by-side evidence: for each visual criterion, the Figma reference PNG and
    the runtime capture path.
 3. If `--update-jira` (retained as the flag name; posts to the configured `ticketSource`):

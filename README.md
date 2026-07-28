@@ -46,10 +46,11 @@ Packaged as a Claude Code **plugin** (installable — see [INSTALL.md](INSTALL.m
 plugins/ticket-loop/
   .claude-plugin/plugin.json         # plugin manifest
   hooks/
-    hooks.json                       # registers the 3 hooks (uses ${CLAUDE_PLUGIN_ROOT})
-    dart_post_edit.js                #   PostToolUse: format + analyze each edit (Flutter reference)
-    freeze_guard.js                  #   PreToolUse: deny edits to frozen done-lists (stack-agnostic)
-    stop_gate.js                     #   Stop: run changed-file tests before a "done" claim
+    hooks.json                       # registers the hooks (uses ${CLAUDE_PLUGIN_ROOT})
+    hook_lib.js                      #   shared: profile resolution + safe command execution
+    post_edit.js                     #   PostToolUse: format + analyze each edit (config-driven)
+    freeze_guard.js                  #   PreToolUse: deny Edit/Write AND shell writes to frozen artifacts
+    stop_gate.js                     #   Stop: verify main repo + every ticket worktree (config-driven)
   skills/ticket-loop/
     SKILL.md                         # the orchestration playbook (stages 0–7) — STACK-AGNOSTIC
     prompts/                         # implementer / fixer / adversarial-QA subagent prompts
@@ -57,9 +58,11 @@ plugins/ticket-loop/
       load_config.js                 # zero-dep profile resolver
       validate_done.js               # done-list contract validator
       freeze_done.js                 # draft → frozen done.md + done.approved.md
+      ledger.js                      # dispatch/re-plan budget — enforced in code, hook-protected
       memory.js                      # cross-run lessons store
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration (non-plugin installs)
+tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
 ```
 
 ## Stack-agnostic by design
@@ -76,20 +79,23 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `worktreePrefix` | where the isolated worktree is created |
 | `buildResolverAgent` | which subagent fixes build/compile failures |
 | `memoryFile` | cross-run lessons file the loop reads at the start and appends to at the end (`null` disables) |
+| `hooks.postEdit` / `hooks.stopGate` | the ENFORCEMENT layer: what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile |
 
 Copy one profile out of `config.example.json` to `.agents/ticket-loop.config.json` and edit.
 With no config, the loop degrades honestly (asks / logic-only) — it never silently assumes a stack.
 
-> **Note on the hooks:** the three hooks are a **Flutter/Dart reference implementation**
-> (`dart analyze`, `flutter test`). They show the pattern; swap the commands for your stack.
-> The skill and scripts are language-neutral.
+> **Note on the hooks:** the hooks are **config-driven, not stack-coded** — they read the
+> same profile and run whatever `hooks.postEdit` / `hooks.stopGate` commands it names
+> (the Flutter profile shows the full shape; Python/Go profiles included). With no config,
+> the hooks are inert — they never guess a stack. The stop gate checks the main repo AND
+> every active `ticket/*` worktree, since that's where the loop actually implements.
 
 ## Install
 
 **As a plugin (recommended — one command, available in every project):**
 
 ```
-/plugin marketplace add <your-github-user>/ticket-loop-harness
+/plugin marketplace add SyedMuhammadRehan/ticket-loop-harness
 /plugin install ticket-loop
 ```
 
@@ -128,14 +134,18 @@ with every ticket. Managed by `scripts/memory.js` (zero-dep).
 
 ## How the loop stays honest
 
-- **Frozen done-list** — the acceptance criteria are locked before coding; a hook denies edits
-  to them, so the agent can't move its own goalposts.
+- **Frozen done-list** — the acceptance criteria are locked before coding; a hook denies
+  Edit/Write **and shell writes** (`>` redirects, `sed -i`, `rm`, `Set-Content`, …) to them,
+  so the agent can't move its own goalposts.
 - **Attempt ledger** — every failure is recorded and injected into the next try; no repeating a
   dead approach. 3 strikes → forced re-plan; 2 failed re-plans → stop and escalate.
+- **Budget enforced in code** — the 25-dispatch / 2-re-plan caps live in `budget.json`,
+  written only by `scripts/ledger.js` (which exits non-zero at the cap) and shielded from
+  tampering by the same freeze hook. The orchestrator can't quietly grant itself more tries.
 - **Adversarial QA** — a fresh-context judge sees the contract and the diff but *not* the
   implementer's reasoning, and its default posture is to reject.
 - **Guardrails in code, not prompts** — hooks and permissions physically block; they aren't
-  polite requests.
+  polite requests. The whole enforcement layer is covered by a test suite (`node tests/run.js`).
 
 ## Worked example
 
