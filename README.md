@@ -95,7 +95,7 @@ With no config, the loop degrades honestly (asks / logic-only) — it never sile
 **As a plugin (recommended — one command, available in every project):**
 
 ```
-/plugin marketplace add <your-github-user>/ticket-loop-harness
+/plugin marketplace add SyedMuhammadRehan/-ticket-loop-harness
 /plugin install ticket-loop
 ```
 

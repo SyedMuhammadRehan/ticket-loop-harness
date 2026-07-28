@@ -8,7 +8,7 @@ per-repo `.agents/ticket-loop.config.json` tells it your stack.
 One command, then it's available in **every** project you open:
 
 ```
-/plugin marketplace add <your-github-user>/ticket-loop-harness
+/plugin marketplace add SyedMuhammadRehan/-ticket-loop-harness
 /plugin install ticket-loop
 ```
 
