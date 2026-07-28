@@ -37,7 +37,9 @@ repo's `.claude/settings.json`.
 1. **Add a profile.** Copy one block from
    `plugins/ticket-loop/skills/ticket-loop/config.example.json` into
    `.agents/ticket-loop.config.json` and edit it for your stack (test/analyze commands,
-   `ticketSource`, `designSource`, `riskPaths`).
+   `ticketSource`, `designSource`, `riskPaths`). The `hooks` block in the profile is what
+   arms the enforcement hooks (format/analyze on edit, tests before a "done" claim) —
+   without a config the hooks stay inert.
 2. **gitignore run state:** add `.agents/ticket-runs/` and (if hooks write state)
    `.claude/hooks/state/`.
 3. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
@@ -61,5 +63,5 @@ The plugin manifest and hook wiring match the format of installed Claude Code pl
 this package has **not yet been install-tested end-to-end** as a published plugin, and the
 loop has been exercised only on one Flutter repo. Expect to smooth a rough edge on the first
 plugin install and the first run on a new stack — the `--dry-run` above is how you catch them
-cheaply. The hooks are a Flutter/Dart reference (`dart analyze` / `flutter test`); for another
-stack, swap those commands (a ~10-line edit per hook).
+cheaply. The hooks and scripts themselves are config-driven (no stack hardcoding) and covered
+by a test suite — run `node tests/run.js` from the repo root to verify them on your machine.

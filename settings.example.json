@@ -1,11 +1,11 @@
 {
-  "//": "Merge this 'hooks' block into your .claude/settings.json (or settings.local.json). Do NOT copy this whole file over an existing settings file — merge only the hooks key.",
+  "//": "Merge this 'hooks' block into your .claude/settings.json (or settings.local.json). Do NOT copy this whole file over an existing settings file — merge only the hooks key. All three hooks read .agents/ticket-loop.config.json and are inert without it.",
   "hooks": {
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
         "hooks": [
-          { "type": "command", "command": "node .claude/hooks/dart_post_edit.js", "timeout": 120 }
+          { "type": "command", "command": "node .claude/hooks/post_edit.js", "timeout": 120 }
         ]
       }
     ],
@@ -15,12 +15,18 @@
         "hooks": [
           { "type": "command", "command": "node .claude/hooks/freeze_guard.js", "timeout": 15 }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/freeze_guard.js", "timeout": 15 }
+        ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "node .claude/hooks/stop_gate.js", "timeout": 300 }
+          { "type": "command", "command": "node .claude/hooks/stop_gate.js", "timeout": 600 }
         ]
       }
     ]

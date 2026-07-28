@@ -1,5 +1,5 @@
 {
-  "//": "Copy to <repoRoot>/.agents/ticket-loop.config.json and edit for your stack. This is what makes ticket-loop work beyond Flutter/Figma. Three examples below — keep ONE.",
+  "//": "Copy to <repoRoot>/.agents/ticket-loop.config.json and edit for your stack. This is what makes ticket-loop work beyond Flutter/Figma. Three examples below — keep ONE. The 'hooks' block drives the plugin's enforcement hooks (post_edit + stop_gate); without it the hooks are inert and only the skill's prompts protect you.",
 
   "//flutter-frontend": {
     "stack": "flutter",
@@ -14,7 +14,33 @@
     "riskPaths": ["lib/ui/auth/**", "lib/data/services/api/**", "pubspec.yaml"],
     "worktreePrefix": "../ticket-",
     "buildResolverAgent": "dart-build-resolver",
-    "memoryFile": ".agents/ticket-loop-memory.md"
+    "memoryFile": ".agents/ticket-loop-memory.md",
+    "hooks": {
+      "postEdit": {
+        "extensions": [".dart"],
+        "exclude": "\\.(g|freezed|tailor|gr|config|gen)\\.dart$",
+        "format": "dart format {file}",
+        "analyze": "dart analyze {file}",
+        "analyzeErrorRegex": "\\berror\\b\\s*[-•]|^\\s*error\\b"
+      },
+      "stopGate": {
+        "extensions": [".dart"],
+        "exclude": "\\.(g|freezed|tailor|gr|config|gen)\\.dart$",
+        "mode": "targeted",
+        "testDir": "test",
+        "testSuffix": "_test.dart",
+        "excludeTests": ["test/golden/", "_golden_test.dart"],
+        "testCommand": "flutter test {targets} --reporter compact",
+        "flakeSignatures": [
+          "PathExistsException",
+          "errno = 183",
+          "flutter_test_compiler",
+          "Cannot create a file when that file already exists"
+        ],
+        "failureMarkers": ["Some tests failed", "Expected:", "Actual:"],
+        "timeoutMs": 240000
+      }
+    }
   },
 
   "//python-backend": {
@@ -30,7 +56,19 @@
     "riskPaths": ["**/migrations/**", "**/auth/**", "**/settings*.py", "pyproject.toml"],
     "worktreePrefix": "../ticket-",
     "buildResolverAgent": "django-build-resolver",
-    "memoryFile": ".agents/ticket-loop-memory.md"
+    "memoryFile": ".agents/ticket-loop-memory.md",
+    "hooks": {
+      "postEdit": {
+        "extensions": [".py"],
+        "format": "ruff format {file}",
+        "analyze": "ruff check {file}"
+      },
+      "stopGate": {
+        "extensions": [".py"],
+        "mode": "full",
+        "timeoutMs": 300000
+      }
+    }
   },
 
   "//go-service": {
@@ -46,6 +84,17 @@
     "riskPaths": ["**/auth/**", "**/migrations/**", "go.mod"],
     "worktreePrefix": "../ticket-",
     "buildResolverAgent": "go-build-resolver",
-    "memoryFile": ".agents/ticket-loop-memory.md"
+    "memoryFile": ".agents/ticket-loop-memory.md",
+    "hooks": {
+      "postEdit": {
+        "extensions": [".go"],
+        "format": "gofmt -w {file}"
+      },
+      "stopGate": {
+        "extensions": [".go"],
+        "mode": "full",
+        "timeoutMs": 300000
+      }
+    }
   }
 }

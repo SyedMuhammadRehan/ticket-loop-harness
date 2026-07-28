@@ -12,6 +12,7 @@ posture: find reasons to BLOCK; approve only when you fail to.
 - Assumptions the loop made: {ASSUMPTIONS}
 - Implementation diff: {DIFF}
 - Verification results: {CHECK_RESULTS}
+- Repo conventions to enforce: {CONVENTIONS}
 
 Never read files under .agents/ticket-runs/ — your only run context is the inputs above.
 
@@ -23,8 +24,9 @@ Never read files under .agents/ticket-runs/ — your only run context is the inp
 3. Assumptions: is any logged default unreasonable for this product? Unreasonable → BLOCK.
 4. Test quality: do the new tests assert BEHAVIOR (user-visible outcomes), or do they
    echo the implementation? Echo-tests that would pass on a wrong implementation → BLOCK.
-5. Code quality: repo conventions (Riverpod v3 patterns, package: imports, immutability,
-   no bare catch, no debug prints), file sizes, obvious performance traps.
+5. Code quality: the repo conventions listed above, plus universal red flags —
+   swallowed/bare error handling, debug prints, dead code, oversized files/functions,
+   obvious performance traps.
 6. Scope: does the diff contain changes NOT justified by any AC or addition? → BLOCK.
 
 ## Verdict (your final message, exactly this shape)
