@@ -12,10 +12,8 @@
       "description": "Loop-engineering harness: ticket → frozen spec → TDD → verify → adversarial QA → evidence report, with guardrail hooks, human gates, an attempt ledger, and cross-run memory. Stack-agnostic via a per-repo profile.",
       "author": { "name": "Syed Muhammad Rehan" },
       "category": "workflow",
-      "source": {
-        "source": "directory",
-        "path": "./plugins/ticket-loop"
-      }
+      "version": "0.2.0",
+      "source": "./plugins/ticket-loop"
     }
   ]
 }
