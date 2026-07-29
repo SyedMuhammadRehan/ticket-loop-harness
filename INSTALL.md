@@ -59,9 +59,10 @@ full supervised run on a small, low-risk ticket and watch it.
 
 ## Honest status
 
-The plugin manifest and hook wiring match the format of installed Claude Code plugins, but
-this package has **not yet been install-tested end-to-end** as a published plugin, and the
-loop has been exercised only on one Flutter repo. Expect to smooth a rough edge on the first
-plugin install and the first run on a new stack — the `--dry-run` above is how you catch them
-cheaply. The hooks and scripts themselves are config-driven (no stack hardcoding) and covered
+The plugin install path is verified end-to-end: `/plugin marketplace add` +
+`/plugin install ticket-loop@ticket-loop-harness` from the published repo works (v0.2.0,
+validated with `claude plugin validate .`). The loop itself has been exercised mainly on
+one Flutter repo — this repo dogfoods it as a Node project (see `.agents/ticket-loop.config.json`),
+but expect a rough edge on your first run on a new stack; the `--dry-run` above is how you
+catch it cheaply. The hooks and scripts are config-driven (no stack hardcoding) and covered
 by a test suite — run `node tests/run.js` from the repo root to verify them on your machine.

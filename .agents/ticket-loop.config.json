@@ -1,0 +1,30 @@
+{
+  "stack": "node",
+  "ticketSource": "manual",
+  "designSource": "none",
+  "verify": {
+    "analyze": null,
+    "test": "node tests/run.js",
+    "pubGet": null,
+    "codegen": null
+  },
+  "riskPaths": [
+    "plugins/ticket-loop/hooks/freeze_guard.js",
+    ".claude-plugin/**",
+    ".github/workflows/**"
+  ],
+  "worktreePrefix": "../ticket-",
+  "buildResolverAgent": null,
+  "memoryFile": ".agents/ticket-loop-memory.md",
+  "hooks": {
+    "postEdit": {
+      "extensions": [".js"],
+      "analyze": "node --check {file}"
+    },
+    "stopGate": {
+      "extensions": [".js"],
+      "mode": "full",
+      "timeoutMs": 180000
+    }
+  }
+}
