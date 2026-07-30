@@ -81,6 +81,7 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `buildResolverAgent` | which subagent fixes build/compile failures |
 | `memoryFile` | cross-run lessons file the loop reads at the start and appends to at the end (`null` disables) |
 | `hooks.postEdit` / `hooks.stopGate` | the ENFORCEMENT layer: what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile |
+| `attribution.commitTrailer` | repo policy on AI attribution: a trailer string appended to every worktree commit (for teams that require disclosure), or `null` (default) for clean commits with none. The implementer is also barred from AI-style narration comments — new code must be indistinguishable from the code around it |
 
 Copy one profile out of `config.example.json` to `.agents/ticket-loop.config.json` and edit.
 With no config, the loop degrades honestly (asks / logic-only) — it never silently assumes a stack.

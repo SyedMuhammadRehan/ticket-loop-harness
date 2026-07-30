@@ -15,6 +15,10 @@
     "worktreePrefix": "../ticket-",
     "buildResolverAgent": "dart-build-resolver",
     "memoryFile": ".agents/ticket-loop-memory.md",
+    "attribution": {
+      "//": "commitTrailer: string to append to every worktree commit (for repos that REQUIRE disclosure), or null for clean commits with no AI attribution. Repo policy decides — the default is null.",
+      "commitTrailer": null
+    },
     "hooks": {
       "postEdit": {
         "extensions": [".dart"],

@@ -265,6 +265,11 @@ After each green slice (its tests pass inside the worktree):
 `git -C ../ticket-<TICKET> add -A -- . ':(exclude)test/golden' && git -C ../ticket-<TICKET> commit -m "wip(<TICKET>): <slice> green"`
 Commits happen ONLY in the worktree — never in the main repo, never push, never touch
 main or any protected branch.
+**Attribution is the repo owner's policy, not yours:** if the profile's
+`attribution.commitTrailer` is a string, append it as a second `-m` to every commit;
+if null (the default), commits carry NO AI-attribution trailers, badges, or
+"generated with" lines — do not add them out of habit. The run's provenance is fully
+recorded in report.md and the run dir either way.
 
 ## Stage 5 — VERIFY (full done-list, inside the worktree)
 

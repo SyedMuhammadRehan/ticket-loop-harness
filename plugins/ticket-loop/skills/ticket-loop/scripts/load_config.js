@@ -19,6 +19,12 @@ const DEFAULTS = {
   worktreePrefix: '../ticket-',
   buildResolverAgent: null,
   memoryFile: null,
+  attribution: {
+    // Trailer appended to every worktree commit, e.g. "Co-Authored-By: ...".
+    // null (default) = clean commits with NO AI attribution — the repo owner's
+    // policy decides, never the loop.
+    commitTrailer: null,
+  },
 };
 
 const VALID_DESIGN_SOURCES = ['none', 'figma', 'openapi'];
