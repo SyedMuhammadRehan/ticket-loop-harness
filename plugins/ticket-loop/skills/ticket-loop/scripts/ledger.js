@@ -35,6 +35,27 @@ const STAGES = ['intake', 'survey', 'design', 'approach', 'validate', 'freeze', 
 const VERDICTS = ['BLOCK', 'APPROVE_WITH_COMMENTS', 'APPROVE'];
 const CHECK_RESULTS = ['PASS', 'FAIL', 'SKIPPED'];
 
+// What each stage must show before its receipt is recorded. Evidence used to be optional, so
+// all ten gates plus an APPROVE verdict were eleven free commands that left `verify` reporting
+// `intact: true, problems: []` over a run in which nothing happened — and `require <stage>`
+// proved only that someone had typed `ledger.js gate`.
+//
+// `artifact` = the file the stage cannot have happened without, which must be among --evidence
+// (hashEvidence already refuses files that do not exist). `receipt` = a stage whose product is
+// another sealed record rather than a file, bound to that record instead.
+const STAGE_PROOF = {
+  intake: { artifact: 'ticket-brief.md' },
+  survey: { artifact: 'codebase-map.md' },
+  design: { artifact: 'design-spec.md' },
+  approach: { artifact: 'approach.md' },
+  validate: { receipt: 'validate', how: 'run validate_done.js against the draft — it seals the receipt' },
+  freeze: { artifact: 'done.md' },
+  implement: { anyEvidence: true, how: 'seal the diff, the ledger, or the files the slices touched' },
+  verify: { receipt: 'check', how: 'record each criterion result with "ledger.js check" first' },
+  qa: { receipt: 'verdict', how: 'the judge records its own verdict with "ledger.js verdict"' },
+  report: { artifact: 'report.md' },
+};
+
 function budgetPath(runDir) {
   return path.join(runDir, 'budget.json');
 }
@@ -245,6 +266,26 @@ function cmdGate(runDir, stage, evidence) {
     );
     process.exit(1);
   }
+
+  const proof = STAGE_PROOF[stage] || {};
+  const refuse = (why) => {
+    console.error(`ledger gate: refusing to record "${stage}" — ${why}${proof.how ? `\n  ${proof.how}` : ''}`);
+    process.exit(1);
+  };
+  if (proof.artifact && !hashed.some((e) => path.basename(e.file) === proof.artifact)) {
+    refuse(
+      `no ${proof.artifact} among the sealed evidence. Pass it: ` +
+        `--evidence ${path.join(runDir, proof.artifact)}. A stage receipt with nothing attached ` +
+        `attests only that this command ran.`
+    );
+  }
+  if (proof.anyEvidence && hashed.length === 0) {
+    refuse('no --evidence at all, so the receipt proves nothing happened');
+  }
+  if (proof.receipt && chain.ofKind(runDir, proof.receipt).length === 0) {
+    refuse(`there is no sealed "${proof.receipt}" record in the chain yet`);
+  }
+
   chain.append(runDir, 'gate', { stage, evidence: hashed });
   console.log(`ledger: gate "${stage}" recorded${hashed.length ? ` (${hashed.length} evidence file(s) sealed)` : ''}`);
 }
@@ -274,6 +315,11 @@ function cmdCheck(runDir, id, result, note) {
   console.log(`ledger: check ${id} ${normalized} — history: ${history.join(' → ')}`);
 }
 
+// A verdict is a claim that an independent judge read the frozen contract. Two things now have
+// to hold: the frozen contract is among the sealed inputs, and a subagent was actually
+// dispatched after the freeze. Neither proves WHICH process typed the verdict — process
+// identity is not available here — but together they rule out the cheap version, which was
+// `ledger.js verdict <run> APPROVE` with no inputs and no judge.
 function cmdVerdict(runDir, verdict, inputs) {
   requireChain(runDir);
   const normalized = String(verdict || '').toUpperCase().replace(/[\s-]+/g, '_');
@@ -287,8 +333,41 @@ function cmdVerdict(runDir, verdict, inputs) {
     console.error(`ledger verdict: judged-input files not found: ${missing.map((m) => m.file).join(', ')}`);
     process.exit(1);
   }
-  chain.append(runDir, 'verdict', { verdict: normalized, inputs: hashed });
-  console.log(`ledger: verdict ${normalized} recorded (${hashed.length} judged input(s) sealed)`);
+  if (!hashed.some((e) => path.basename(e.file) === 'done.approved.md')) {
+    console.error(
+      `ledger verdict: refusing to record a verdict that does not seal the frozen contract.\n` +
+        `  Pass --inputs ${path.join(runDir, 'done.approved.md')} (and done-additions.md). ` +
+        `A verdict over nothing cannot show which contract was judged.`
+    );
+    process.exit(1);
+  }
+
+  const freeze = chain.ofKind(runDir, 'gate').find((r) => r.payload.stage === 'freeze');
+  if (!freeze) {
+    console.error(`ledger verdict: refusing — nothing has been frozen yet, so there is no contract to judge.`);
+    process.exit(1);
+  }
+  const judgeDispatch = chain.ofKind(runDir, 'dispatch').filter((r) => r.seq > freeze.seq).pop();
+  if (!judgeDispatch) {
+    console.error(
+      `ledger verdict: refusing — no subagent was dispatched after the freeze (seq ${freeze.seq}), ` +
+        `so no fresh-context judge can have run.\n` +
+        `  Dispatch the QA agent with prompts/qa_agent.md and let it record the verdict itself.`
+    );
+    process.exit(3);
+  }
+
+  const source = (judgeDispatch.payload && judgeDispatch.payload.source) || 'script';
+  chain.append(runDir, 'verdict', {
+    verdict: normalized,
+    inputs: hashed,
+    dispatchSeq: judgeDispatch.seq,
+    dispatchSource: source,
+  });
+  console.log(
+    `ledger: verdict ${normalized} recorded (${hashed.length} judged input(s) sealed, ` +
+      `backed by the dispatch at seq ${judgeDispatch.seq}${source === 'hook' ? '' : ' — SCRIPT-sourced, see verify'})`
+  );
 }
 
 // Ending the run has to cost a receipt, or it is just another file the orchestrator can write
@@ -365,6 +444,25 @@ function cmdVerify(runDir) {
       }
     } catch {
       problems.push('budget.json missing or unreadable (mirror only — not fatal)');
+    }
+
+    // Claims that carry no weight. These are not tampering — they are a run whose receipts do
+    // not support what the report will say, which reads identically unless verify says so.
+    const verdictRec = chain.last(runDir, 'verdict');
+    if (verdictRec) {
+      if (verdictRec.payload.dispatchSource !== 'hook') {
+        problems.push(
+          `the QA verdict is backed by a SCRIPT-recorded dispatch (seq ${verdictRec.payload.dispatchSeq || '?'}), ` +
+            `not one counted by the dispatch_guard hook — the judge's independence is unverified for this run`
+        );
+      }
+    } else if (chain.ofKind(runDir, 'gate').some((r) => r.payload.stage === 'qa')) {
+      problems.push('a "qa" stage receipt exists but no verdict was ever sealed — the QA pass did not happen');
+    }
+    for (const r of chain.ofKind(runDir, 'gate')) {
+      if (!(r.payload.evidence || []).length && !(STAGE_PROOF[r.payload.stage] || {}).receipt) {
+        problems.push(`gate "${r.payload.stage}" (seq ${r.seq}) sealed no evidence — recorded before this was required`);
+      }
     }
 
     // Every sealed evidence file must still hash to what its receipt recorded.

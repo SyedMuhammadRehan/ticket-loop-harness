@@ -226,15 +226,106 @@ test('check records a per-criterion history, which is what a FLAKY claim must ci
   }
 });
 
-test('verdict is recorded with the contract it judged, and rejects unknown verdicts', () => {
+// Reach the state a real run is in when the judge reports: frozen contract, then the judge
+// dispatched. Both are preconditions for a verdict now.
+function frozenRun() {
   const { root, runDir } = init();
+  const approved = path.join(runDir, 'done.approved.md');
+  fs.writeFileSync(approved, '# Done\n');
+  fs.writeFileSync(path.join(runDir, 'done.md'), '# Done\n');
+  assert.strictEqual(ledger(root, ['gate', runDir, 'freeze', '--evidence', path.join(runDir, 'done.md')]).status, 0);
+  return { root, runDir, approved };
+}
+
+test('verdict is recorded with the contract it judged, and rejects unknown verdicts', () => {
+  const { root, runDir, approved } = frozenRun();
   try {
-    const approved = path.join(runDir, 'done.approved.md');
-    fs.writeFileSync(approved, '# Done\n');
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: adversarial review']).status, 0);
     const ok = ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]);
     assert.strictEqual(ok.status, 0, ok.stderr);
     assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).verdict, 'APPROVE');
     assert.strictEqual(ledger(root, ['verdict', runDir, 'LGTM']).status, 1);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a verdict that seals no contract is refused', () => {
+  const { root, runDir } = frozenRun();
+  try {
+    ledger(root, ['dispatch', runDir, 'qa']);
+    const bare = ledger(root, ['verdict', runDir, 'APPROVE']);
+    assert.strictEqual(bare.status, 1, bare.stderr);
+    assert.ok(bare.stderr.includes('does not seal the frozen contract'), bare.stderr);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a verdict with no subagent dispatched after the freeze is refused', () => {
+  const { root, runDir, approved } = frozenRun();
+  try {
+    const res = ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]);
+    assert.strictEqual(res.status, 3, res.stderr);
+    assert.ok(res.stderr.includes('no fresh-context judge can have run'), res.stderr);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The whole point of fixing the free receipt: an APPROVE the orchestrator recorded itself,
+// without the hook counting a dispatch, must not read as a clean run.
+test('verify flags a verdict whose dispatch was not counted by the hook', () => {
+  const { root, runDir, approved } = frozenRun();
+  try {
+    ledger(root, ['dispatch', runDir, 'qa']); // script-sourced, i.e. self-reported
+    assert.strictEqual(ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]).status, 0);
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4);
+    const report = JSON.parse(res.stdout);
+    assert.strictEqual(report.intact, false);
+    assert.ok(
+      report.problems.some((p) => p.includes("judge's independence is unverified")),
+      JSON.stringify(report.problems)
+    );
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('every stage gate must attach the artifact the stage produces', () => {
+  const { root, runDir } = init();
+  try {
+    // The old free receipt: no --evidence at all.
+    for (const stage of ['intake', 'survey', 'design', 'approach', 'report']) {
+      const res = ledger(root, ['gate', runDir, stage]);
+      assert.strictEqual(res.status, 1, `gate ${stage} must refuse with no evidence`);
+      assert.ok(res.stderr.includes('among the sealed evidence'), res.stderr);
+    }
+    // Wrong artifact is refused too — any existing file used to satisfy the receipt.
+    fs.writeFileSync(path.join(runDir, 'notes.md'), 'x\n');
+    const wrong = ledger(root, ['gate', runDir, 'intake', '--evidence', path.join(runDir, 'notes.md')]);
+    assert.strictEqual(wrong.status, 1, wrong.stderr);
+    assert.ok(wrong.stderr.includes('ticket-brief.md'), wrong.stderr);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('receipt-backed stages are bound to the record they claim, not to a file', () => {
+  const { root, runDir } = init();
+  try {
+    const qa = ledger(root, ['gate', runDir, 'qa']);
+    assert.strictEqual(qa.status, 1, qa.stderr);
+    assert.ok(qa.stderr.includes('no sealed "verdict" record'), qa.stderr);
+
+    const verify = ledger(root, ['gate', runDir, 'verify']);
+    assert.strictEqual(verify.status, 1, verify.stderr);
+    assert.ok(verify.stderr.includes('no sealed "check" record'), verify.stderr);
+
+    // Recording a real check unlocks the verify gate, and nothing else does.
+    assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'PASS']).status, 0);
+    assert.strictEqual(ledger(root, ['gate', runDir, 'verify']).status, 0);
   } finally {
     rmDir(root);
   }

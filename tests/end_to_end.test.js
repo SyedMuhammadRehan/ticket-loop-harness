@@ -63,29 +63,37 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
       0
     );
 
+    // Every ledger call below asserts its exit code. They did not, which meant a change that
+    // made a gate refuse would leave this test green and the run silently un-receipted.
+    const ok = (args) => {
+      const res = ledger(root, args);
+      assert.strictEqual(res.status, 0, `ledger ${args.slice(0, 3).join(' ')} failed: ${res.stderr}`);
+      return res;
+    };
+
     // Stage 1.5 — survey (feature-sized, so an approach becomes mandatory)
     fs.writeFileSync(path.join(runDir, 'codebase-map.md'), '# map\n- data/profile_repository.py\n');
-    ledger(root, ['gate', runDir, 'survey', '--evidence', path.join(runDir, 'codebase-map.md')]);
+    ok(['gate', runDir, 'survey', '--evidence', path.join(runDir, 'codebase-map.md')]);
 
     // Stage 2.5 — approach
     fs.writeFileSync(path.join(runDir, 'approach.md'), APPROACH);
-    ledger(root, ['gate', runDir, 'approach', '--evidence', path.join(runDir, 'approach.md')]);
+    ok(['gate', runDir, 'approach', '--evidence', path.join(runDir, 'approach.md')]);
 
     // Stage 3 — define done, validate, freeze
     fs.writeFileSync(path.join(runDir, 'done.draft.md'), DRAFT);
     assert.strictEqual(runScript(VALIDATE, [runDir], { cwd: root }).status, 0);
     assert.strictEqual(runScript(FREEZE, [runDir], { cwd: root }).status, 0);
-    ledger(root, ['gate', runDir, 'validate']);
+    ok(['gate', runDir, 'validate']);
 
     // Stage 4 — implement (dispatches counted by the hook)
     for (let i = 0; i < 3; i++) assert.strictEqual(dispatch(root).status, 0);
 
     // Stage 5 — verify, recording each check
-    ledger(root, ['check', runDir, 'C1', 'PASS', '5/5']);
-    ledger(root, ['check', runDir, 'C2', 'FAIL', 'wrong copy']);
-    ledger(root, ['check', runDir, 'C2', 'PASS', 'fixed on attempt 2']);
-    ledger(root, ['check', runDir, 'C3', 'PASS']);
-    ledger(root, ['gate', runDir, 'verify']);
+    ok(['check', runDir, 'C1', 'PASS', '5/5']);
+    ok(['check', runDir, 'C2', 'FAIL', 'wrong copy']);
+    ok(['check', runDir, 'C2', 'PASS', 'fixed on attempt 2']);
+    ok(['check', runDir, 'C3', 'PASS']);
+    ok(['gate', runDir, 'verify']);
 
     // Stage 5.5 — QA seals its own verdict over the contract it read
     assert.strictEqual(dispatch(root).status, 0);
@@ -97,9 +105,12 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
       ]).status,
       0
     );
-    ledger(root, ['gate', runDir, 'qa']);
+    ok(['gate', runDir, 'qa']);
 
-    // Stage 7 — the integrity check the report must paste
+    // Stage 7 — report, then CLOSE. The run stays active until it is closed.
+    fs.writeFileSync(path.join(runDir, 'report.md'), '# Report — T-1\nStatus: COMPLETE\n');
+    ok(['gate', runDir, 'report', '--evidence', path.join(runDir, 'report.md')]);
+
     const verify = ledger(root, ['verify', runDir]);
     assert.strictEqual(verify.status, 0, verify.stdout);
     const report = JSON.parse(verify.stdout);
@@ -110,9 +121,14 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
     assert.strictEqual(status.dispatches, 4);
     assert.strictEqual(status.verdict, 'APPROVE_WITH_COMMENTS');
     assert.strictEqual(status.baseSha, 'basesha123');
-    for (const stage of ['intake', 'survey', 'approach', 'freeze', 'validate', 'verify', 'qa']) {
+    for (const stage of ['intake', 'survey', 'approach', 'freeze', 'validate', 'verify', 'qa', 'report']) {
       assert.ok(status.gates.includes(stage), `missing receipt for ${stage}`);
     }
+
+    // The budget is still live until the close, and the close is what releases it.
+    assert.strictEqual(dispatch(root).status, 0);
+    ok(['close', runDir]);
+    assert.ok(fs.existsSync(path.join(runDir, 'closed.json')));
   } finally {
     rmDir(root);
   }
@@ -168,9 +184,29 @@ test('the lazy path is refused at every step a shortcut would be taken', () => {
     fs.writeFileSync(path.join(runDir, 'budget.json'), JSON.stringify({ dispatches: 0, maxDispatches: 9999 }));
     assert.strictEqual(dispatch(root).status, 2, 'editing the mirror must not buy a dispatch');
 
-    // Shortcut 6: claim a QA pass that never happened.
+    // Shortcut 6: claim a QA pass that never happened. Asserting `require` fails BEFORE
+    // anything is claimed proves nothing — the claim route is what has to be refused, and it
+    // used to work: `gate qa` took no evidence, so `require qa` then exited 0.
     assert.strictEqual(ledger(root, ['require', runDir, 'qa']).status, 3);
+    const forgedGate = ledger(root, ['gate', runDir, 'qa']);
+    assert.strictEqual(forgedGate.status, 1, 'a qa receipt with no verdict behind it must be refused');
+    assert.ok(forgedGate.stderr.includes('no sealed "verdict" record'), forgedGate.stderr);
+    assert.strictEqual(ledger(root, ['require', runDir, 'qa']).status, 3, 'and require still fails');
+
+    const forgedVerdict = ledger(root, ['verdict', runDir, 'APPROVE']);
+    assert.strictEqual(forgedVerdict.status, 1, 'a verdict sealing no contract must be refused');
     assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).verdict, null);
+
+    // Shortcut 7: end the run early to get out from under the gates.
+    fs.writeFileSync(path.join(runDir, 'report.md'), '# report\nStatus: COMPLETE\n');
+    assert.strictEqual(dispatch(root).status, 2, 'report.md must not release the dispatch budget');
+    assert.strictEqual(guard(root, { file_path: '.agents/ticket-loop.config.json' }).status, 2);
+    assert.strictEqual(
+      guard(root, { file_path: path.join(runDir, 'closed.json') }).status,
+      2,
+      'the close marker cannot be written by hand'
+    );
+    assert.strictEqual(ledger(root, ['close', runDir]).status, 3, 'close needs a report receipt');
 
     // The sealed history itself was never broken by any of the above — but the mirror edit
     // from shortcut 5 is still reported, which is the point: it changed nothing and it shows.
