@@ -124,6 +124,16 @@ function git(cwd, ...args) {
   return res.stdout;
 }
 
+// Mark a run ACTIVE the way the hooks detect it: an initialized run dir with no close marker.
+// Several "not verified" paths only speak up during a run, because a Stop mid-run is a "done"
+// claim and a Stop outside one is not.
+function markRunActive(main) {
+  const runDir = path.join(main, '.agents', 'ticket-runs', 'T-1');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'budget.json'), '{"dispatches":1}');
+  return runDir;
+}
+
 function setupRepo({ branch = 'ticket/T-1', stopGate } = {}) {
   const base = mkTmpDir('tl-sg');
   const main = path.join(base, 'main');
@@ -136,6 +146,9 @@ function setupRepo({ branch = 'ticket/T-1', stopGate } = {}) {
   // verify.test: fails iff a FAIL marker file exists in the tree under test
   fs.writeFileSync(path.join(main, 'check.js'), "process.exit(require('fs').existsSync('FAIL') ? 1 : 0);\n");
   fs.mkdirSync(path.join(main, '.agents'));
+  // Real installs gitignore run state (INSTALL.md step 2); without it the run dir shows up as
+  // an untracked change and skews what the gate thinks the session touched.
+  fs.writeFileSync(path.join(main, '.gitignore'), '.agents/ticket-runs/\n.claude/hooks/state/\n');
   fs.writeFileSync(
     path.join(main, '.agents', 'ticket-loop.config.json'),
     JSON.stringify({
@@ -290,6 +303,93 @@ test('clean trees pass without running anything; escape valve releases after 3 b
     const res = gate(env.main, { session_id: 's1', stop_hook_active: true });
     assert.strictEqual(res.status, 0);
     assert.ok(res.stderr.includes('NOT green'));
+  } finally {
+    teardown(env);
+  }
+});
+
+// --- the default-branch blind spot -------------------------------------------------------
+//
+// The gate diffs merge-base(HEAD, baseRef)..HEAD. When HEAD *is* the branch point — a session
+// committing straight to the default branch rather than a ticket branch — that diff is empty,
+// the tree is clean, and the gate used to pass having run nothing, with no note either. That is
+// the same failure the branch-point fix was written to close, one topology to the left.
+test('committed work on the default branch is not passed on an empty diff', () => {
+  const env = setupRepo();
+  try {
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.main, 'src', 'app.py'), 'x = 2\n');
+    fs.writeFileSync(path.join(env.main, 'FAIL'), '');
+    git(env.main, 'add', '-A');
+    git(env.main, 'commit', '-q', '-m', 'work committed straight to main');
+    assert.strictEqual(git(env.main, 'status', '--porcelain').trim(), '', 'tree must be clean');
+
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 2, `a red suite must block even with no visible branch point:\n${res.stderr}`);
+    assert.ok(res.stderr.includes('HEAD IS the branch point'), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+test('the same situation with a green suite passes, but says what it could not see', () => {
+  const env = setupRepo();
+  try {
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.main, 'src', 'app.py'), 'x = 2\n');
+    git(env.main, 'add', '-A');
+    git(env.main, 'commit', '-q', '-m', 'green work on main');
+
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.ok(res.stderr.includes('no visible branch point'), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+// --- silent skips ------------------------------------------------------------------------
+//
+// extensions/exclude that match nothing produced NO output at all, so Stage 7's "say plainly
+// what was NOT verified" had nothing to report and the run read as verified.
+test('a profile whose filters match nothing says so instead of passing quietly', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.nope'], mode: 'full', baseRef: 'main' } });
+  try {
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
+    fs.writeFileSync(path.join(env.wt, 'FAIL'), '');
+
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 0, 'narrow filters are the repo owner\'s call, so this does not block');
+    assert.ok(res.stderr.includes('NONE matched'), res.stderr);
+    assert.ok(res.stderr.includes('NOTHING was verified'), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+test('exclude that swallows every changed file is reported too', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.py'], exclude: '.*', mode: 'full', baseRef: 'main' } });
+  try {
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
+    fs.writeFileSync(path.join(env.wt, 'FAIL'), '');
+
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 0);
+    assert.ok(res.stderr.includes('NONE matched'), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+test('outside a run the gate stays quiet and cheap', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.nope'], mode: 'full', baseRef: 'main' } });
+  try {
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 0);
+    assert.strictEqual(res.stderr.trim(), '', 'no ticket run means no "done" claim to police');
   } finally {
     teardown(env);
   }

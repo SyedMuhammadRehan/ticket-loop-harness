@@ -140,32 +140,41 @@ function applyFilters(files, conf) {
 }
 
 // Uncommitted work (git status) UNION committed-on-this-branch work (merge-base..HEAD).
-// Returns { files, baseRef } — a null baseRef means only uncommitted work could be seen.
+//
+// Returns { files, rawCount, baseRef, baseIsHead }:
+//   rawCount   how many paths changed BEFORE extensions/exclude filtering, so "the config
+//              matched nothing" can be told apart from "nothing changed";
+//   baseIsHead HEAD *is* the branch point, so merge-base..HEAD is empty and committed work
+//              cannot be listed at all. That happens when the session commits straight to the
+//              default branch, and it is how the gate's worst bug came back: clean tree, empty
+//              diff, pass without running a test.
 function changedSourceFiles(tree, conf) {
-  const found = new Set();
+  const raw = new Set();
 
   const status = git(tree, ['status', '--porcelain']);
   if (status.status === 0) {
-    const uncommitted = (status.stdout || '')
+    (status.stdout || '')
       .split('\n')
       .filter((l) => l.trim())
       .map((l) => l.slice(3).trim().replace(/"/g, ''))
-      .map((f) => (f.includes(' -> ') ? f.split(' -> ').pop() : f));
-    applyFilters(uncommitted, conf).forEach((f) => found.add(f));
+      .map((f) => (f.includes(' -> ') ? f.split(' -> ').pop() : f))
+      .forEach((f) => raw.add(f));
   }
 
   const baseRef = resolveBaseRef(tree, conf);
+  let baseIsHead = false;
   if (baseRef) {
     const mb = git(tree, ['merge-base', 'HEAD', baseRef]);
     if (mb.status === 0 && mb.stdout.trim()) {
+      const head = git(tree, ['rev-parse', 'HEAD']);
+      baseIsHead = head.status === 0 && head.stdout.trim() === mb.stdout.trim();
       const diff = git(tree, ['diff', '--name-only', `${mb.stdout.trim()}..HEAD`], 30000);
-      if (diff.status === 0) {
-        applyFilters((diff.stdout || '').split('\n').filter(Boolean), conf).forEach((f) => found.add(f));
-      }
+      if (diff.status === 0) (diff.stdout || '').split('\n').filter(Boolean).forEach((f) => raw.add(f));
     }
   }
 
-  return { files: [...found], baseRef };
+  const rawList = [...raw];
+  return { files: [...new Set(applyFilters(rawList, conf))], rawCount: rawList.length, baseRef, baseIsHead };
 }
 
 function walkTests(dir, suffix, acc) {
@@ -216,23 +225,68 @@ function looksLikeFlake(output, conf) {
 }
 
 // Run the verification for one tree. Returns { ok, skipped?, note?, tail? }.
-function verifyTree(tree, conf, verifyTest) {
-  const { files: changed, baseRef } = changedSourceFiles(tree, conf);
-  if (changed.length === 0) return { ok: true, skipped: true };
-
+//
+// `runActive` matters because a Stop with a ticket run open is a "done" claim. Outside a run
+// there is nothing being claimed, so staying quiet and cheap is right; inside one, every path
+// that ends in "not verified" has to SAY so, or Stage 7 has nothing to disclose and the report
+// reads COMPLETE over work no test touched.
+function verifyTree(tree, conf, verifyTest, runActive) {
+  const { files: changed, rawCount, baseRef, baseIsHead } = changedSourceFiles(tree, conf);
   const notes = [];
-  if (!baseRef) {
+
+  // Committed work is invisible when there is no branch point, or when HEAD is the branch point.
+  const blind = !baseRef || baseIsHead;
+  let forceFull = false;
+
+  if (changed.length === 0) {
+    if (!runActive) return { ok: true, skipped: true };
+    if (rawCount > 0) {
+      // Files DID change and the profile's filters excluded all of them. That is the repo
+      // owner's call, so it does not block — but it used to emit nothing at all, which left
+      // Stage 7's "say what was NOT verified" with nothing to say.
+      return {
+        ok: true,
+        skipped: true,
+        note:
+          `stop_gate: ${tree}: ${rawCount} file(s) changed but NONE matched hooks.stopGate.extensions` +
+          `${conf.exclude ? '/exclude' : ''} — NOTHING was verified. If that is wrong, the profile's filters are ` +
+          `too narrow; report this tree as unverified either way.`,
+      };
+    }
+    if (blind) {
+      // Nothing visible AND no branch point to diff against, so an empty diff is not evidence
+      // of an empty change. Verify everything rather than passing on it.
+      notes.push(
+        `stop_gate: ${tree}: a ticket run is ACTIVE but this tree has no visible branch point ` +
+          `(${!baseRef ? `no base ref resolved — tried hooks.stopGate.baseRef, ${BASE_REF_CANDIDATES.join(', ')}` : `HEAD IS the branch point, so the session is committing directly to ${baseRef} instead of a ticket branch`}). ` +
+          `Committed work cannot be listed, so the full verification is being run rather than passing on an empty diff.`
+      );
+      forceFull = true;
+    } else {
+      return { ok: true, skipped: true, note: `stop_gate: ${tree}: no changes at all — nothing to verify.` };
+    }
+  } else if (!baseRef) {
     notes.push(
       `stop_gate: ${tree}: no base ref resolved (tried hooks.stopGate.baseRef, ${BASE_REF_CANDIDATES.join(', ')}) — ` +
         `only UNCOMMITTED changes were considered. Set hooks.stopGate.baseRef so committed slices are seen.`
     );
+  } else if (baseIsHead) {
+    notes.push(
+      `stop_gate: ${tree}: HEAD is the branch point (${baseRef}), so only UNCOMMITTED changes could be listed — ` +
+        `anything already committed on this branch was NOT considered.`
+    );
   }
+
+  // Every exit from here carries the notes collected above, so a tree that could only be
+  // partially inspected never reports as a clean pass.
+  const finish = (result) =>
+    notes.length ? { ...result, note: [notes.join('\n'), result.note].filter(Boolean).join('\n') } : result;
 
   const timeoutMs = Math.max(conf.timeoutMs || DEFAULT_TEST_TIMEOUT_MS, MIN_TEST_TIMEOUT_MS);
   let run;
-  if ((conf.mode || 'full') === 'full') {
+  if (forceFull || (conf.mode || 'full') === 'full') {
     if (!verifyTest) {
-      return { ok: true, skipped: true, note: `stop_gate: ${tree}: source files changed but no verify.test configured — NOT verified.` };
+      return finish({ ok: true, skipped: true, note: `stop_gate: ${tree}: source files changed but no verify.test configured — NOT verified.` });
     }
     run = () => lib.runShell(verifyTest, { cwd: tree, timeoutMs });
   } else {
@@ -242,15 +296,15 @@ function verifyTree(tree, conf, verifyTest) {
         `stop_gate: ${tree}: ${changed.length} changed source file(s) with NO matching test file ` +
         `(${changed.slice(0, 5).join(', ')}${changed.length > 5 ? ', …' : ''}).`;
       if (conf.requireMatchingTest) {
-        return { ok: false, tail: `${note}\nhooks.stopGate.requireMatchingTest is on — add a test or set it to false.` };
+        return finish({ ok: false, tail: `${note}\nhooks.stopGate.requireMatchingTest is on — add a test or set it to false.` });
       }
-      return { ok: true, skipped: true, note: `${note} Not blocking (set hooks.stopGate.requireMatchingTest to block), but this code is UNVERIFIED.` };
+      return finish({ ok: true, skipped: true, note: `${note} Not blocking (set hooks.stopGate.requireMatchingTest to block), but this code is UNVERIFIED.` });
     }
     if (unmatched.length && conf.requireMatchingTest) {
-      return { ok: false, tail: `stop_gate: ${tree}: no test maps to ${unmatched.join(', ')} (requireMatchingTest is on).` };
+      return finish({ ok: false, tail: `stop_gate: ${tree}: no test maps to ${unmatched.join(', ')} (requireMatchingTest is on).` });
     }
     if (!conf.testCommand) {
-      return { ok: true, skipped: true, note: `stop_gate: ${tree}: targeted mode without hooks.stopGate.testCommand — NOT verified.` };
+      return finish({ ok: true, skipped: true, note: `stop_gate: ${tree}: targeted mode without hooks.stopGate.testCommand — NOT verified.` });
     }
     const argv = lib.buildArgv(conf.testCommand, { '{targets}': targets });
     run = () => lib.runArgv(argv, { cwd: tree, timeoutMs });
@@ -271,8 +325,6 @@ function verifyTree(tree, conf, verifyTest) {
     }
     return { verdict: res.status === 0 ? 'pass' : 'fail', res, output };
   };
-
-  const finish = (result) => (notes.length ? { ...result, note: [notes.join('\n'), result.note].filter(Boolean).join('\n') } : result);
 
   let a = attempt();
   if (a.verdict === 'timeout') {
@@ -346,6 +398,7 @@ function main() {
     process.exit(0);
   }
 
+  const runActive = activeRuns(root).length > 0;
   const state = readState(root, sessionId);
   if (input.stop_hook_active && state.consecutiveBlocks >= MAX_CONSECUTIVE_BLOCKS) {
     console.error(`stop_gate: still red after ${state.consecutiveBlocks} blocks — allowing stop. Suite is NOT green.`);
@@ -356,7 +409,7 @@ function main() {
   const verifyTest = config.verify && config.verify.test;
   const failures = [];
   for (const tree of treesToCheck(root, conf)) {
-    const result = verifyTree(tree, conf, verifyTest);
+    const result = verifyTree(tree, conf, verifyTest, runActive);
     if (result.note) console.error(result.note);
     if (!result.ok) failures.push({ tree, tail: result.tail });
   }
