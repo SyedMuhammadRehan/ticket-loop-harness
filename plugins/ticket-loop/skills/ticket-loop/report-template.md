@@ -47,8 +47,10 @@ asserted in prose.
 
 Verdict: {APPROVE | APPROVE WITH COMMENTS | BLOCK}
 Recorded: {seq + timestamp of the sealed verdict receipt}
-Judged inputs: {the files sealed in the verdict receipt — this is what proves the judge saw
-the frozen contract and not a summary of it}
+Judged inputs: {the files sealed in the verdict receipt — this shows WHICH contract was judged,
+and that it was the frozen one rather than a summary of it. It does not show which process
+recorded the verdict: if `ledger.js verify` reported the judge's independence as unverified,
+say so here in those words.}
 
 Findings:
 - [{COMMENT|BLOCK}] {file:line or AC#} — {finding, verbatim from the judge}

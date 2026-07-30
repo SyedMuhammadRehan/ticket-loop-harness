@@ -33,10 +33,16 @@ flowchart TD
     R --> M(["human reviews & merges"])
 ```
 
-- **Gates** pause for a human (no spec, risky path, design conflict).
-- **The loop** records every failure in a ledger and never repeats a dead approach; 3 strikes force a re-plan, 2 failed re-plans stop and escalate, a 25-dispatch budget caps the worst case.
-- **Adversarial QA** is a fresh-context judge that sees the frozen spec and the diff but not the implementer's reasoning.
+- **Gates** pause for a human (no spec, risky path, design conflict) — these are the
+  orchestrator's discipline, not a fence; see [what's mechanical](#how-the-loop-stays-honest).
+- **The loop** records every failure in a ledger and never repeats a dead approach; 3 strikes force a re-plan, 2 failed re-plans stop and escalate, a 25-dispatch budget caps the worst case (the dispatch and re-plan caps are enforced by hooks, at the tool call).
+- **Adversarial QA** is a fresh-context judge that reads the frozen spec and the diff, but is blind to the implementer's reasoning.
 - The loop **never pushes or merges** — it hands you a branch and a report.
+- Every counter, gate, check result and verdict lands in a **sealed receipt chain** outside the
+  run directory, and each receipt has to carry the artifact the stage produced — so the closing
+  report's integrity section is a machine check of *what was recorded*. Whether that check gets
+  run and pasted honestly is still the loop's own word; see
+  [what's mechanical](#how-the-loop-stays-honest).
 
 ## What's in here
 
@@ -49,17 +55,21 @@ plugins/ticket-loop/
   hooks/
     hooks.json                       # registers the hooks (uses ${CLAUDE_PLUGIN_ROOT})
     hook_lib.js                      #   shared: profile resolution + safe command execution
+    guard_policy.js                  #   the write policy (pure functions, unit-tested)
     post_edit.js                     #   PostToolUse: format + analyze each edit (config-driven)
-    freeze_guard.js                  #   PreToolUse: deny Edit/Write AND shell writes to frozen artifacts
-    stop_gate.js                     #   Stop: verify main repo + every ticket worktree (config-driven)
+    freeze_guard.js                  #   PreToolUse: default-deny writes to frozen + control-plane files
+    dispatch_guard.js                #   PreToolUse(Task): the dispatch budget, enforced at the tool call
+    stop_gate.js                     #   Stop: verify main repo + every worktree, vs the BRANCH POINT
   skills/ticket-loop/
     SKILL.md                         # the orchestration playbook (stages 0–7) — STACK-AGNOSTIC
+    report-template.md               # the evidence report's schema
     prompts/                         # implementer / fixer / adversarial-QA subagent prompts
     scripts/
       load_config.js                 # zero-dep profile resolver
-      validate_done.js               # done-list contract validator
-      freeze_done.js                 # draft → frozen done.md + done.approved.md
-      ledger.js                      # dispatch/re-plan budget — enforced in code, hook-protected
+      chain.js                       # HMAC-sealed receipt chain (lives OUTSIDE the run dir)
+      validate_done.js               # done-list + approach contract validator → validation receipt
+      freeze_done.js                 # draft → frozen done.md + done.approved.md (receipt-gated)
+      ledger.js                      # budget, stage receipts, check history, integrity report
       memory.js                      # cross-run lessons store
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration (non-plugin installs)
@@ -80,17 +90,26 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `worktreePrefix` | where the isolated worktree is created |
 | `buildResolverAgent` | which subagent fixes build/compile failures |
 | `memoryFile` | cross-run lessons file the loop reads at the start and appends to at the end (`null` disables) |
-| `hooks.postEdit` / `hooks.stopGate` | the ENFORCEMENT layer: what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile |
+| `hooks.postEdit` / `hooks.stopGate` | what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile. `stopGate` also takes `baseRef` (the branch point committed slices are diffed against), `worktrees` (`all`/`ticket`/`cwd`), and `requireMatchingTest` (block source changes no test covers) |
 | `attribution.commitTrailer` | repo policy on AI attribution: a trailer string appended to every worktree commit (for teams that require disclosure), or `null` (default) for clean commits with none. The implementer is also barred from AI-style narration comments — new code must be indistinguishable from the code around it |
 
 Copy one profile out of `config.example.json` to `.agents/ticket-loop.config.json` and edit.
 With no config, the loop degrades honestly (asks / logic-only) — it never silently assumes a stack.
 
-> **Note on the hooks:** the hooks are **config-driven, not stack-coded** — they read the
-> same profile and run whatever `hooks.postEdit` / `hooks.stopGate` commands it names
-> (the Flutter profile shows the full shape; Python/Go profiles included). With no config,
-> the hooks are inert — they never guess a stack. The stop gate checks the main repo AND
-> every active `ticket/*` worktree, since that's where the loop actually implements.
+> **Note on the hooks:** `post_edit` and `stop_gate` are **config-driven, not stack-coded** —
+> they read the same profile and run whatever `hooks.postEdit` / `hooks.stopGate` commands it
+> names (the Flutter profile shows the full shape; Python/Go profiles included). With no config
+> they are inert — they never guess a stack — **except** that the stop gate refuses to pass a
+> "done" claim while a run is active and its config is missing or unparsable, since that is
+> indistinguishable from disarming it. `freeze_guard` and `dispatch_guard` need no profile and
+> work everywhere. The stop gate checks the main repo AND every worktree, against each tree's
+> merge-base rather than its working tree.
+
+> ⚠️ **The profile is executed, so it is as trusted as code.** The strings in `verify.*` and
+> `hooks.*` are run by hooks, and hooks do not prompt for permission. Installing this plugin
+> globally means any repo you open that ships a `.agents/ticket-loop.config.json` can run
+> commands on your machine at every file edit and every Stop. Review that file before opening
+> an untrusted repo — see the Security section in [INSTALL.md](INSTALL.md).
 
 ## Install
 
@@ -136,24 +155,112 @@ with every ticket. Managed by `scripts/memory.js` (zero-dep).
 
 ## How the loop stays honest
 
-- **Recorded design decisions** — feature-sized tickets get an `approach.md` BEFORE the
-  contract: ≥2 real options with tradeoffs, why the loser lost, the failure modes (each
-  mechanically required to map to a done-list criterion or an explicit out-of-scope), and
-  the slice order — riskiest first, so the slice most able to disprove the design runs
-  while sunk cost is lowest. Re-plans update it; the QA judge BLOCKs silent design drift.
-  Trivial tickets skip it — proportionality, same as the Survey.
-- **Frozen done-list** — the acceptance criteria are locked before coding; a hook denies
-  Edit/Write **and shell writes** (`>` redirects, `sed -i`, `rm`, `Set-Content`, …) to them,
-  so the agent can't move its own goalposts.
-- **Attempt ledger** — every failure is recorded and injected into the next try; no repeating a
-  dead approach. 3 strikes → forced re-plan; 2 failed re-plans → stop and escalate.
-- **Budget enforced in code** — the 25-dispatch / 2-re-plan caps live in `budget.json`,
-  written only by `scripts/ledger.js` (which exits non-zero at the cap) and shielded from
-  tampering by the same freeze hook. The orchestrator can't quietly grant itself more tries.
-- **Adversarial QA** — a fresh-context judge sees the contract and the diff but *not* the
-  implementer's reasoning, and its default posture is to reject.
-- **Guardrails in code, not prompts** — hooks and permissions physically block; they aren't
-  polite requests. The whole enforcement layer is covered by a test suite (`node tests/run.js`).
+The honest version of this section names what is mechanical and what isn't, because a
+guardrail you *believe* in but that is only a sentence in a prompt is worse than no guardrail.
+
+### Mechanical — the orchestrator cannot get past these by choosing not to cooperate
+
+- **Sealed receipt chain** — every counter, stage completion, check result and QA verdict is
+  an HMAC-sealed, hash-linked record in `<gitdir>/ticket-loop/<TICKET>/`, **outside** the run
+  directory. `ledger.js verify` recomputes every seal and link, and re-hashes the frozen
+  contract and the profile against what was sealed. `budget.json` in the run dir is a
+  human-readable *mirror*: editing it changes nothing and shows up as drift. A `head.json`
+  anchor records the expected record count and last seal, because seals and prev-links cannot
+  see records dropped off the **end** of the chain — and dropping the tail needs no key.
+- **A receipt costs the artifact it claims** — `ledger.js gate` refuses a stage whose artifact
+  is not among the sealed evidence (`intake` needs `ticket-brief.md`, `report` needs
+  `report.md`, …), and stages whose product is another record are bound to it: `verify` needs a
+  `check`, `qa` needs a `verdict`. A verdict must seal the frozen contract and follow a dispatch
+  recorded after the freeze. Before this, all ten gates plus an `APPROVE` were eleven free
+  commands over a run in which nothing happened.
+- **A run ends on a sealed close, not on a file** — `ledger.js close` writes `closed.json` and
+  refuses without a `report` receipt; that marker, not the presence of `report.md`, is what
+  releases the dispatch budget and the control-plane freeze. The old signal meant the loop's own
+  deliverable was the off switch for every gate.
+- **Dispatch budget, enforced at the dispatch** — `dispatch_guard.js` is a `PreToolUse` hook on
+  the subagent tool. It counts every subagent call and refuses the tool at the cap. Not calling
+  `ledger.js` buys no extra tries. 2-re-plan circuit breaker likewise.
+- **Frozen done-list** — `freeze_guard.js` is **default-deny** over the protected namespace: a
+  command that references `done.md` / `*.approved.md` / the chain is refused unless it is
+  read-only or an exact sanctioned harness invocation. That covers the routes a verb blocklist
+  misses — `python -c`, `node -e`, `[System.IO.File]::WriteAllText`, `cd <run> && sed -i`,
+  `$(…)` inside an otherwise-sanctioned command, `-EncodedCommand`, `git clean -fdx`.
+- **The contract can't be *trivially* self-certified** — `validate_done.js` requires at least one
+  `(test)`/`(runtime)` criterion, unique ids, no pre-ticked boxes, and `run:` commands that name
+  the profile's real verify binary. `freeze_done.js` then refuses any draft that wasn't
+  validated, or that changed after it was. **Known limit:** the `run:` check compares only the
+  binary name, so a neutered invocation of the *right* binary passes —
+  `run: {verify.test} --grep no-such-test`, or `run: true` for an `(analyzer)` criterion when
+  `verify.analyze` is null. It catches the wrong tool, not a no-op call of the right one; the QA
+  judge is what is supposed to catch the rest, and that is judgement, not a check.
+- **The gates can't be disarmed mid-run** — while a run is active, the profile, the hook
+  sources and the hook state are read-only, and the stop gate **blocks** rather than going
+  inert if the profile goes missing or unparsable. The profile's hash is sealed at Stage 0.
+- **A "done" claim is checked against the branch point** — `stop_gate.js` compares each tree
+  (main repo *and* every worktree, including detached-HEAD and non-`ticket/*` branches) against
+  its merge-base, not against `git status`. This is the fix for the gate's worst old bug: the
+  loop commits after every green slice, so a working-tree check saw a clean tree and passed
+  without running a single test. When there is no branch point to diff against — no base ref, or
+  HEAD *is* the base because the session is committing straight to the default branch — it runs
+  the full verification instead of passing on an empty diff, and every path that ends in "not
+  verified" says so on stderr so Stage 7 has something to disclose.
+- **Approach contract isn't opt-out** — if the survey produced a `codebase-map.md`, the change
+  was judged feature-sized and `approach.md` becomes *mandatory*; deleting it to skip the
+  failure-mode contract no longer works. Every failure mode must map to a criterion or an
+  out-of-scope with a reason of real substance, and they can't *all* be waived.
+
+### Yours to uphold — and visible in the report if you don't
+
+- **GATE A / B / C and `riskPaths`.** There is no code that matches a diff against `riskPaths`;
+  the profile hands the paths to the orchestrator, which is asked to check them. Treat these as
+  a discipline, not a fence.
+- **The strike count** per failure class (3 → re-plan) is orchestrator bookkeeping. Only the
+  dispatch and re-plan caps are counted mechanically.
+- **Honest failure classification.** `FLAKY_VERIFIER` now requires an alternating history in the
+  sealed check record, and `GOLDEN_UPDATE_REQUIRED` must be reported as *not verified* — but
+  choosing the right class in the first place is judgement.
+- **Keeping `done-additions.md` additive.** It has to stay writable to be useful, so a
+  weakening addition is caught by review, not by code: the QA judge reads both the frozen
+  contract and the additions from disk and BLOCKs contradictions.
+
+### Adversarial QA
+
+A fresh-context judge whose independence is from the **implementer's reasoning** — it is barred
+from `ledger.md`, attempt history and implementer output. It reads the frozen contract, the
+additions and the brief **from disk itself**, rather than through the orchestrator's summary of
+them: a judge whose only view of the contract comes from the party under review can't detect a
+weakened one. It records its own verdict via `ledger.js verdict`, sealing the contract files it
+actually read, and its default posture is to reject.
+
+### Residual risk, stated plainly
+
+An agent with shell access is not sandboxed by any of this. It could read the chain key and
+forge receipts; it could reach a protected file through a tool surface these hooks don't see.
+What the design buys is that every such route is now a deliberate, unusual act that the guard
+denies by default and that `ledger.js verify` reports afterwards. **Integrity here is
+tamper-evident, not tamper-proof** — the point is that a lazy or drifting loop can no longer
+produce a clean-looking report by accident, and a determined one leaves marks.
+
+Named limits, so they are not mistaken for guarantees:
+
+- **The write policy denies on the path as *written*.** A command that never spells a protected
+  path is not evaluated at all, so string concatenation, a glob, or a variable reaches files a
+  literal path would not. It is a good filter on lazy behaviour, not a sandbox.
+- **`verify` does not prove the judge was independent.** It proves the verdict sealed the frozen
+  contract and followed a dispatch; when that dispatch was not counted by the hook it says the
+  independence is unverified. Process identity is not available to it.
+- **Timestamps are not checked.** `at` is whatever the writer put there; there is no monotonicity
+  check, so a receipt's clock is not evidence.
+- **Running the integrity check is still the loop's job.** Nothing forces `ledger.js verify` to
+  run, or forces its real output into `report.md`. Read the Integrity section knowing that.
+- **Concurrent writes to the chain are not serialized.** Two dispatches racing can lose records
+  or break the chain — it fails loudly (exit 4) rather than miscounting silently, but a run that
+  dispatches subagents in parallel can end up unreportable.
+
+The whole enforcement layer is covered by a test suite (`node tests/run.js`, 150+ tests), which
+includes the full corpus of bypasses found while attacking it, as regression cases — including a
+known-answer test for the seal, because the suite once passed in full with the HMAC replaced by
+an unkeyed hash.
 
 ## Worked example
 
@@ -252,19 +359,28 @@ Status: COMPLETE
 Branch: ticket/PROJ-128 (worktree ../ticket-PROJ-128) — merge/push are manual
 Duration: 11m 42s | Dispatches: 6/25 | Re-plans: 0/2
 
+## Integrity
+{ "records": 19, "intact": true, "problems": [] }
+Stage receipts: intake, survey, design, approach, validate, freeze, verify, qa
+Restarts: none
+
 ## Criteria evidence
 | # | criterion | result | evidence |
 |---|---|---|---|
 | C1 | 404/500 → typed error | PASS | profile_repository_test.dart 5/5 |
 | C2 | ErrorView renders | PASS | profile_screen_test.dart 3/3 |
-| C3 | error token #B00020/16px | PASS | (attempt 2 — see ledger) |
+| C3 | error token #B00020/16px | PASS | check history: FAIL → PASS (attempt 2) |
 | C4 | analyzer clean | PASS | dart analyze: No issues found |
 
 ## QA verdict
 APPROVE WITH COMMENTS — 1 comment (500 detail assertion) recorded above.
+Recorded: seq 18. Judged inputs: done.approved.md, done-additions.md (hashes sealed).
 
 ## Known gaps / follow-ups
 - QA comment on the 500-detail assertion, left for your call.
+
+## Not verified
+- Golden tests never run (excluded from verify.test) — visual regressions are unchecked here.
 ```
 
 You review the branch, address the QA comment if you agree, and merge. The loop never pushed,

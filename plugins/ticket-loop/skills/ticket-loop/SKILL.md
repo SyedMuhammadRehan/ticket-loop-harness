@@ -17,9 +17,16 @@ ONLY at the gates defined below.
   the dispatch cap (the `dispatch_guard` PreToolUse hook counts every subagent call and
   refuses the tool at the cap — not calling `ledger.js` does not buy you extra dispatches);
   the re-plan cap; the freeze (`freeze_done.js` refuses a draft that was not validated, or
-  that changed after validation); writes to `done.md`/`*.approved.md`/the receipt chain, and
-  writes to the profile or hook sources while a run is active (`freeze_guard`); the
-  integrity report (`ledger.js verify`).
+  that changed after validation); writes to `done.md`/`*.approved.md`/`closed.json`/the receipt
+  chain, and writes to the profile or hook sources while a run is active (`freeze_guard`);
+  **every stage receipt costs the artifact it claims** (`ledger.js gate` refuses `intake`
+  without `ticket-brief.md`, `qa` without a sealed verdict, `verify` without a recorded check,
+  and so on — a receipt is no longer something you can just type); the QA verdict must seal
+  `done.approved.md` and follow a real post-freeze dispatch; and **the run does not end until
+  `ledger.js close` succeeds**, which needs a `report` receipt. Writing `report.md` releases
+  nothing.
+- NOT mechanical, however it reads: whether `ledger.js verify` gets run at all, and whether its
+  real output reaches the report. That is on you, and it is the one claim a reader cannot check.
 - YOURS to uphold, and visible in the report if you don't: GATE A/B/C (there is no code that
   matches `riskPaths` — you must check), the strike count per failure class, honest failure
   classification, and keeping `done-additions.md` additive.

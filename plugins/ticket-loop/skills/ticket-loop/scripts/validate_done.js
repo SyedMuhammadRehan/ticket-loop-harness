@@ -3,10 +3,20 @@
 // success — the receipt that lets freeze_done.js accept the draft.
 //
 // WHY the extra checks: the earlier version accepted a contract that was green by
-// construction. `- [ ] C1 (analyzer): zero errors | run: true` twice, plus a non-empty
-// out-of-scope line, passed as "valid" with no behavioural test anywhere, criteria could be
-// pre-ticked before any code existed, ids could repeat, and `run:` was never checked against
-// the commands the repo actually has. Each of those is now a hard failure.
+// construction. Two identical analyzer criteria plus a non-empty out-of-scope line passed as
+// "valid" with no behavioural test anywhere, criteria could be pre-ticked before any code
+// existed, and ids could repeat. Those are hard failures now.
+//
+// WHAT THE `run:` CHECK DOES NOT CATCH — do not read it as more than it is. It compares only the
+// first token's basename against the profile's verify binary, so it rejects the WRONG tool and
+// accepts any neutered invocation of the right one:
+//     run: {verify.test} --grep no-such-test     passes, runs zero tests
+//     run: {verify.test} || true                 passes, cannot fail
+//     run: true    for an (analyzer) criterion    passes whenever verify.analyze is null
+//     run: playwright:<id>                       not checked at all (NON_COMMAND_RUNNERS)
+// Catching those needs the criterion to be executed and observed failing, which this script
+// cannot do. The QA judge is asked to look for it (prompts/qa_agent.md, "a criterion whose run:
+// command could not actually detect the behaviour failing") — that is judgement, not a check.
 'use strict';
 const fs = require('fs');
 const path = require('path');
