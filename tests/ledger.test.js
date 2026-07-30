@@ -302,7 +302,7 @@ test('every stage gate must attach the artifact the stage produces', () => {
       assert.strictEqual(res.status, 1, `gate ${stage} must refuse with no evidence`);
       assert.ok(res.stderr.includes('among the sealed evidence'), res.stderr);
     }
-    // Wrong artifact is refused too — any existing file used to satisfy the receipt.
+    // The right artifact, not merely an existing file, is what satisfies the receipt.
     fs.writeFileSync(path.join(runDir, 'notes.md'), 'x\n');
     const wrong = ledger(root, ['gate', runDir, 'intake', '--evidence', path.join(runDir, 'notes.md')]);
     assert.strictEqual(wrong.status, 1, wrong.stderr);
@@ -331,8 +331,9 @@ test('receipt-backed stages are bound to the record they claim, not to a file', 
   }
 });
 
-// `rm -rf` on the chain dir then `init` used to zero every counter and every receipt while
-// verify still reported intact:true — the refusal only fired when a chain was present.
+// A deleted chain must not read as a fresh run: `rm -rf` on the chain dir then `init` would
+// otherwise zero every counter and receipt while verify still reported intact:true, because
+// the refusal fires only when a chain is present.
 test('a deleted chain directory is refused by init, not treated as a fresh run', () => {
   const { root, runDir } = init();
   try {

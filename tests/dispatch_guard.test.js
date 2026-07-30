@@ -92,10 +92,9 @@ test('a broken receipt chain stops dispatches rather than being ignored', () => 
   }
 });
 
-// The regression this locks down: the hooks used to read "report.md exists" as "the run is
-// over", so an orchestrator at the cap could write one unprotected file and keep dispatching,
-// uncounted and invisible to `verify`. The previous version of this file asserted that
-// behaviour as correct, which is how it survived a review.
+// No file the loop writes as ordinary work may end a run. If "report.md exists" meant "the
+// run is over", an orchestrator at the cap could write one unprotected file and keep
+// dispatching, uncounted and invisible to `verify`.
 test('writing report.md does NOT release the budget — only a sealed close does', () => {
   const { root, runDir } = setup();
   try {

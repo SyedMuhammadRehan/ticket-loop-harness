@@ -48,10 +48,10 @@ const PROTECTED_REFS = [
   { re: /ticket-runs/, tier: 'frozen', what: 'a ticket run directory' },
   { re: /[\w.-]+\.approved\.md/, tier: 'frozen', what: 'a frozen approved artifact' },
   { re: /ticket-loop[\/\\][^\s]*[\/\\]?chain(\.\d+)?\.jsonl/, tier: 'frozen', what: 'the sealed receipt chain' },
-  // The chain DIRECTORY, not just the file inside it. `rm -rf .git/ticket-loop` names no
-  // chain.jsonl, so it used to sail through — and a following `init` reset every counter.
-  // Anchored on the git dir (or the non-git fallback name) so the repo's own
-  // plugins/ticket-loop/** tree is not swept up: that would deny work on the harness itself.
+  // The chain DIRECTORY, not just the file inside it: `rm -rf .git/ticket-loop` names no
+  // chain.jsonl, and a following `init` would reset every counter. Anchored on the git dir
+  // (or the non-git fallback name) so the repo's own plugins/ticket-loop/** tree is not
+  // swept up — that would deny work on the harness itself.
   { re: /\.git[\/\\][^\s]*ticket-loop(?![\w.-])/, tier: 'frozen', what: 'the receipt chain directory' },
   { re: /\.ticket-loop-chain/, tier: 'frozen', what: 'the receipt chain directory' },
   { re: /ticket-loop\.config\.json/, tier: 'control', what: 'the enforcement profile' },

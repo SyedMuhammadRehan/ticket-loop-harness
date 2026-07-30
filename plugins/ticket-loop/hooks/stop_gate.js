@@ -145,9 +145,9 @@ function applyFilters(files, conf) {
 //   rawCount   how many paths changed BEFORE extensions/exclude filtering, so "the config
 //              matched nothing" can be told apart from "nothing changed";
 //   baseIsHead HEAD *is* the branch point, so merge-base..HEAD is empty and committed work
-//              cannot be listed at all. That happens when the session commits straight to the
-//              default branch, and it is how the gate's worst bug came back: clean tree, empty
-//              diff, pass without running a test.
+//              cannot be listed at all — which happens when the session commits straight to
+//              the default branch. Left unhandled this reproduces the gate's worst failure:
+//              clean tree, empty diff, pass without running a test.
 function changedSourceFiles(tree, conf) {
   const raw = new Set();
 
@@ -242,8 +242,8 @@ function verifyTree(tree, conf, verifyTest, runActive) {
     if (!runActive) return { ok: true, skipped: true };
     if (rawCount > 0) {
       // Files DID change and the profile's filters excluded all of them. That is the repo
-      // owner's call, so it does not block — but it used to emit nothing at all, which left
-      // Stage 7's "say what was NOT verified" with nothing to say.
+      // owner's call, so it does not block — but it must still say so, or Stage 7's "report
+      // what was NOT verified" has nothing to report.
       return {
         ok: true,
         skipped: true,

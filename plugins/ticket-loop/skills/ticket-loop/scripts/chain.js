@@ -230,9 +230,9 @@ function verify(runDir) {
     prev = hmac || null;
   });
 
-  // An initialized chain always holds at least its init record, so zero records means the file
-  // was emptied. `chain.exists()` only asks whether the file is there, and an empty file used to
-  // verify clean AND reset every counter to zero.
+  // An initialized chain always holds at least its init record, so zero records means the
+  // file was emptied. This check is separate from `chain.exists()`, which only asks whether
+  // the file is present — an empty one would otherwise verify clean and zero every counter.
   if (records.length === 0) {
     problems.push('receipt chain is empty — it does not even hold its init record, so it was truncated to nothing');
   }

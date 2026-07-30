@@ -35,10 +35,10 @@ const STAGES = ['intake', 'survey', 'design', 'approach', 'validate', 'freeze', 
 const VERDICTS = ['BLOCK', 'APPROVE_WITH_COMMENTS', 'APPROVE'];
 const CHECK_RESULTS = ['PASS', 'FAIL', 'SKIPPED'];
 
-// What each stage must show before its receipt is recorded. Evidence used to be optional, so
-// all ten gates plus an APPROVE verdict were eleven free commands that left `verify` reporting
-// `intact: true, problems: []` over a run in which nothing happened — and `require <stage>`
-// proved only that someone had typed `ledger.js gate`.
+// What each stage must show before its receipt is recorded. Evidence cannot be optional: ten
+// gates plus an APPROVE verdict would otherwise be eleven free commands, leaving `verify`
+// reporting `intact: true, problems: []` over a run in which nothing happened, and
+// `require <stage>` proving only that someone typed `ledger.js gate`.
 //
 // `artifact` = the file the stage cannot have happened without, which must be among --evidence
 // (hashEvidence already refuses files that do not exist). `receipt` = a stage whose product is
@@ -63,11 +63,11 @@ function budgetPath(runDir) {
 // The end-of-run marker. The hooks treat a run as ACTIVE from `init` until this file exists,
 // so it is what releases the dispatch budget and the control-plane freeze.
 //
-// It is deliberately NOT report.md. The hooks used to read the presence of report.md as "the
-// run is over", which meant the one file Stage 7 tells the orchestrator to write first also
-// switched off the budget, unlocked the hook sources and made the stop gate's missing-config
-// block inert — reachable with an ordinary Write, uncounted, and invisible to `verify`. Ending
-// a run is now an explicit act that requires a report receipt in the sealed chain, and the
+// It is deliberately NOT report.md. If the hooks read that as "the run is over", the one file
+// Stage 7 tells the orchestrator to write first would also switch off the budget, unlock the
+// hook sources and make the stop gate's missing-config block inert — reachable with an
+// ordinary Write, uncounted, and invisible to `verify`. Ending a run is an explicit act that
+// requires a report receipt in the sealed chain, and the
 // marker itself is write-protected by freeze_guard.
 function closedPath(runDir) {
   return path.join(runDir, 'closed.json');
@@ -152,11 +152,11 @@ function requireChain(runDir) {
 function cmdInit(runDir, baseSha, opts) {
   fs.mkdirSync(runDir, { recursive: true });
 
-  // A chain that is GONE is not the same as a run that never started. `rm -rf` on the chain dir
-  // followed by `init` used to zero every counter and every receipt and still report
-  // `intact: true` — the refusal below only fired when a chain was present. budget.json is the
-  // one trace the chain leaves inside the run dir, and freeze_guard protects it, so its presence
-  // without a chain is the signature of a deleted history.
+  // A chain that is GONE is not the same as a run that never started: without this check,
+  // `rm -rf` on the chain dir followed by `init` zeroes every counter and receipt and still
+  // reports `intact: true`, because the refusal below only fires when a chain is present.
+  // budget.json is the one trace the chain leaves inside the run dir, and freeze_guard
+  // protects it, so its presence without a chain is the signature of a deleted history.
   if (!chain.exists(runDir) && fs.existsSync(budgetPath(runDir)) && !opts.restart) {
     console.error(
       `ledger init: ${runDir} has a budget.json but NO receipt chain at ${chain.resolveChainDir(runDir).dir}.\n` +

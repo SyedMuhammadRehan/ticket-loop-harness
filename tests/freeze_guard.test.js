@@ -89,8 +89,8 @@ test('releases the control plane once the run is CLOSED', () => {
   }
 });
 
-// The regression: report.md was the active-run signal, so writing the deliverable unlocked
-// the hook sources, the profile and the hook state mid-run.
+// If report.md were the active-run signal, writing the deliverable would unlock the hook
+// sources, the profile and the hook state mid-run.
 test('writing report.md does NOT release the control plane', () => {
   const root = repoWithRun({ reportWritten: true });
   try {

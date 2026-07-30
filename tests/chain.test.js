@@ -186,7 +186,7 @@ test('the seal is a keyed HMAC of the record, not a bare hash', () => {
   const expected = crypto.createHmac('sha256', Buffer.from(key, 'hex')).update(material).digest('hex');
   assert.strictEqual(chain.sealOf(key, record), expected, 'seal must be HMAC-SHA256 over the canonical material');
 
-  // The two degenerate implementations the suite could not previously tell apart.
+  // Rule out the two degenerate implementations: a plain digest, and one ignoring the key.
   assert.notStrictEqual(chain.sealOf(key, record), crypto.createHash('sha256').update(material).digest('hex'));
   assert.notStrictEqual(
     chain.sealOf(key, record),

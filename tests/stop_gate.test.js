@@ -311,9 +311,9 @@ test('clean trees pass without running anything; escape valve releases after 3 b
 // --- the default-branch blind spot -------------------------------------------------------
 //
 // The gate diffs merge-base(HEAD, baseRef)..HEAD. When HEAD *is* the branch point — a session
-// committing straight to the default branch rather than a ticket branch — that diff is empty,
-// the tree is clean, and the gate used to pass having run nothing, with no note either. That is
-// the same failure the branch-point fix was written to close, one topology to the left.
+// committing straight to the default branch rather than a ticket branch — that diff is empty
+// and the tree is clean, which is the same clean-tree-passes-nothing failure as a
+// working-tree-only check, one topology to the left.
 test('committed work on the default branch is not passed on an empty diff', () => {
   const env = setupRepo();
   try {

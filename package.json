@@ -1,6 +1,6 @@
 {
   "name": "ticket-loop-harness",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Loop-engineering harness for Claude Code — dev harness for the ticket-loop plugin (the plugin itself is zero-dependency).",
   "license": "MIT",

@@ -10,6 +10,11 @@
   },
   "riskPaths": [
     "plugins/ticket-loop/hooks/freeze_guard.js",
+    "plugins/ticket-loop/hooks/guard_policy.js",
+    "plugins/ticket-loop/hooks/dispatch_guard.js",
+    "plugins/ticket-loop/hooks/stop_gate.js",
+    "plugins/ticket-loop/skills/ticket-loop/scripts/chain.js",
+    "plugins/ticket-loop/skills/ticket-loop/scripts/ledger.js",
     ".claude-plugin/**",
     ".github/workflows/**"
   ],
@@ -24,6 +29,8 @@
     "stopGate": {
       "extensions": [".js"],
       "mode": "full",
+      "worktrees": "all",
+      "baseRef": "main",
       "timeoutMs": 180000
     }
   }

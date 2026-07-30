@@ -185,8 +185,8 @@ test('the lazy path is refused at every step a shortcut would be taken', () => {
     assert.strictEqual(dispatch(root).status, 2, 'editing the mirror must not buy a dispatch');
 
     // Shortcut 6: claim a QA pass that never happened. Asserting `require` fails BEFORE
-    // anything is claimed proves nothing — the claim route is what has to be refused, and it
-    // used to work: `gate qa` took no evidence, so `require qa` then exited 0.
+    // anything is claimed proves nothing — the claim route is what must be refused, so drive
+    // it: a `gate qa` carrying no verdict must not be able to satisfy `require qa`.
     assert.strictEqual(ledger(root, ['require', runDir, 'qa']).status, 3);
     const forgedGate = ledger(root, ['gate', runDir, 'qa']);
     assert.strictEqual(forgedGate.status, 1, 'a qa receipt with no verdict behind it must be refused');

@@ -23,10 +23,11 @@ const RUNS_REL = path.join('.agents', 'ticket-runs');
 // (no closed.json). Deliberately a filesystem heuristic and not a require() of the skill's
 // chain.js: in the manual install the hooks and scripts land in different trees.
 //
-// The signal used to be the absence of report.md, which made the run's own deliverable the
-// off switch for every gate — an ordinary Write released the budget and the control-plane
-// freeze. closed.json is written only by `ledger.js close`, which requires a sealed report
-// receipt, and this hook denies writes to it.
+// The signal must not be any file the loop writes as ordinary work — report.md as the "run
+// is over" marker would make the run's own deliverable the off switch for every gate, so a
+// plain Write would release the budget and the control-plane freeze. closed.json is written
+// only by `ledger.js close`, which requires a sealed report receipt, and this hook denies
+// writes to it.
 function activeRuns(root) {
   const runsDir = path.join(root, RUNS_REL);
   let entries;

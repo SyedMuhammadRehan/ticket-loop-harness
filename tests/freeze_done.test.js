@@ -42,8 +42,8 @@ test('freezes a validated draft into done.md + done.approved.md + additions file
   }
 });
 
-// The finding: validate_done.js was advisory. Nothing stopped an unvalidated draft — one
-// with no behavioural criterion, or with every box pre-ticked — from being frozen.
+// Validation must be a precondition of freezing, not advice: otherwise an unvalidated draft
+// — no behavioural criterion, or every box pre-ticked — can become the frozen contract.
 test('refuses to freeze a draft that was never validated', () => {
   const { root, runDir } = setup();
   try {
