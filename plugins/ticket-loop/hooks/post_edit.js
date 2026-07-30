@@ -55,7 +55,7 @@ function main() {
 
   const { found, config } = lib.loadConfig();
   const conf = found && config.hooks && config.hooks.postEdit;
-  if (!conf) process.exit(0); // no profile / no postEdit block -> inert by design
+  if (!conf) process.exit(0);
 
   if (!shouldProcess(file, conf)) process.exit(0);
   if (!require('fs').existsSync(file)) process.exit(0);

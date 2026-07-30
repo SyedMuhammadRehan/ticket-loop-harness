@@ -20,9 +20,7 @@ const DEFAULTS = {
   buildResolverAgent: null,
   memoryFile: null,
   attribution: {
-    // Trailer appended to every worktree commit, e.g. "Co-Authored-By: ...".
-    // null (default) = clean commits with NO AI attribution — the repo owner's
-    // policy decides, never the loop.
+    // Commit trailer for repos that require AI disclosure; null = clean commits.
     commitTrailer: null,
   },
 };

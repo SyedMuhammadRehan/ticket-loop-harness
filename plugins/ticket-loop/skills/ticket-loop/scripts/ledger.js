@@ -1,8 +1,6 @@
 #!/usr/bin/env node
-// Mechanical budget enforcement (zero deps). The dispatch/replan caps used to live as
-// numbers in ledger.md maintained by the same orchestrator they constrain — an honor
-// system. Now they live in budget.json, written ONLY by this script and shielded from
-// Edit/Write/shell tampering by the freeze_guard hook.
+// Mechanical budget enforcement (zero deps). Counters live in budget.json, written
+// ONLY by this script and shielded from Edit/Write/shell tampering by freeze_guard.
 //
 //   ledger.js init <runDir> [baseSha]   create budget.json + ledger.md skeleton
 //   ledger.js dispatch <runDir> [label] +1 dispatch; exit 2 when the budget is exhausted

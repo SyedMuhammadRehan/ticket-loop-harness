@@ -44,7 +44,6 @@ function writeState(root, s) {
   }
 }
 
-// Parse `git worktree list --porcelain` into [{path, branch}].
 function parseWorktrees(porcelain) {
   const out = [];
   let current = null;
@@ -63,7 +62,6 @@ function parseWorktrees(porcelain) {
   return out;
 }
 
-// Trees to verify: the main repo root plus every worktree on a ticket/* branch.
 function treesToCheck(root) {
   const trees = [path.resolve(root)];
   const res = spawnSync('git', ['-C', root, 'worktree', 'list', '--porcelain'], {
@@ -197,7 +195,7 @@ function main() {
   const { found, root, config, error } = lib.loadConfig();
   if (error) console.error(`stop_gate: ${error} — gate is inert until the config parses.`);
   const conf = found && config.hooks && config.hooks.stopGate;
-  if (!conf) process.exit(0); // no profile / no stopGate block -> inert by design
+  if (!conf) process.exit(0);
 
   const state = readState(root);
   if (input.stop_hook_active && state.consecutiveBlocks >= MAX_CONSECUTIVE_BLOCKS) {
