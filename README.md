@@ -21,7 +21,8 @@ flowchart TD
     S0 --> S1{"1 · Intake — Gate A"}
     S1 -->|no spec / risky path| H(["ask human"])
     S1 --> S2{"2 · Design — Gate B"}
-    S2 --> S3["3 · Freeze done-list 🔒"]
+    S2 --> S25["2.5 · Approach — options · failure modes · slice order"]
+    S25 --> S3["3 · Freeze done-list 🔒"]
     S3 --> S4["4 · Implement (TDD) — Gate C"]
     S4 --> S5["5 · Verify — analyze, tests, runtime"]
     S5 -->|fail| LOOP["↺ Loop — ledger · 3 strikes → re-plan · 2 re-plans → stop"]
@@ -134,6 +135,12 @@ with every ticket. Managed by `scripts/memory.js` (zero-dep).
 
 ## How the loop stays honest
 
+- **Recorded design decisions** — feature-sized tickets get an `approach.md` BEFORE the
+  contract: ≥2 real options with tradeoffs, why the loser lost, the failure modes (each
+  mechanically required to map to a done-list criterion or an explicit out-of-scope), and
+  the slice order — riskiest first, so the slice most able to disprove the design runs
+  while sunk cost is lowest. Re-plans update it; the QA judge BLOCKs silent design drift.
+  Trivial tickets skip it — proportionality, same as the Survey.
 - **Frozen done-list** — the acceptance criteria are locked before coding; a hook denies
   Edit/Write **and shell writes** (`>` redirects, `sed -i`, `rm`, `Set-Content`, …) to them,
   so the agent can't move its own goalposts.
@@ -173,8 +180,26 @@ Proceed? Acceptance criteria found (3), Figma link found. Clear this path? [y/n]
 You clear it. (If there had been *no* acceptance criteria and *no* design link, it would have
 stopped and asked for scope instead of guessing — that refusal is the point.)
 
-**Stage 2–3 (design + frozen done-list).** It pulls the Figma node's exact values into
-`design-spec.md`, then writes and validates `done.md`, then **freezes** it:
+**Stage 2–3 (design + approach + frozen done-list).** It pulls the Figma node's exact
+values into `design-spec.md`. The ticket is feature-sized (repository + screen), so it
+records the design decision in `approach.md` before writing the contract:
+
+```markdown
+## Options
+- A: map DioException → typed ProfileError in the repository — UI stays transport-blind
+- B: catch DioException in the widget — fewer files, but couples UI to dio and every
+  future caller re-implements the mapping
+## Chosen
+- A: error semantics belong at the data boundary; B leaks transport details upward
+## Failure modes
+- API 404 vs 500 need distinct messages | covered-by: C1
+- retry storms if the user hammers the button | covered-by: out-of-scope (rate-limit ticket)
+## Slice order
+- 1st: C1 repository mapping — if typed errors can't cross this boundary cleanly, A is wrong
+```
+
+Then it writes and validates `done.md` (the validator mechanically checks every failure
+mode above is covered), then **freezes** it:
 
 ```markdown
 # Done — PROJ-128

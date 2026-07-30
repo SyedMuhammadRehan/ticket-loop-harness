@@ -15,8 +15,12 @@ A design-token check failed inside the worktree at {WORKTREE_PATH}. Fix ONLY thi
 {LEDGER_FORBIDDEN}
 
 ## Rules
-1. Change the implementation to satisfy EXPECTED. Never change the expected value,
-   never edit the test's assertion to match ACTUAL, never touch done.md/*.approved.md.
+1. Find the ROOT CAUSE of the mismatch before changing anything, then fix at that
+   level. Never change the expected value, never edit the test's assertion to match
+   ACTUAL, never touch done.md/*.approved.md. Your return MUST include a line
+   `root-cause: <what it actually was>` — if your change is knowingly a symptom fix,
+   say so: `root-cause: NOT addressed — real fix is <X>` (an honest patch is
+   acceptable; a disguised one is not).
 2. If EXPECTED appears wrong (e.g. design-spec extraction error), do NOT fix it
    yourself — return `STATUS: dispute` with your evidence; the orchestrator re-extracts
    from Figma and re-freezes via done-additions.md if needed.

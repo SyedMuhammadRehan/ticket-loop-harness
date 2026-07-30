@@ -1,6 +1,6 @@
 ---
 name: ticket-loop
-description: Run a Jira ticket end-to-end with loop engineering — intake, design spec (Figma / OpenAPI / none, per repo profile), frozen done-list, TDD implementation, stack-agnostic verification, adversarial QA, evidence report. Stack + verify commands + design source come from .agents/ticket-loop.config.json. Use when the user types /ticket-loop <TICKET-ID>, optionally with --dry-run (stages 0–3 only) or --update-jira (post report summary as a ticket comment).
+description: Run a Jira ticket end-to-end with loop engineering — intake, design spec (Figma / OpenAPI / none, per repo profile), recorded approach decision (options, failure modes, slice order), frozen done-list, TDD implementation, stack-agnostic verification, adversarial QA, evidence report. Stack + verify commands + design source come from .agents/ticket-loop.config.json. Use when the user types /ticket-loop <TICKET-ID>, optionally with --dry-run (stages 0–3 only) or --update-jira (post report summary as a ticket comment).
 ---
 
 # Ticket Loop
@@ -158,9 +158,55 @@ Skip (mark SKIPPED in report) if LOGIC-ONLY. For each Figma link in the brief:
 4. **GATE B (hard stop) if** the design contradicts the ticket text (different component,
    conflicting behavior, mismatched counts/labels). Name the contradiction, ask.
 
+## Stage 2.5 — APPROACH (decide the design BEFORE the contract, proportionally)
+
+Design happens here, on paper, where mistakes are free — not inside an implementer
+subagent three failed dispatches from now. Proportional, same rule as the Survey:
+
+1. **Trivial** (survey was skipped): SKIP. Note "approach: skipped (trivial)" in the
+   ledger. Do NOT produce the artifact for a 1–2 file change.
+2. **Feature/subsystem**: YOU (the orchestrator) write `approach.md` — this is design
+   work, not implementation, so it costs no dispatch. Use ticket-brief.md,
+   codebase-map.md, and design-spec.md. EXACTLY these sections:
+
+   ```markdown
+   # Approach — <TICKET>
+   ## Data
+   - <entity touched>: owner/source of truth is <where>, this change <reads|writes|reshapes> it
+   ## Boundary
+   - the change lives behind <layer/module/interface>; callers see <what stays stable>
+   ## Options
+   - A: <approach> — <one-line tradeoff>
+   - B: <approach> — <one-line tradeoff>
+   ## Chosen
+   - <A|B>: <why it wins — and why the loser loses; this line is what saves the re-litigation later>
+   ## Failure modes
+   - <what can go wrong at runtime — bad input, dependency down, race, empty state> | covered-by: C<n>
+   - <a failure mode consciously not handled> | covered-by: out-of-scope (<reason>)
+   ## Slice order
+   - 1st: <the slice MOST able to prove this approach wrong> — <why it is the riskiest>
+   - then: <remaining slices, cheapest-information last>
+   ```
+
+   Rules: ≥2 real options (a strawman B is self-deception — if you cannot name a
+   second credible approach, say why in Chosen). EVERY failure mode must carry a
+   `covered-by:` tag — either a criterion id that will exist in the done-list, or
+   `out-of-scope (<reason>)` with the reason REQUIRED. `validate_done.js` enforces
+   this mechanically at Stage 3: untagged failure modes, out-of-scope without a
+   reason, covered-by pointing at a nonexistent criterion, <2 options, an empty
+   Chosen, and duplicated section headings all fail validation. Out-of-scope failure
+   modes must also be echoed in the done-list's `## Out of scope` (the QA judge
+   checks this half).
+3. The approach is a DECISION RECORD, not a cage: if reality proves it wrong, the
+   RE-PLAN path (Stage 6) updates it — under `## Revisions`, with what changed and why.
+   What is forbidden is silent drift: implementing a different design than the recorded
+   one without a revision entry (the QA judge checks for exactly this).
+
 ## Stage 3 — DEFINE DONE
 
-1. From AC + design-spec, write `done.draft.md` in EXACTLY this format:
+1. From AC + design-spec + approach.md (when present — its failure modes MUST surface
+   here as criteria or explicit out-of-scope entries), write `done.draft.md` in
+   EXACTLY this format:
 
    ```markdown
    # Done — <TICKET>
@@ -186,18 +232,22 @@ Skip (mark SKIPPED in report) if LOGIC-ONLY. For each Figma link in the brief:
 3. Freeze: `node <SKILL_DIR>/scripts/freeze_done.js .agents/ticket-runs/<TICKET>`
    — from here `done.md`/`done.approved.md` are hook-protected read-only;
    new discoveries go to `done-additions.md` (additive only).
-4. **--dry-run ends here**: print brief, design-spec, and frozen done-list paths + a
-   3-line summary of each; stop.
+4. **--dry-run ends here**: print brief, design-spec, approach (if produced), and
+   frozen done-list paths + a 3-line summary of each; stop.
 
 ## Stage 4 — IMPLEMENT (inside the worktree, TDD)
 
-Slice the work: one slice per AC (or per done-list criterion when finer). For each slice
-dispatch an IMPLEMENTER subagent with `prompts/implementer.md`, filling:
+Slice the work: one slice per AC (or per done-list criterion when finer). Order the
+slices per approach.md `## Slice order` — RISKIEST FIRST: the slice most able to prove
+the chosen approach wrong runs while sunk cost is lowest (no approach.md → any sensible
+order). For each slice dispatch an IMPLEMENTER subagent with `prompts/implementer.md`, filling:
 {TICKET}, {WORKTREE_PATH}, {SLICE} (the criterion text), {SLICE_ID} (the criterion id, e.g. C3),
 {DONE_LIST} (done.md +
 done-additions.md contents), {DESIGN_EXCERPT} (relevant design-spec lines),
 {CODEBASE_MAP} (relevant lines from codebase-map.md, or "n/a — trivial change" if the
-survey was skipped), {LEDGER_FORBIDDEN} (all `forbidden-now` lines from ledger.md).
+survey was skipped), {APPROACH} (the `## Chosen` + `## Boundary` + relevant failure-mode
+lines from approach.md, or "n/a — trivial change" if the approach stage was skipped),
+{LEDGER_FORBIDDEN} (all `forbidden-now` lines from ledger.md).
 BEFORE EVERY subagent dispatch (implementer, fixer, QA, survey) run
 `node <SKILL_DIR>/scripts/ledger.js dispatch .agents/ticket-runs/<TICKET> "<kind>: <slice-or-check>"`
 — exit 2 means the dispatch budget is exhausted: do NOT dispatch; go to Stage 7 with
@@ -271,7 +321,10 @@ Ledger entry after every attempt (append under `## Attempts`):
   the CIRCUIT BREAKER (re-plan budget exhausted): do NOT re-plan; go to Stage 7 with
   status INCOMPLETE. Otherwise write a materially different approach for that slice
   (different widget structure / different state placement / different data flow — not a
-  parameter tweak) and continue.
+  parameter tweak) and continue. If approach.md exists, record the change there under
+  `## Revisions` (`- R<n>: <what changed> — because <what reality proved wrong>`); a
+  re-plan is a design decision, and unrecorded design changes are what the QA judge
+  BLOCKs as silent drift.
 - HARD BUDGET: `ledger.js dispatch` exits 2 when the 25-dispatch cap is hit — stop
   looping, go to Stage 7 with status INCOMPLETE. The script is authoritative; never
   bypass it by dispatching without the call.
@@ -291,6 +344,8 @@ skipped, fill it with "the conventions evident in the surrounding code — no
 stack-specific assumptions". Provide ONLY these inputs (paste contents, not paths):
 ticket-brief.md, design-spec.md, done.approved.md, done-additions.md, assumptions.md,
 codebase-map.md (if the survey produced one — lets QA judge convention-adherence),
+approach.md (if produced — lets QA judge design adherence: a diff implementing a
+DIFFERENT design than the chosen approach, with no `## Revisions` entry, is a BLOCK),
 the full implementation diff (`git -C ../ticket-<TICKET> diff <base>..HEAD`, where
 `<base>` is the `base:` SHA from the ledger header), and the stage-5 check results table. NEVER include ledger.md or any implementer output —
 the judge must not see the implementer's reasoning.

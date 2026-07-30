@@ -10,6 +10,7 @@ posture: find reasons to BLOCK; approve only when you fail to.
 - Frozen done-list: {DONE_APPROVED}
 - Additions: {DONE_ADDITIONS}
 - Assumptions the loop made: {ASSUMPTIONS}
+- Chosen approach, the recorded design decision (may be "n/a — trivial"): {APPROACH}
 - Implementation diff: {DIFF}
 - Verification results: {CHECK_RESULTS}
 - Repo conventions to enforce: {CONVENTIONS}
@@ -27,7 +28,12 @@ Never read files under .agents/ticket-runs/ — your only run context is the inp
 5. Code quality: the repo conventions listed above, plus universal red flags —
    swallowed/bare error handling, debug prints, dead code, oversized files/functions,
    obvious performance traps.
-6. Scope: does the diff contain changes NOT justified by any AC or addition? → BLOCK.
+6. Design adherence (skip if approach is "n/a"): does the diff implement the CHOSEN
+   approach? A materially different design with no `## Revisions` entry recording the
+   change → BLOCK, even if it works — silent drift, not the design itself, is the
+   defect. Also: does the diff actually cover the approach's failure modes the
+   done-list claims to cover?
+7. Scope: does the diff contain changes NOT justified by any AC or addition? → BLOCK.
 
 ## Verdict (your final message, exactly this shape)
 VERDICT: BLOCK | APPROVE WITH COMMENTS | APPROVE

@@ -11,6 +11,12 @@ You implement ONE slice inside the worktree at {WORKTREE_PATH}. Work ONLY there.
 ## Existing-code context (build WITH the grain of this — conventions, patterns, files)
 {CODEBASE_MAP}
 
+## Chosen approach (the recorded design decision — build THIS shape)
+{APPROACH}
+If, while implementing, you conclude this design is wrong, do NOT silently build a
+different one: return `STATUS: red` with your evidence and let the orchestrator
+re-plan — design changes get recorded, not smuggled in.
+
 ## Design values (use EXACTLY these; no guessed hex/sizes)
 {DESIGN_EXCERPT}
 

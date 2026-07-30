@@ -88,3 +88,144 @@ test('empty out-of-scope section fails', () => {
     rmDir(dir);
   }
 });
+
+// --- approach.md contract (Stage 2.5) ---
+
+const VALID_APPROACH = `# Approach — T-1
+## Data
+- profile: owned by the API; this change reads it
+## Boundary
+- change lives behind ProfileRepository; callers see the same interface
+## Options
+- A: map errors in the repository — keeps UI dumb
+- B: map errors in the widget — fewer files touched, leaks transport details upward
+## Chosen
+- A: error semantics belong at the data boundary; B couples UI to dio exceptions
+## Failure modes
+- API returns 404/500 | covered-by: C1
+- device offline | covered-by: out-of-scope (separate ticket)
+## Slice order
+- 1st: C1 error mapping — proves the repository boundary can express typed errors
+`;
+
+function writeDraftWithApproach(draftContent, approachContent) {
+  const dir = writeDraft(draftContent);
+  fs.writeFileSync(path.join(dir, 'approach.md'), approachContent);
+  return dir;
+}
+
+test('valid draft + valid approach passes and reports the contract check', () => {
+  const dir = writeDraftWithApproach(VALID_DRAFT, VALID_APPROACH);
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.ok(res.stdout.includes('approach contract checked'));
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('failure mode without a covered-by tag fails', () => {
+  const dir = writeDraftWithApproach(
+    VALID_DRAFT,
+    VALID_APPROACH.replace(' | covered-by: C1', '')
+  );
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 1);
+    assert.ok(res.stderr.includes('covered-by'));
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('failure mode pointing at a criterion that does not exist fails', () => {
+  const dir = writeDraftWithApproach(
+    VALID_DRAFT,
+    VALID_APPROACH.replace('| covered-by: C1', '| covered-by: C9')
+  );
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 1);
+    assert.ok(res.stderr.includes('no criterion C9'));
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('a single option is a guess, not a decision — fails', () => {
+  const dir = writeDraftWithApproach(
+    VALID_DRAFT,
+    VALID_APPROACH.replace('- B: map errors in the widget — fewer files touched, leaks transport details upward\n', '')
+  );
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 1);
+    assert.ok(res.stderr.includes('>=2 options'));
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('empty Chosen and empty Failure modes both fail', () => {
+  const gutted = VALID_APPROACH
+    .replace('- A: error semantics belong at the data boundary; B couples UI to dio exceptions\n', '')
+    .replace(/- API returns 404\/500 \| covered-by: C1\n- device offline \| covered-by: out-of-scope \(separate ticket\)\n/, '');
+  const dir = writeDraftWithApproach(VALID_DRAFT, gutted);
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 1);
+    assert.ok(res.stderr.includes('Chosen'));
+    assert.ok(res.stderr.includes('Failure modes'));
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('out-of-scope without a reason is a silent opt-out — fails', () => {
+  const dir = writeDraftWithApproach(
+    VALID_DRAFT,
+    VALID_APPROACH.replace('| covered-by: out-of-scope (separate ticket)', '| covered-by: out-of-scope')
+  );
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 1);
+    assert.ok(res.stderr.includes('out-of-scope (<reason>)'));
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('a duplicated section heading cannot hide an unvalidated second block — fails', () => {
+  const smuggled = VALID_APPROACH +
+    '## Failure modes\n- newly discovered dangerous case, untagged\n';
+  const dir = writeDraftWithApproach(VALID_DRAFT, smuggled);
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 1);
+    assert.ok(res.stderr.includes('duplicate'));
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('heading match is case-insensitive (formatting drift must not false-fail)', () => {
+  const dir = writeDraftWithApproach(VALID_DRAFT, VALID_APPROACH.replace('## Chosen', '## chosen'));
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 0, res.stderr);
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('no approach.md means no approach checks (trivial tickets stay cheap)', () => {
+  const dir = writeDraft(VALID_DRAFT);
+  try {
+    const res = runScript(SCRIPT, [dir]);
+    assert.strictEqual(res.status, 0);
+    assert.ok(!res.stdout.includes('approach'));
+  } finally {
+    rmDir(dir);
+  }
+});
