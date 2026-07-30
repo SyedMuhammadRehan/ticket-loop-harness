@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mkRun, rmDir, ledger, chainDirFor } = require('./helpers.js');
+const { mkRun, rmDir, ledger, chainDirFor, HOOKS_DIR } = require('./helpers.js');
 
 function init(base) {
   const { root, runDir } = mkRun({ verify: { test: 'node tests/run.js' } });
@@ -329,6 +329,63 @@ test('receipt-backed stages are bound to the record they claim, not to a file', 
   } finally {
     rmDir(root);
   }
+});
+
+// `rm -rf` on the chain dir then `init` used to zero every counter and every receipt while
+// verify still reported intact:true — the refusal only fired when a chain was present.
+test('a deleted chain directory is refused by init, not treated as a fresh run', () => {
+  const { root, runDir } = init();
+  try {
+    for (let i = 0; i < 4; i++) ledger(root, ['dispatch', runDir, 'd' + i]);
+    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 4);
+
+    fs.rmSync(path.join(root, '.git', 'ticket-loop', 'T-1'), { recursive: true, force: true });
+    const res = ledger(root, ['init', runDir, 'abc']);
+    assert.strictEqual(res.status, 1, res.stderr);
+    assert.ok(res.stderr.includes('NO receipt chain'), res.stderr);
+    assert.ok(res.stderr.includes('--restart'), res.stderr);
+
+    // The sanctioned way out records that the history was missing, so a restart cannot be
+    // presented as a first run.
+    const restart = ledger(root, ['init', runDir, 'abc', '--restart']);
+    assert.strictEqual(restart.status, 0, restart.stderr);
+    const chainFile = path.join(root, '.git', 'ticket-loop', 'T-1', 'chain.jsonl');
+    const initRec = JSON.parse(fs.readFileSync(chainFile, 'utf8').trim().split('\n')[0]);
+    assert.match(initRec.payload.restartedFrom, /MISSING/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('an emptied chain file stops the ledger instead of resetting the budget', () => {
+  const { root, runDir } = init();
+  try {
+    for (let i = 0; i < 3; i++) ledger(root, ['dispatch', runDir, 'd' + i]);
+    fs.writeFileSync(path.join(root, '.git', 'ticket-loop', 'T-1', 'chain.jsonl'), '');
+
+    const res = ledger(root, ['dispatch', runDir, 'free one']);
+    assert.strictEqual(res.status, 4, res.stderr);
+    assert.ok(res.stderr.includes('CHAIN BROKEN'), res.stderr);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('the chain directory itself is protected, not just chain.jsonl', () => {
+  const policy = require(path.join(HOOKS_DIR, 'guard_policy.js'));
+  for (const cmd of [
+    'rm -rf .git/ticket-loop',
+    'rm -rf .git/ticket-loop/T-1',
+    'mv .git/ticket-loop/T-1 /tmp/stash',
+    'rm .git/ticket-loop/T-1/key',
+    'rm .git/worktrees/wt/ticket-loop/T-1/head.json',
+  ]) {
+    assert.ok(policy.commandVerdict(cmd, { runActive: false }), `must be denied: ${cmd}`);
+  }
+  // ...and the harness's own plugin tree is NOT swept up by that pattern, or this repo would be
+  // undevelopable.
+  assert.strictEqual(policy.commandVerdict('prettier --write plugins/ticket-loop/README.md', { runActive: false }), null);
+  assert.strictEqual(policy.commandVerdict('ls plugins/ticket-loop/skills', { runActive: false }), null);
 });
 
 test('dispatch/status on an uninitialized run dir fails with guidance', () => {

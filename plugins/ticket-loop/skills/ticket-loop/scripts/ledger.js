@@ -152,6 +152,22 @@ function requireChain(runDir) {
 function cmdInit(runDir, baseSha, opts) {
   fs.mkdirSync(runDir, { recursive: true });
 
+  // A chain that is GONE is not the same as a run that never started. `rm -rf` on the chain dir
+  // followed by `init` used to zero every counter and every receipt and still report
+  // `intact: true` — the refusal below only fired when a chain was present. budget.json is the
+  // one trace the chain leaves inside the run dir, and freeze_guard protects it, so its presence
+  // without a chain is the signature of a deleted history.
+  if (!chain.exists(runDir) && fs.existsSync(budgetPath(runDir)) && !opts.restart) {
+    console.error(
+      `ledger init: ${runDir} has a budget.json but NO receipt chain at ${chain.resolveChainDir(runDir).dir}.\n` +
+        `  The chain was deleted, moved, or the run dir was copied from elsewhere. Initializing now would ` +
+        `silently reset the counters and drop every stage receipt.\n` +
+        `  If this is a deliberate clean restart: "ledger.js init ${runDir} <baseSha> --restart" — it records ` +
+        `that the previous history was missing. If not, restore the chain before continuing.`
+    );
+    process.exit(1);
+  }
+
   if (chain.exists(runDir) && !opts.restart) {
     const c = counters(runDir);
     console.error(
@@ -165,8 +181,14 @@ function cmdInit(runDir, baseSha, opts) {
 
   let rotated = null;
   if (opts.restart) {
+    const priorMirror = !chain.exists(runDir) && fs.existsSync(budgetPath(runDir));
     rotated = chain.rotate(runDir);
-    if (!rotated) chain.create(runDir);
+    if (!rotated) {
+      chain.create(runDir);
+      // A restart over a chain that is not there is worth recording as exactly that, so the
+      // report cannot present it as a first run.
+      if (priorMirror) rotated = { retired: 'MISSING — the previous chain directory was gone', retiredSeal: null, retiredRecords: null };
+    }
   } else {
     chain.create(runDir);
   }

@@ -4,8 +4,15 @@
 // It lives OUTSIDE the run dir — in <gitdir>/ticket-loop/<TICKET>/ — because a record kept
 // inside the namespace the orchestrator writes to is not a record. Consequences:
 //   - archiving or deleting the run dir does not reset the budget (the chain survives);
-//   - a stage receipt cannot be back-dated or invented without the per-run key;
-//   - `verify` detects any edit, reorder, or truncation of the history.
+//   - a stage receipt cannot be invented without the per-run key;
+//   - `verify` detects edits and reordering from the links and seals, and truncation from the
+//     head anchor (head.json) — without the anchor, dropping the last k lines is invisible,
+//     because everything that remains still verifies.
+//
+// What `verify` does NOT establish: that the timestamps are honest (`at` is whatever the writer
+// put there and is not checked for monotonicity), or that the chain is the FIRST one for this
+// run — a deleted chain directory is indistinguishable from a fresh start, which is why
+// ledger.js init cross-checks the run dir's mirror before creating one.
 //
 // Threat model, stated honestly: an agent with shell access CAN read the key and forge a
 // chain. What this buys is that forging is a deliberate, multi-step, *detectable* act
@@ -17,6 +24,7 @@ const crypto = require('crypto');
 
 const CHAIN_FILE = 'chain.jsonl';
 const KEY_FILE = 'key';
+const HEAD_FILE = 'head.json';
 const CHAIN_SUBDIR = 'ticket-loop';
 const FALLBACK_DIR = '.ticket-loop-chain';
 const MAX_ROOT_SEARCH_DEPTH = 8;
@@ -58,6 +66,9 @@ function chainPath(runDir) {
 function keyPath(runDir) {
   return path.join(resolveChainDir(runDir).dir, KEY_FILE);
 }
+function headPath(runDir) {
+  return path.join(resolveChainDir(runDir).dir, HEAD_FILE);
+}
 
 function exists(runDir) {
   return fs.existsSync(chainPath(runDir));
@@ -84,6 +95,30 @@ function canonical(value) {
 function sealOf(key, record) {
   const material = [record.seq, record.kind, record.at, canonical(record.payload), record.prev].join('|');
   return crypto.createHmac('sha256', Buffer.from(key, 'hex')).update(material).digest('hex');
+}
+
+// The head anchor: how many records there should be, and what the last seal was.
+//
+// Without it, deleting the last k lines of the chain is INVISIBLE — every remaining seq is
+// still contiguous, every prev-link still resolves, every seal still recomputes. Dropping the
+// tail is how you erase the dispatches you just spent or a BLOCK verdict you did not like, and
+// it needs no key. The anchor is sealed with the same key, so an actor who has the key can
+// rewrite it too (see the threat model above); one who does not can no longer truncate quietly.
+function headSeal(key, body) {
+  return crypto.createHmac('sha256', Buffer.from(key, 'hex')).update(canonical(body)).digest('hex');
+}
+
+function writeHead(runDir, key, records, lastSeal) {
+  const body = { records, lastSeal: lastSeal || null };
+  fs.writeFileSync(headPath(runDir), JSON.stringify({ ...body, mac: headSeal(key, body) }) + '\n');
+}
+
+function readHead(runDir) {
+  try {
+    return JSON.parse(fs.readFileSync(headPath(runDir), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 function sha256File(file) {
@@ -127,6 +162,7 @@ function create(runDir) {
   const key = crypto.randomBytes(32).toString('hex');
   fs.writeFileSync(path.join(dir, KEY_FILE), key + '\n', { mode: 0o600 });
   fs.writeFileSync(path.join(dir, CHAIN_FILE), '');
+  writeHead(runDir, key, 0, null);
   return { dir, inGit };
 }
 
@@ -146,6 +182,7 @@ function rotate(runDir) {
   } catch {}
   const key = crypto.randomBytes(32).toString('hex');
   fs.writeFileSync(keyPath(runDir), key + '\n', { mode: 0o600 });
+  writeHead(runDir, key, 0, null);
   return { retired: `chain.${n}.jsonl`, retiredSeal: lastSeal, retiredRecords: records.length };
 }
 
@@ -167,6 +204,7 @@ function append(runDir, kind, payload) {
   };
   record.hmac = sealOf(key, record);
   fs.appendFileSync(chainPath(runDir), JSON.stringify(record) + '\n');
+  writeHead(runDir, key, record.seq, record.hmac);
   return record;
 }
 
@@ -191,6 +229,30 @@ function verify(runDir) {
     if (hmac !== sealOf(key, body)) problems.push(`record ${r.seq} (${r.kind}): seal does not match — content was altered`);
     prev = hmac || null;
   });
+
+  // An initialized chain always holds at least its init record, so zero records means the file
+  // was emptied. `chain.exists()` only asks whether the file is there, and an empty file used to
+  // verify clean AND reset every counter to zero.
+  if (records.length === 0) {
+    problems.push('receipt chain is empty — it does not even hold its init record, so it was truncated to nothing');
+  }
+
+  const head = readHead(runDir);
+  if (!head) {
+    problems.push('chain head anchor (head.json) is missing — truncation of the history cannot be ruled out');
+  } else {
+    const { mac, ...body } = head;
+    if (mac !== headSeal(key, body)) {
+      problems.push('chain head anchor seal does not match — the anchor itself was edited');
+    } else if (head.records !== records.length || (head.lastSeal || null) !== prev) {
+      problems.push(
+        `chain TRUNCATED or an append was interrupted: the head anchor records ${head.records} record(s) ` +
+          `ending ${(head.lastSeal || 'none').toString().slice(0, 12)}…, the file holds ${records.length} ` +
+          `ending ${(prev || 'none').toString().slice(0, 12)}…. Treat as tampering unless you know a run crashed here.`
+      );
+    }
+  }
+
   return { ok: problems.length === 0, records: records.filter((r) => !r.__unparsable), problems };
 }
 
@@ -211,9 +273,11 @@ function last(runDir, kind) {
 module.exports = {
   CHAIN_FILE,
   KEY_FILE,
+  HEAD_FILE,
   resolveChainDir,
   chainPath,
   keyPath,
+  headPath,
   exists,
   create,
   rotate,
@@ -226,4 +290,5 @@ module.exports = {
   hashEvidence,
   sha256File,
   canonical,
+  sealOf,
 };

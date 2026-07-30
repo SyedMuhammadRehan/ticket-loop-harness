@@ -91,7 +91,7 @@ test('deleting a record from the middle breaks the prev-link', () => {
   }
 });
 
-test('truncating the chain is detected as a broken seal or link', () => {
+test('dropping the FIRST record is detected by the seq check', () => {
   const { root, runDir } = fresh();
   try {
     chain.append(runDir, 'a', {});
@@ -102,6 +102,113 @@ test('truncating the chain is detected as a broken seal or link', () => {
     fs.writeFileSync(file, lines[1] + '\n');
     const v = chain.verify(runDir);
     assert.ok(!v.ok);
+    assert.ok(v.problems.some((p) => p.includes('seq is 2')), JSON.stringify(v.problems));
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The variant that actually matters, and that nothing caught: drop records off the END. Every
+// remaining seq is contiguous, every prev-link resolves, every seal recomputes — so links and
+// seals cannot see it, and no key is needed. This is how spent dispatches or a BLOCK verdict
+// would be erased. Only the head anchor notices.
+test('dropping the LAST records is detected by the head anchor', () => {
+  const { root, runDir } = fresh();
+  try {
+    for (const k of ['a', 'b', 'c', 'd']) chain.append(runDir, k, {});
+    const file = chain.chainPath(runDir);
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+    fs.writeFileSync(file, lines.slice(0, 2).join('\n') + '\n');
+
+    const v = chain.verify(runDir);
+    assert.ok(!v.ok, 'tail truncation must not verify clean');
+    assert.ok(v.problems.some((p) => p.includes('TRUNCATED')), JSON.stringify(v.problems));
+    // And specifically NOT via seq/prev-link, which is why the anchor had to exist.
+    assert.ok(!v.problems.some((p) => /seq is|prev-link/.test(p)), JSON.stringify(v.problems));
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('emptying the chain file is detected rather than reading as a fresh run', () => {
+  const { root, runDir } = fresh();
+  try {
+    chain.append(runDir, 'dispatch', { label: 'one' });
+    fs.writeFileSync(chain.chainPath(runDir), '');
+    const v = chain.verify(runDir);
+    assert.ok(!v.ok);
+    assert.ok(v.problems.some((p) => p.includes('truncated to nothing')), JSON.stringify(v.problems));
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('editing the head anchor is itself detected', () => {
+  const { root, runDir } = fresh();
+  try {
+    chain.append(runDir, 'a', {});
+    chain.append(runDir, 'b', {});
+    const head = JSON.parse(fs.readFileSync(chain.headPath(runDir), 'utf8'));
+    head.records = 1;
+    fs.writeFileSync(chain.headPath(runDir), JSON.stringify(head) + '\n');
+    const v = chain.verify(runDir);
+    assert.ok(!v.ok);
+    assert.ok(v.problems.some((p) => p.includes('anchor seal does not match')), JSON.stringify(v.problems));
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a deleted head anchor is reported, not shrugged off', () => {
+  const { root, runDir } = fresh();
+  try {
+    chain.append(runDir, 'a', {});
+    fs.unlinkSync(chain.headPath(runDir));
+    const v = chain.verify(runDir);
+    assert.ok(!v.ok);
+    assert.ok(v.problems.some((p) => p.includes('head anchor')), JSON.stringify(v.problems));
+  } finally {
+    rmDir(root);
+  }
+});
+
+// Known-answer test. Without this the whole suite passes when sealOf is changed to an UNKEYED
+// sha256 of the same material — verified by mutation — which would mean anyone could re-seal a
+// rewritten history without ever reading the key, i.e. the stated threat model would be false
+// while every test stayed green. verify() cannot check this for us: it recomputes with the same
+// function it is testing.
+test('the seal is a keyed HMAC of the record, not a bare hash', () => {
+  const crypto = require('node:crypto');
+  const key = 'ab'.repeat(32);
+  const record = { seq: 1, kind: 'gate', at: '2026-01-01T00:00:00.000Z', payload: { stage: 'qa' }, prev: null };
+  const material = [record.seq, record.kind, record.at, chain.canonical(record.payload), record.prev].join('|');
+
+  const expected = crypto.createHmac('sha256', Buffer.from(key, 'hex')).update(material).digest('hex');
+  assert.strictEqual(chain.sealOf(key, record), expected, 'seal must be HMAC-SHA256 over the canonical material');
+
+  // The two degenerate implementations the suite could not previously tell apart.
+  assert.notStrictEqual(chain.sealOf(key, record), crypto.createHash('sha256').update(material).digest('hex'));
+  assert.notStrictEqual(
+    chain.sealOf(key, record),
+    chain.sealOf('cd'.repeat(32), record),
+    'a different key must produce a different seal'
+  );
+});
+
+test('a history rewritten and re-sealed under the wrong key does not verify', () => {
+  const { root, runDir } = fresh();
+  try {
+    chain.append(runDir, 'check', { id: 'C1', result: 'FAIL' });
+    const wrongKey = 'ef'.repeat(32);
+    const rec = JSON.parse(fs.readFileSync(chain.chainPath(runDir), 'utf8').trim());
+    rec.payload.result = 'PASS';
+    delete rec.hmac;
+    rec.hmac = chain.sealOf(wrongKey, rec);
+    fs.writeFileSync(chain.chainPath(runDir), JSON.stringify(rec) + '\n');
+
+    const v = chain.verify(runDir);
+    assert.ok(!v.ok, 're-sealing without the run key must fail');
+    assert.ok(v.problems.some((p) => p.includes('seal does not match')), JSON.stringify(v.problems));
   } finally {
     rmDir(root);
   }
