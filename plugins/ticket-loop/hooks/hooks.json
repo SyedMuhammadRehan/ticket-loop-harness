@@ -10,7 +10,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/freeze_guard.js\"", "timeout": 15 }
         ]
@@ -19,6 +19,12 @@
         "matcher": "Bash|PowerShell",
         "hooks": [
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/freeze_guard.js\"", "timeout": 15 }
+        ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch_guard.js\"", "timeout": 20 }
         ]
       }
     ],

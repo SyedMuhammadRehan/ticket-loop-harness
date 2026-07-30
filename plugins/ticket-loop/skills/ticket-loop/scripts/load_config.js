@@ -104,4 +104,6 @@ function main() {
   }
   process.stdout.write(JSON.stringify(cfg, null, 2) + '\n');
 }
-main();
+
+if (require.main === module) main();
+module.exports = { resolve, DEFAULTS, findRepoRoot, deepMerge };

@@ -1,5 +1,7 @@
 {
-  "//": "Copy to <repoRoot>/.agents/ticket-loop.config.json and edit for your stack. This is what makes ticket-loop work beyond Flutter/Figma. Three examples below — keep ONE. The 'hooks' block drives the plugin's enforcement hooks (post_edit + stop_gate); without it the hooks are inert and only the skill's prompts protect you.",
+  "//": "Copy to <repoRoot>/.agents/ticket-loop.config.json and edit for your stack. This is what makes ticket-loop work beyond Flutter/Figma. Three examples below — keep ONE. The 'hooks' block drives the plugin's enforcement hooks (post_edit + stop_gate); without it those two hooks are inert and only the skill's prompts protect you. freeze_guard and dispatch_guard work regardless.",
+  "//security": "WARNING: the strings in verify.* and hooks.* are EXECUTED by the plugin's hooks, which run without a permission prompt. This file is therefore as trusted as code. Never accept it unreviewed from a cloned repo — see the Security section in INSTALL.md.",
+  "//stopGate-keys": "baseRef: the branch point used to detect COMMITTED changes (the loop commits every green slice, so a git-status-only check would see nothing). worktrees: all|ticket|cwd — 'all' also covers detached-HEAD and non-ticket/* branches. requireMatchingTest: block when a changed source file has no matching test (targeted mode). timeoutMs is floored at 30s and a timeout BLOCKS rather than passing as 'not verified'.",
 
   "//flutter-frontend": {
     "stack": "flutter",
@@ -31,6 +33,9 @@
         "extensions": [".dart"],
         "exclude": "\\.(g|freezed|tailor|gr|config|gen)\\.dart$",
         "mode": "targeted",
+        "worktrees": "all",
+        "baseRef": "main",
+        "requireMatchingTest": true,
         "testDir": "test",
         "testSuffix": "_test.dart",
         "excludeTests": ["test/golden/", "_golden_test.dart"],
@@ -70,6 +75,8 @@
       "stopGate": {
         "extensions": [".py"],
         "mode": "full",
+        "worktrees": "all",
+        "baseRef": "main",
         "timeoutMs": 300000
       }
     }
@@ -97,6 +104,8 @@
       "stopGate": {
         "extensions": [".go"],
         "mode": "full",
+        "worktrees": "all",
+        "baseRef": "main",
         "timeoutMs": 300000
       }
     }
