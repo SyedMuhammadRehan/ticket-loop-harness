@@ -236,7 +236,28 @@ test('worktrees: "cwd" narrows the scope back for repos that want it', () => {
   }
 });
 
-// timeoutMs: 50 turned every run into "could not verify -> pass".
+// Two independent defenses cover a tiny timeoutMs: the floor, and timeout-treated-as-RED.
+// A red suite blocks under either, so it cannot tell them apart — only a GREEN suite isolates
+// the floor: without it, 50ms kills the test command and an honest pass is reported as RED.
+test('the timeout floor protects a green suite from a tiny timeoutMs', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.py'], mode: 'full', baseRef: 'main', timeoutMs: 50 } });
+  try {
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
+    // No FAIL marker: the suite is green. It still costs a process spawn, which is well over
+    // 50ms and well under the 30s floor.
+    const res = gate(env.main);
+    assert.strictEqual(
+      res.status,
+      0,
+      `a green suite must pass; timeoutMs:50 must be floored, not applied:\n${res.stderr}`
+    );
+    assert.ok(!/exceeded|treated as RED/i.test(res.stderr || ''), `must not report a timeout:\n${res.stderr}`);
+  } finally {
+    teardown(env);
+  }
+});
+
+// A tiny timeoutMs must not turn a RED suite green either — belt to the braces above.
 test('a tiny timeoutMs cannot disable the gate (it is floored)', () => {
   const env = setupRepo({ stopGate: { extensions: ['.py'], mode: 'full', baseRef: 'main', timeoutMs: 50 } });
   try {
