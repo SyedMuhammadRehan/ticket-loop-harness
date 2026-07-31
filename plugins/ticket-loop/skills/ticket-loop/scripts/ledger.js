@@ -16,11 +16,13 @@
 //   ledger.js close <runDir>                       end the run (needs a report receipt)
 //   ledger.js archive <runDir>                     sanctioned CLEAN-RESTART move
 //   ledger.js status <runDir>                      counters as JSON
+//   ledger.js cost <runDir> [--worktree <path>]    what the run spent (proxies, not tokens)
 //   ledger.js verify <runDir>                      chain integrity + tamper report
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const chain = require('./chain.js');
 
 // Bumped when the contract between the hooks and this script changes (chain-backed counters,
@@ -440,6 +442,73 @@ function cmdArchive(runDir) {
   );
 }
 
+// What a run cost, derived ONLY from the sealed chain and from git. Deliberately not token
+// counts: nothing outside the model can observe those, so a "tokens" figure here could only
+// be the orchestrator's self-report — the kind of number this harness exists to distrust.
+//
+// These are proxies, and they are the useful ones: dispatches are the unit the budget spends,
+// and diff size per dispatch is what tells you whether the implementers are writing less code
+// or just churning. Both come from data the loop cannot quietly edit.
+function cmdCost(runDir) {
+  const { baseSha } = caps(runDir);
+  const recs = chain.records(runDir);
+  const stamp = (r) => Date.parse(r.at);
+  const first = recs.length ? stamp(recs[0]) : null;
+  const last = recs.length ? stamp(recs[recs.length - 1]) : null;
+
+  const byKind = {};
+  for (const r of recs) byKind[r.kind] = (byKind[r.kind] || 0) + 1;
+
+  // Wall-clock between consecutive receipts, attributed to the receipt that ends the span.
+  const spans = [];
+  for (let i = 1; i < recs.length; i++) {
+    const label = recs[i].kind === 'gate' ? `gate:${recs[i].payload.stage}` : recs[i].kind;
+    spans.push({ label, ms: stamp(recs[i]) - stamp(recs[i - 1]) });
+  }
+  const slowest = [...spans].sort((a, b) => b.ms - a.ms).slice(0, 5);
+
+  let diff = null;
+  if (baseSha) {
+    const worktree = process.argv.includes('--worktree')
+      ? process.argv[process.argv.indexOf('--worktree') + 1]
+      : '.';
+    const res = spawnSync('git', ['-C', worktree, 'diff', '--numstat', `${baseSha}..HEAD`], {
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    if (res.status === 0) {
+      let added = 0;
+      let removed = 0;
+      let files = 0;
+      for (const line of (res.stdout || '').split('\n').filter((l) => l.trim())) {
+        const [a, r] = line.split('\t');
+        if (a !== '-') added += Number(a) || 0;
+        if (r !== '-') removed += Number(r) || 0;
+        files++;
+      }
+      diff = { files, added, removed, net: added - removed };
+    }
+  }
+
+  const dispatches = dispatchCount(runDir).count;
+  process.stdout.write(
+    JSON.stringify(
+      {
+        note: 'proxies derived from the sealed chain and git — NOT token counts',
+        dispatches,
+        replans: byKind.replan || 0,
+        receiptsByKind: byKind,
+        wallClockMs: first != null && last != null ? last - first : null,
+        slowestSpans: slowest,
+        diffVsBase: diff,
+        linesPerDispatch: diff && dispatches ? Math.round((diff.added + diff.removed) / dispatches) : null,
+      },
+      null,
+      2
+    ) + '\n'
+  );
+}
+
 function cmdStatus(runDir) {
   requireChain(runDir);
   process.stdout.write(JSON.stringify(counters(runDir), null, 2) + '\n');
@@ -549,7 +618,8 @@ function main() {
       'usage: ledger.js init <runDir> [baseSha] [--restart] | dispatch <runDir> [label] | replan <runDir> [reason]\n' +
         '       ledger.js gate <runDir> <stage> [--evidence <file>]... | require <runDir> <stage>\n' +
         '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> [note] | verdict <runDir> <verdict> [--inputs <file>]...\n' +
-        '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol'
+        '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
+        '       ledger.js cost <runDir> [--worktree <path>]'
     );
     process.exit(1);
   }
@@ -575,6 +645,8 @@ function main() {
       return cmdArchive(runDir);
     case 'status':
       return cmdStatus(runDir);
+    case 'cost':
+      return cmdCost(runDir);
     case 'verify':
       return cmdVerify(runDir);
     default:

@@ -413,3 +413,46 @@ test('hook-sourced and script-sourced dispatches are de-duplicated, never summed
     rmDir(root);
   }
 });
+
+// Cost reporting exists so claims about the loop getting cheaper can be checked. It reports
+// PROXIES on purpose: tokens are unobservable from outside the model, so a token figure here
+// could only be the loop's self-report — unverifiable by the standard the rest of the report
+// is held to.
+test('cost derives spend from the sealed chain, and never claims token counts', () => {
+  const { root, runDir } = init();
+  try {
+    ledger(root, ['dispatch', runDir, 'implementer: C1']);
+    ledger(root, ['dispatch', runDir, 'fixer: C3']);
+    ledger(root, ['replan', runDir, 'wrong boundary']);
+
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.strictEqual(cost.dispatches, 2);
+    assert.strictEqual(cost.replans, 1);
+    assert.strictEqual(cost.receiptsByKind.init, 1);
+    assert.strictEqual(cost.receiptsByKind.dispatch, 2);
+    assert.ok(cost.wallClockMs >= 0, 'wall-clock comes from the receipt timestamps');
+    assert.ok(Array.isArray(cost.slowestSpans));
+
+    // No token key, now or by accident later.
+    for (const key of Object.keys(cost)) {
+      assert.ok(!/token/i.test(key), `cost must not report tokens: found "${key}"`);
+    }
+    assert.match(cost.note, /NOT token counts/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('cost degrades honestly when git cannot answer, rather than inventing a diff', () => {
+  const { root, runDir } = init();
+  try {
+    ledger(root, ['dispatch', runDir, 'implementer: C1']);
+    // mkRun's .git is a marker directory, so `git diff` cannot resolve the base.
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.strictEqual(cost.diffVsBase, null, 'an unavailable diff is null, never zero');
+    assert.strictEqual(cost.linesPerDispatch, null, 'no diff means no lines-per-dispatch');
+    assert.strictEqual(cost.dispatches, 1, 'chain-derived numbers still report');
+  } finally {
+    rmDir(root);
+  }
+});

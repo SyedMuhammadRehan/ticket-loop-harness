@@ -22,6 +22,21 @@ Integrity: {INTACT | TAMPERED — list every problem line above and STOP; do not
 Stage receipts: {list of recorded gates, e.g. intake, design, approach, validate, freeze, verify, qa}
 Restarts: {none | retired chain.N.jsonl at <seal> — say why the run was restarted}
 
+## Cost
+
+Paste the output of `node <SKILL_DIR>/scripts/ledger.js cost <runDir> --worktree {WORKTREE}`.
+These are PROXIES from the sealed chain and git, not token counts — nothing outside the model
+can observe tokens, so a figure here would only be this loop's own word.
+
+```
+{LEDGER_COST_OUTPUT}
+```
+
+`linesPerDispatch` is the number to watch across runs: it falls when implementers reuse what
+already exists and rises when they rewrite. A `diffVsBase` far larger than the criteria
+warranted is a finding, not a triumph — and the QA judge's avoidable-code check should
+already have said so.
+
 ## Criteria evidence
 
 Every criterion from done.approved.md plus every entry in done-additions.md. No criterion may

@@ -452,6 +452,12 @@ APPROVE → stage 7.
    listed as PASS / FAIL / SKIPPED(reason); assumptions echoed verbatim from assumptions.md;
    include FLAKY/GOLDEN flags, the toolchain line from stage 0, wall-clock duration, and the
    final counters from `node <SKILL_DIR>/scripts/ledger.js status .agents/ticket-runs/<TICKET>`.
+   **Cost — paste it, do not summarize it:**
+   `node <SKILL_DIR>/scripts/ledger.js cost .agents/ticket-runs/<TICKET> --worktree <worktreePath>`
+   into the report's Cost section. These are proxies (dispatches, wall-clock spans, diff size,
+   lines per dispatch) derived from the sealed chain and git — NEVER substitute a token count,
+   yours or anyone's: nothing outside the model observes tokens, so such a figure would be
+   unverifiable by exactly the standard the rest of this report is held to.
    **Integrity check — paste it, do not summarize it:**
    `node <SKILL_DIR>/scripts/ledger.js verify .agents/ticket-runs/<TICKET>` and put the
    output verbatim in the report's Integrity section. It checks the receipt chain's seals and
