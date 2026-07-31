@@ -64,6 +64,20 @@ test('unparsable config falls back to defaults with a parse warning', () => {
   }
 });
 
+test('attribution defaults to no commit trailer; repo policy can set one', () => {
+  const bare = mkFakeRepo({});
+  const disclosing = mkFakeRepo({ attribution: { commitTrailer: 'Assisted-by: an LLM' } });
+  try {
+    const def = JSON.parse(runScript(SCRIPT, [], { cwd: bare }).stdout);
+    assert.strictEqual(def.attribution.commitTrailer, null);
+    const set = JSON.parse(runScript(SCRIPT, [], { cwd: disclosing }).stdout);
+    assert.strictEqual(set.attribution.commitTrailer, 'Assisted-by: an LLM');
+  } finally {
+    rmDir(bare);
+    rmDir(disclosing);
+  }
+});
+
 test('--get resolves dotted keys', () => {
   const repo = mkFakeRepo({ verify: { test: 'go test ./...' } });
   try {

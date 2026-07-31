@@ -19,6 +19,10 @@ const DEFAULTS = {
   worktreePrefix: '../ticket-',
   buildResolverAgent: null,
   memoryFile: null,
+  attribution: {
+    // Commit trailer for repos that require AI disclosure; null = clean commits.
+    commitTrailer: null,
+  },
 };
 
 const VALID_DESIGN_SOURCES = ['none', 'figma', 'openapi'];
@@ -100,4 +104,6 @@ function main() {
   }
   process.stdout.write(JSON.stringify(cfg, null, 2) + '\n');
 }
-main();
+
+if (require.main === module) main();
+module.exports = { resolve, DEFAULTS, findRepoRoot, deepMerge };
