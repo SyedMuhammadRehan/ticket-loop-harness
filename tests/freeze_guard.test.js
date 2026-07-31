@@ -257,3 +257,31 @@ test('a broad clearance pattern does not open areas it was not granted for', () 
     }
   }
 });
+
+// A path under two declared riskPaths needs EVERY area cleared, and the outcome must not depend
+// on the order the globs appear in the profile — a `find`-on-first-match made it order-dependent.
+test('a path in two risk areas stays denied until every area it matches is cleared', () => {
+  const f = 'db/migrations/003_add_users.sql'; // matches both db/** and **/migrations/**
+  for (const order of [['db/**', '**/migrations/**'], ['**/migrations/**', 'db/**']]) {
+    const partial = repoWithRiskPaths(order, ['db/**']);
+    try {
+      assert.strictEqual(
+        runHook({ file_path: f }, partial).status,
+        2,
+        `order ${JSON.stringify(order)}: clearing only one of two areas must still deny`
+      );
+    } finally {
+      rmDir(partial);
+    }
+    const full = repoWithRiskPaths(order, ['db/**', '**/migrations/**']);
+    try {
+      assert.strictEqual(
+        runHook({ file_path: f }, full).status,
+        0,
+        `order ${JSON.stringify(order)}: clearing both areas must open the path`
+      );
+    } finally {
+      rmDir(full);
+    }
+  }
+});

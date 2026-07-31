@@ -492,3 +492,38 @@ test('clear demands a reason, and cost refuses to report on an unverified chain'
     rmDir(root);
   }
 });
+
+// freeze_guard reads the clearance mirror without consulting the chain, so verify is the only
+// place a mirror written around ledger.js becomes evident. It must flag a granted glob that no
+// sealed clearance record backs — the same guarantee budget.json already gets.
+test('verify flags a forged clearance the chain does not back', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, riskPaths: ['lib/ui/auth/**'] });
+  assert.strictEqual(ledger(root, ['init', runDir, 'abc123']).status, 0);
+  try {
+    // Forge the mirror directly: no `ledger.js clear` ran, so the chain holds no clearance.
+    fs.writeFileSync(
+      path.join(runDir, 'clearances.json'),
+      JSON.stringify({ cleared: [{ glob: 'lib/ui/auth/**', reason: 'FORGED', at: 'now' }] })
+    );
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4, res.stdout);
+    assert.match(res.stdout, /FORGED CLEARANCE: .*lib\/ui\/auth/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The check keys off the sealed record, not the mere presence of a mirror: a clearance granted
+// through ledger.js must verify clean.
+test('verify passes a clearance that ledger.js actually recorded', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, riskPaths: ['lib/ui/auth/**'] });
+  assert.strictEqual(ledger(root, ['init', runDir, 'abc123']).status, 0);
+  try {
+    assert.strictEqual(ledger(root, ['clear', runDir, 'lib/ui/auth/**', 'human approved']).status, 0);
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 0, res.stdout);
+    assert.doesNotMatch(res.stdout, /FORGED CLEARANCE/);
+  } finally {
+    rmDir(root);
+  }
+});

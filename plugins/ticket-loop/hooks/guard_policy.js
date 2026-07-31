@@ -238,23 +238,26 @@ function riskVerdict(filePath, opts = {}) {
   const riskPaths = opts.riskPaths || [];
   if (!opts.runActive || riskPaths.length === 0) return null;
   const p = String(filePath).replace(/\\/g, '/');
-  const hit = riskPaths.find((glob) => {
+  const matches = riskPaths.filter((glob) => {
     try {
       return globToRegExp(glob).test(p);
     } catch {
       return false;
     }
   });
-  if (!hit) return null;
-  // Clearance matches the riskPath GLOB, never the path. Matching a clearance pattern against
-  // the file would let `clear "**"` — or any broad pattern that happens to cover the file —
-  // open every risk area at once, making "per-glob" false for anything but literal equality.
-  if ((opts.cleared || []).includes(hit)) return null;
+  if (matches.length === 0) return null;
+  // A path under several declared riskPaths is editable only when EVERY one is cleared —
+  // matching just the first would make the outcome depend on the order globs appear in the
+  // profile. Clearance matches the glob by identity, never the path: a pattern matched against
+  // the file (`clear "**"`) would open every risk area at once.
+  const cleared = new Set(opts.cleared || []);
+  const uncleared = matches.find((glob) => !cleared.has(glob));
+  if (!uncleared) return null;
   return {
     reason:
-      `risk-tier path (matches riskPaths "${hit}") and no recorded clearance for it. ` +
+      `risk-tier path (matches riskPaths "${uncleared}") and no recorded clearance for it. ` +
       `GATE A/C requires a human to clear this area first; record it with ` +
-      `"ledger.js clear <runDir> ${hit} <why>" once they have. Do NOT clear it yourself`,
+      `"ledger.js clear <runDir> ${uncleared} <why>" once they have. Do NOT clear it yourself`,
   };
 }
 

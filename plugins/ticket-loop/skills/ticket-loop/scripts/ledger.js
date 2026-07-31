@@ -599,6 +599,27 @@ function cmdVerify(runDir) {
       problems.push('budget.json missing or unreadable (mirror only — not fatal)');
     }
 
+    // freeze_guard trusts the clearance mirror without consulting the chain, because it runs on
+    // every edit. So verify does what the hook cannot: confirm every glob the mirror grants is
+    // backed by a sealed record. A mirror written around ledger.js forges a human's GATE A/C
+    // approval, and this is the only place that becomes evident. Only over-granting matters —
+    // a missing entry just makes the hook deny.
+    const sealedClearances = new Set(chain.ofKind(runDir, 'clearance').map((r) => r.payload.glob));
+    try {
+      const cm = JSON.parse(fs.readFileSync(clearancesPath(runDir), 'utf8'));
+      for (const entry of cm.cleared || []) {
+        if (!sealedClearances.has(entry.glob)) {
+          problems.push(
+            `FORGED CLEARANCE: clearances.json grants "${entry.glob}", which no sealed clearance record backs — ` +
+              `the mirror was written around ledger.js. Risk-tier edits under it were let through on a clearance that never happened`
+          );
+        }
+      }
+    } catch {
+      // No mirror, or an unreadable one, grants nothing: the hook denies without it, so there
+      // is no forged exemption to report.
+    }
+
     // Claims that carry no weight. These are not tampering — they are a run whose receipts do
     // not support what the report will say, which reads identically unless verify says so.
     const verdictRec = chain.last(runDir, 'verdict');
