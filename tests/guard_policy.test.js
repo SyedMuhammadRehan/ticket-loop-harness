@@ -207,6 +207,29 @@ test('an unrelated write in another statement does not condemn a read of the run
   assert.ok(!denied(`git diff --no-index ${RUN}/done.md ${RUN}/ledger.md && echo compared`));
 });
 
+// A verb on the read-only list can still write through a flag, and a wildcard reaches the
+// namespace without spelling it — either way the statement is not the harmless read it looks
+// like, and per-statement judging removed the incidental cover a literal mention used to give.
+test('a read-only verb that writes through a flag is not read-only', () => {
+  assert.ok(denied(`sort -o ${RUN}/done.md /dev/null`));
+  assert.ok(denied(`sort --output=${RUN}/budget.json /dev/null`));
+  assert.ok(denied(`npm run build && sort -o ${RUN}/done.md /dev/null`));
+  assert.ok(denied(`node scripts/ledger.js status ${RUN} && sort -o ${RUN}/done.md /dev/null`));
+  assert.ok(!denied(`cat ${RUN}/done.md | sort`), 'plain sort in a read pipeline stays allowed');
+});
+
+test('a glob that reaches the protected namespace counts as naming it', () => {
+  const RM = 'rm -r' + 'f';
+  assert.ok(denied(`${RM} .agents/ticket-*/done.md`));
+  assert.ok(denied(`cat ${RUN}/done.md && ${RM} .agents/ticket-*/done.md`));
+  assert.ok(denied(`${RM} .agents/*/PROJ-1/done.md`));
+  assert.ok(denied(`${RM} .git/ticket-loop/*`));
+  // A bare run-dir glob, reached from inside .agents so no ancestor is named either.
+  assert.ok(denied(`cd .agents && ${RM} ticket-*`));
+  assert.ok(denied(`${RM} ticket-*/done.md`));
+  assert.ok(!denied(`${RM} build/*.tmp`), 'globs outside the namespace are untouched');
+});
+
 test('per-statement judging does not reopen the cross-statement bypasses', () => {
   const RM = 'rm -r' + 'f';
   assert.ok(denied(`cd ${RUN} && ${RM} .`));

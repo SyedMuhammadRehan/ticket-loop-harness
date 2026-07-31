@@ -130,14 +130,23 @@ for (const l of nonManual) {
 }
 
 // "No tokens" must be sayable: without a marker, the only way past the source-required rule
-// is to un-bullet the line until this check stops seeing it.
-const NO_TOKENS = /^-\s*none\b/i;
+// is to un-bullet the line until this check stops seeing it. Anchored so it is the WHOLE
+// bullet — `- none: #B00020` is a token whose name happens to be "none", not a declaration.
+const NO_TOKENS = /^-\s*none\s*(\(.*\))?\s*$/i;
 const tokens = bullets(section('Tokens'));
 const declaredNone = tokens.filter((t) => NO_TOKENS.test(t));
 const realTokens = tokens.filter((t) => !NO_TOKENS.test(t));
 if (declaredNone.length && realTokens.length) {
   errors.push(
     `Tokens declares "none" and then lists ${realTokens.length} token(s) — say one or the other`
+  );
+}
+// The marker is for a run with no visual contract. Where the profile names a design source,
+// "none" would waive every token binding the design stage exists to produce.
+if (declaredNone.length && cfg.designSource && cfg.designSource !== 'none') {
+  errors.push(
+    `Tokens declares "none" but the profile's designSource is "${cfg.designSource}" — ` +
+      `a run with a design source must bind its tokens to design-spec.md`
   );
 }
 for (const t of realTokens) {

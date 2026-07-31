@@ -55,6 +55,11 @@ const PROTECTED_REFS = [
   // swept up — that would deny work on the harness itself.
   { re: /\.git[\/\\][^\s]*ticket-loop(?![\w.-])/, tier: 'frozen', what: 'the receipt chain directory' },
   { re: /\.ticket-loop-chain/, tier: 'frozen', what: 'the receipt chain directory' },
+  // A wildcard under .agents/ or .git/ reaches the namespace without spelling it, so
+  // `rm -rf .agents/ticket-*/done.md` names no protected path while deleting one.
+  { re: /\.agents[\/\\][^\s"']*[*?]/, tier: 'frozen', what: 'a glob reaching into .agents/' },
+  { re: /\.git[\/\\][^\s"']*[*?]/, tier: 'frozen', what: 'a glob reaching into .git/' },
+  { re: /ticket-[*?]/, tier: 'frozen', what: 'a glob reaching the run directories' },
   { re: /ticket-loop\.config\.json/, tier: 'control', what: 'the enforcement profile' },
   { re: /\.claude[\/\\]hooks[\/\\]state/, tier: 'control', what: 'hook session state' },
   { re: /\.claude[\/\\]settings(\.local)?\.json/, tier: 'control', what: 'Claude Code settings' },
@@ -155,6 +160,8 @@ function isReadOnly(cmd) {
   if (PIPE_TO_SHELL.test(lower)) return false;
   if (/\$\(|`/.test(lower)) return false; // command substitution can hide anything
   if (/\bsed\b/.test(lower)) return false; // sed writes via -i and via the `w` command
+  // `sort -o F` truncates and rewrites F, so the verb alone does not make a statement safe.
+  if (/\bsort\b[^|;&]*(\s-o\b|\s--output\b|--output=)/.test(lower)) return false;
   if (/\b(tee|awk|xargs|install|truncate|dd|shred)\b/.test(lower)) return false;
 
   for (const seg of segments(lower)) {
