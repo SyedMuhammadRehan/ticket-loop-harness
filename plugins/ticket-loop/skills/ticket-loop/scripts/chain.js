@@ -18,6 +18,10 @@
 // chain. What this buys is that forging is a deliberate, multi-step, *detectable* act
 // instead of a silent side effect of ordinary file writes — and freeze_guard denies the
 // obvious paths to it. Integrity here is tamper-EVIDENT, not tamper-PROOF.
+//
+// The key is written 0o600, which is honoured on POSIX and is a no-op on Windows (the mode
+// lands as 0666). Treat the key as readable by anything running as the user on every
+// platform; the guarantee above does not rest on those bits.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -25,9 +29,14 @@ const crypto = require('crypto');
 const CHAIN_FILE = 'chain.jsonl';
 const KEY_FILE = 'key';
 const HEAD_FILE = 'head.json';
+const LOCK_NAME = 'lock';
 const CHAIN_SUBDIR = 'ticket-loop';
 const FALLBACK_DIR = '.ticket-loop-chain';
 const MAX_ROOT_SEARCH_DEPTH = 8;
+const LOCK_WAIT_MS = 15000;
+// Longer than any single append could take; shorter than a human notices. A lock older than
+// this belonged to a process that was killed.
+const LOCK_STALE_MS = 60000;
 
 function findGitDir(start) {
   let dir = path.resolve(start);
@@ -169,8 +178,12 @@ function create(runDir) {
 // Rotate the current chain aside (CLEAN RESTART). The new chain's first record carries
 // the retired chain's final seal, so a restart is visible in the report, never silent.
 function rotate(runDir) {
-  const { dir } = resolveChainDir(runDir);
   if (!exists(runDir)) return null;
+  return withLock(runDir, () => rotateUnlocked(runDir));
+}
+
+function rotateUnlocked(runDir) {
+  const { dir } = resolveChainDir(runDir);
   const records = rawRecords(runDir);
   const lastSeal = records.length ? records[records.length - 1].hmac : null;
   let n = 1;
@@ -186,7 +199,67 @@ function rotate(runDir) {
   return { retired: `chain.${n}.jsonl`, retiredSeal: lastSeal, retiredRecords: records.length };
 }
 
+// Appending is read-then-write: the next seq and prev-link come from the current last record.
+// Two writers interleaving therefore both claim the same seq, and the chain then accuses
+// itself of tampering — which is what parallel subagent dispatches would do to a healthy run.
+// mkdir is atomic on every platform this runs on, so an empty directory is the mutex.
+//
+// Single-line appends are left to the OS: a lone small write to a file opened for append is
+// atomic on POSIX and on Windows, so readers cannot see half a record and are not blocked.
+function withLock(runDir, fn) {
+  const lock = path.join(resolveChainDir(runDir).dir, LOCK_NAME);
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  for (;;) {
+    try {
+      fs.mkdirSync(lock);
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      let age;
+      try {
+        age = Date.now() - fs.statSync(lock).mtimeMs;
+      } catch {
+        age = Infinity; // vanished between mkdir and stat — try again immediately
+      }
+      if (age > LOCK_STALE_MS) {
+        try {
+          fs.rmdirSync(lock);
+        } catch {}
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        const err = new Error(
+          `receipt chain busy: ${lock} held by another process for longer than ${LOCK_WAIT_MS}ms. ` +
+            `If no ticket-loop process is running, remove that directory.`
+        );
+        err.code = 'CHAIN_LOCKED';
+        throw err;
+      }
+      sleep(25);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      fs.rmdirSync(lock);
+    } catch {}
+  }
+}
+
 function append(runDir, kind, payload) {
+  // Check for the chain BEFORE locking: taking the lock first would try to mkdir inside a
+  // directory that does not exist and report ENOENT instead of the real problem.
+  if (!readKey(runDir)) {
+    const err = new Error(`no receipt chain for ${runDir} — run "ledger.js init" first`);
+    err.code = 'NO_CHAIN';
+    throw err;
+  }
+  return withLock(runDir, () => appendUnlocked(runDir, kind, payload));
+}
+
+function appendUnlocked(runDir, kind, payload) {
   const key = readKey(runDir);
   if (!key) {
     const err = new Error(`no receipt chain for ${runDir} — run "ledger.js init" first`);
@@ -282,6 +355,8 @@ module.exports = {
   create,
   rotate,
   append,
+  withLock,
+  LOCK_NAME,
   verify,
   records,
   ofKind,

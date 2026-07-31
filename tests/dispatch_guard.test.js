@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { HOOKS_DIR, SCRIPTS_DIR, mkRun, rmDir, runScript, ledger } = require('./helpers.js');
+const { REQUIRED_LEDGER_PROTOCOL } = require(path.join(HOOKS_DIR, 'dispatch_guard.js'));
 
 const SCRIPT = path.join(HOOKS_DIR, 'dispatch_guard.js');
 
@@ -23,6 +24,66 @@ function setup() {
   assert.strictEqual(ledger(root, ['init', runDir, 'abc123']).status, 0);
   return { root, runDir };
 }
+
+// Only exit 0 may permit a dispatch. Enumerating the refusal codes instead (2 = cap,
+// 4 = broken chain) fails open on every other one, so "the budget could not be recorded"
+// would silently mean "proceed unbudgeted".
+test('any non-zero ledger exit refuses the dispatch, not just the known refusals', () => {
+  for (const code of [1, 3, 5, 17]) {
+    const { root, runDir } = setup();
+    try {
+      const pluginRoot = path.join(root, `plugin-${code}`);
+      const scripts = path.join(pluginRoot, 'skills', 'ticket-loop', 'scripts');
+      fs.mkdirSync(scripts, { recursive: true });
+      // Current protocol, so the hook gets past the version probe, then fails on dispatch.
+      fs.writeFileSync(
+        path.join(scripts, 'ledger.js'),
+        `const c = process.argv[2];\n` +
+          `if (c === 'protocol') { console.log('${REQUIRED_LEDGER_PROTOCOL}'); process.exit(0); }\n` +
+          `console.error('ledger exploded');\n` +
+          `process.exit(${code});\n`
+      );
+      const res = runScript(SCRIPT, [], {
+        input: JSON.stringify({ tool_input: { subagent_type: 'implementer' }, cwd: root }),
+        cwd: root,
+        env: { CLAUDE_PLUGIN_ROOT: pluginRoot },
+      });
+      assert.strictEqual(res.status, 2, `exit ${code} from ledger.js must still block:\n${res.stderr}`);
+      assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 0);
+    } finally {
+      rmDir(root);
+    }
+  }
+});
+
+// A run cannot be active and unbudgeted at the same time: hiding ledger.js would otherwise
+// buy unlimited dispatches. Outside a run the hook has already returned, so this cannot
+// block anyone who is not running a ticket.
+test('a missing ledger during an active run refuses the dispatch', () => {
+  const { root } = setup();
+  try {
+    // Run the hook from a copy that has no sibling scripts/ tree, so every candidate in
+    // findLedger misses — otherwise it resolves this checkout's own ledger and the case
+    // under test never happens.
+    const isolated = path.join(root, 'isolated-hooks');
+    fs.mkdirSync(isolated, { recursive: true });
+    for (const f of ['dispatch_guard.js', 'hook_lib.js']) {
+      fs.copyFileSync(path.join(HOOKS_DIR, f), path.join(isolated, f));
+    }
+    const emptyPluginRoot = path.join(root, 'no-scripts-here');
+    fs.mkdirSync(emptyPluginRoot, { recursive: true });
+
+    const res = runScript(path.join(isolated, 'dispatch_guard.js'), [], {
+      input: JSON.stringify({ tool_input: { subagent_type: 'implementer' }, cwd: root }),
+      cwd: root,
+      env: { CLAUDE_PLUGIN_ROOT: emptyPluginRoot },
+    });
+    assert.strictEqual(res.status, 2, `an unenforceable budget must refuse:\n${res.stderr}`);
+    assert.ok(/cannot be found|cannot be enforced/i.test(res.stderr), res.stderr);
+  } finally {
+    rmDir(root);
+  }
+});
 
 test('no active run means the hook stays out of the way', () => {
   const { root } = mkRun({ verify: { test: 'node tests/run.js' } });
@@ -213,8 +274,11 @@ test('a ledger too old to have a protocol is refused loudly, not called', () => 
       env: { CLAUDE_PLUGIN_ROOT: pluginRoot },
     });
 
-    assert.strictEqual(res.status, 0, 'an install problem must not wedge every subagent call');
-    assert.ok(res.stderr.includes('NOT BEING ENFORCED'), res.stderr);
+    // A run is active and the budget cannot be enforced, so the dispatch is refused. Failing
+    // open here would make downgrading ledger.js a way to buy unlimited dispatches; the cost
+    // is bounded because this hook has already returned for anyone not inside a run.
+    assert.strictEqual(res.status, 2, 'an unenforceable budget must refuse the dispatch');
+    assert.ok(res.stderr.includes('cannot be enforced'), res.stderr);
     assert.ok(res.stderr.includes('stale plugin cache'), res.stderr);
 
     // Crucially, the stale script was never invoked, so it wrote nothing.

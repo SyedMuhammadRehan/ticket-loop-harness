@@ -89,24 +89,30 @@ function main() {
 
   const runDir = runs[0];
   const ledger = findLedger(root);
+  // Past this point a run IS active (checked above), so "I cannot enforce" must not mean
+  // "carry on". Failing open here would make hiding ledger.js a one-command way to buy
+  // unlimited dispatches. Outside a run this hook has already returned, so nobody who is not
+  // running a ticket can be blocked by it.
   if (!ledger) {
     console.error(
-      'dispatch_guard: could not locate ledger.js — the dispatch budget is NOT being enforced ' +
-        'for this call. Check the install (plugin root / .claude/skills/ticket-loop/scripts/).'
+      'BLOCKED: a ticket run is active but ledger.js cannot be found, so the dispatch budget ' +
+        'cannot be enforced.\n' +
+        '  Fix the install (plugin root / .claude/skills/ticket-loop/scripts/), or close the ' +
+        'run with "ledger.js close" if it is finished.'
     );
-    process.exit(0); // fail open, loudly: never wedge a session over a missing script
+    process.exit(2);
   }
 
   const protocol = ledgerProtocol(ledger, root);
   if (protocol === null || protocol < REQUIRED_LEDGER_PROTOCOL) {
     console.error(
-      `dispatch_guard: ${ledger} is too old (protocol ${protocol === null ? 'absent' : protocol}, ` +
-        `need >= ${REQUIRED_LEDGER_PROTOCOL}) — THE DISPATCH BUDGET IS NOT BEING ENFORCED.\n` +
-        `  The hook and the scripts are out of step, usually a stale plugin cache. Reinstall/update ` +
-        `the plugin so both come from the same version. Not calling it: an old ledger would write ` +
+      `BLOCKED: ${ledger} is too old (protocol ${protocol === null ? 'absent' : protocol}, ` +
+        `need >= ${REQUIRED_LEDGER_PROTOCOL}), so the dispatch budget cannot be enforced.\n` +
+        `  The hook and the scripts are out of step, usually a stale plugin cache. Reinstall or ` +
+        `update the plugin so both come from the same version. Calling it anyway would write ` +
         `pre-chain state and make the run's counters untrustworthy.`
     );
-    process.exit(0); // an install problem must not wedge every subagent call
+    process.exit(2);
   }
 
   const res = spawnSync(
@@ -115,15 +121,22 @@ function main() {
     { encoding: 'utf8', cwd: root, timeout: LEDGER_TIMEOUT_MS }
   );
 
+  // Success is the ONLY outcome that permits the dispatch. Enumerating the refusal codes
+  // instead (2 = cap, 4 = broken chain) fails open on every other one — a usage error, an
+  // unwritable chain, a future exit code — and "the budget could not be recorded" would then
+  // mean "proceed unbudgeted", which is the hole this hook exists to close.
   if (res.error) {
-    console.error(`dispatch_guard: ledger.js failed to run (${res.error.message}) — budget NOT enforced for this call.`);
-    process.exit(0);
-  }
-
-  // 2 = cap reached, 4 = receipt chain broken. Both must stop the dispatch.
-  if (res.status === 2 || res.status === 4) {
     console.error(
-      `BLOCKED: ${(res.stderr || '').trim()}\n` +
+      `BLOCKED: the dispatch budget could not be recorded (${res.error.message}).\n` +
+        `  A run is active, so this dispatch is refused rather than run uncounted. Fix the ` +
+        `environment, or close the run with "ledger.js close" if it is finished.`
+    );
+    process.exit(2);
+  }
+  if (res.status !== 0) {
+    const detail = (res.stderr || '').trim() || `ledger.js exited ${res.status}`;
+    console.error(
+      `BLOCKED: ${detail}\n` +
         `  This dispatch was refused by the budget, not by a suggestion. Go to Stage 7 and ` +
         `report status INCOMPLETE with the work that was finished.`
     );

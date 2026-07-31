@@ -5,6 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { SCRIPTS_DIR, mkRun, rmDir } = require('./helpers.js');
 
 const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
@@ -14,6 +15,72 @@ function fresh() {
   chain.create(runDir);
   return { root, runDir };
 }
+
+// Appending derives seq and prev from the current last record, so concurrent writers would
+// both claim the same seq and the chain would then report itself tampered. The loop dispatches
+// subagents in parallel, so this is an ordinary run, not an attack.
+test('concurrent appends keep the chain intact', async () => {
+  const { root, runDir } = fresh();
+  try {
+    const worker = path.join(root, 'worker.js');
+    fs.writeFileSync(
+      worker,
+      `const chain = require(${JSON.stringify(path.join(SCRIPTS_DIR, 'chain.js'))});\n` +
+        `const until = Number(process.argv[3]);\n` +
+        `while (Date.now() < until) {}\n` + // spin so every worker enters together
+        `chain.append(process.argv[2], 'dispatch', { label: process.argv[4] });\n`
+    );
+
+    const WORKERS = 8;
+    const startAt = Date.now() + 700;
+    const codes = await Promise.all(
+      Array.from({ length: WORKERS }, (_, i) =>
+        new Promise((resolve) => {
+          const kid = spawn(process.execPath, [worker, runDir, String(startAt), `w${i + 1}`], {
+            stdio: 'ignore',
+          });
+          kid.on('exit', resolve);
+        })
+      )
+    );
+    assert.deepStrictEqual(codes.filter((c) => c !== 0), [], 'every concurrent append must succeed');
+
+    const result = chain.verify(runDir);
+    assert.deepStrictEqual(result.problems, [], 'concurrent appends must not corrupt the chain');
+    assert.strictEqual(result.ok, true);
+
+    // chain.create() leaves the file empty — the 'init' RECORD is ledger.js's doing — so the
+    // only records here are the workers' own.
+    const recs = chain.records(runDir);
+    assert.strictEqual(recs.length, WORKERS, 'every worker appends exactly once, none lost');
+    assert.deepStrictEqual(
+      recs.map((r) => r.seq),
+      recs.map((_, i) => i + 1),
+      'seq numbers must be contiguous with no duplicates'
+    );
+    const labels = new Set(chain.ofKind(runDir, 'dispatch').map((r) => r.payload.label));
+    assert.strictEqual(labels.size, WORKERS, 'no append may be lost');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a stale lock left by a killed process does not deadlock the chain', () => {
+  const { root, runDir } = fresh();
+  try {
+    const lock = path.join(chain.resolveChainDir(runDir).dir, chain.LOCK_NAME);
+    fs.mkdirSync(lock);
+    // Backdate it well past the staleness window, as an abandoned lock would be.
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    fs.utimesSync(lock, old, old);
+    const rec = chain.append(runDir, 'dispatch', { label: 'after-stale-lock' });
+    assert.strictEqual(rec.seq, 1, 'the append proceeds instead of waiting on an abandoned lock');
+    assert.ok(!fs.existsSync(lock), 'the stale lock is cleared, not left behind');
+    assert.deepStrictEqual(chain.verify(runDir).problems, []);
+  } finally {
+    rmDir(root);
+  }
+});
 
 test('the chain lives outside the run dir, under the git dir', () => {
   const { root, runDir } = fresh();

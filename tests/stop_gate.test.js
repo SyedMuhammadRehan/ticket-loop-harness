@@ -183,8 +183,8 @@ test('verifies the ticket worktree, not just the cwd tree', () => {
   }
 });
 
-// THE regression this gate exists for. Stage 4 commits after every green slice, so a
-// git-status-only check saw a clean tree and exited 0 without running a single test.
+// The case the whole gate exists for: Stage 4 commits after every green slice, so a
+// git-status-only check sees a clean tree and exits 0 without running a single test.
 test('COMMITTED slice work is detected — a clean-but-ahead worktree is still verified', () => {
   const env = setupRepo();
   try {
