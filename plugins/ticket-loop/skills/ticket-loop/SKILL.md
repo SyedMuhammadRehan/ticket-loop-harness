@@ -155,8 +155,13 @@ rather than assuming Flutter.
    Otherwise proceed WITHOUT asking. Low-risk ambiguities: choose a sensible default and
    append to `assumptions.md` immediately, format:
    `- Q: <question you would have asked> → default: <what you chose> (risk: low)`
-   **No code matches `riskPaths` for you** — GATE A/C are yours to enforce by reading the
-   profile and checking each planned edit. Nothing will stop the edit if you skip the check.
+   **`riskPaths` is enforced in code:** while this run is active, `freeze_guard` DENIES any
+   edit under a `riskPaths` glob until a clearance for that area is recorded. When a human
+   clears one, record it — and only then:
+   `node <SKILL_DIR>/scripts/ledger.js clear .agents/ticket-runs/<TICKET> "<the glob>" "<what they approved and why>"`
+   Clearances are per-glob and sealed into the chain, so the report shows exactly what was
+   opened. **Never run `clear` to unblock yourself** — you would be recording a human decision
+   that did not happen, and the receipt makes that visible to whoever reviews the run.
 4. Record the gate:
    `node <SKILL_DIR>/scripts/ledger.js gate .agents/ticket-runs/<TICKET> intake --evidence .agents/ticket-runs/<TICKET>/ticket-brief.md`
 
@@ -320,8 +325,11 @@ risk-tier path (the profile's `riskPaths` — example (from config `riskPaths`):
 `<api-contract-dirs>`; `pubspec.yaml` — PLUS the always-on rule of deleting/weakening
 an existing test) that was NOT cleared at GATE A → STOP the run and ask the human before
 that edit happens.
-Subagent prompts repeat this rule; the orchestrator re-checks each returned diff —
-a diff that violates GATE C is rejected and the slice re-runs.
+For `riskPaths` the hook enforces this: an uncleared edit is denied and the subagent gets
+`GATE_C`. Treat that denial as the signal to stop and ask a human, NOT as an obstacle to
+route around — and never record a clearance to unblock a slice. Deleting or weakening an
+existing test has no glob to match, so that half stays your discipline; the orchestrator
+re-checks each returned diff and a violating diff is rejected and the slice re-runs.
 
 After each green slice (its tests pass inside the worktree):
 `git -C ../ticket-<TICKET> add -A -- . ':(exclude)test/golden' && git -C ../ticket-<TICKET> commit -m "wip(<TICKET>): <slice> green"`

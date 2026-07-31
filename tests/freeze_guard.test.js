@@ -148,3 +148,80 @@ test('a tool call with neither a path nor a command is ignored', () => {
     rmDir(root);
   }
 });
+
+// GATE A/C is only a fence if code matches edits against the profile's riskPaths: an edit
+// under a risk-tier glob must be denied until a human's clearance for that area is RECORDED.
+function repoWithRiskPaths(riskPaths, cleared) {
+  const root = mkFakeRepo({ verify: { test: 'node tests/run.js' }, riskPaths });
+  const runDir = path.join(root, RUN);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'budget.json'), '{}');
+  if (cleared) {
+    fs.writeFileSync(
+      path.join(runDir, 'clearances.json'),
+      JSON.stringify({ cleared: cleared.map((glob) => ({ glob, reason: 'test', at: 'now' })) })
+    );
+  }
+  return root;
+}
+
+test('an edit under a riskPaths glob is denied while a run is active', () => {
+  const root = repoWithRiskPaths(['lib/ui/auth/**', '**/migrations/**', 'pubspec.yaml']);
+  try {
+    for (const f of ['lib/ui/auth/login_screen.dart', 'db/migrations/003_add_users.sql', 'pubspec.yaml']) {
+      const res = runHook({ file_path: f }, root);
+      assert.strictEqual(res.status, 2, `${f} is risk-tier and must be denied:\n${res.stderr}`);
+      assert.match(res.stderr, /risk-tier path/);
+    }
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('ordinary paths are untouched by riskPaths', () => {
+  const root = repoWithRiskPaths(['lib/ui/auth/**']);
+  try {
+    for (const f of ['lib/ui/profile/profile_screen.dart', 'test/ui/profile_test.dart', 'README.md']) {
+      assert.strictEqual(runHook({ file_path: f }, root).status, 0, `${f} must stay editable`);
+    }
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a recorded clearance unlocks only the area it names', () => {
+  const root = repoWithRiskPaths(['lib/ui/auth/**', '**/migrations/**'], ['lib/ui/auth/**']);
+  try {
+    assert.strictEqual(runHook({ file_path: 'lib/ui/auth/login_screen.dart' }, root).status, 0, 'cleared area opens');
+    assert.strictEqual(
+      runHook({ file_path: 'db/migrations/003_add_users.sql' }, root).status,
+      2,
+      'an uncleared area stays shut — clearance is per-glob, not a blanket'
+    );
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a malformed clearance mirror denies rather than opening everything', () => {
+  const root = repoWithRiskPaths(['lib/ui/auth/**']);
+  try {
+    fs.writeFileSync(path.join(root, RUN, 'clearances.json'), '{ not json');
+    assert.strictEqual(runHook({ file_path: 'lib/ui/auth/login_screen.dart' }, root).status, 2);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('riskPaths do not apply when no run is active', () => {
+  const root = mkFakeRepo({ verify: { test: 'x' }, riskPaths: ['lib/ui/auth/**'] });
+  try {
+    assert.strictEqual(
+      runHook({ file_path: 'lib/ui/auth/login_screen.dart' }, root).status,
+      0,
+      'outside a run this hook must not police ordinary development'
+    );
+  } finally {
+    rmDir(root);
+  }
+});

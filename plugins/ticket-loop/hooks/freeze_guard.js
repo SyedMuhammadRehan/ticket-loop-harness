@@ -42,6 +42,19 @@ function activeRuns(root) {
     .filter((dir) => fs.existsSync(path.join(dir, 'budget.json')) && !fs.existsSync(path.join(dir, 'closed.json')));
 }
 
+// The clearance mirror ledger.js writes. Read rather than shelled out to, because this hook
+// runs on every single edit; the chain remains authoritative and the mirror is hook-protected.
+// Unreadable or malformed means "nothing cleared", which denies — the safe direction.
+function clearedGlobs(runDir) {
+  if (!runDir) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(runDir, 'clearances.json'), 'utf8'));
+    return (parsed.cleared || []).map((c) => c.glob).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function deny(message) {
   console.error(`BLOCKED: ${message}`);
   process.exit(2);
@@ -53,12 +66,21 @@ function main() {
   const toolInput = input.tool_input || {};
 
   const root = lib.findRepoRoot(input.cwd || process.cwd());
-  const runActive = activeRuns(root).length > 0;
+  const runs = activeRuns(root);
+  const runActive = runs.length > 0;
 
   const target = toolInput.file_path || toolInput.notebook_path;
   if (target) {
     const verdict = policy.pathVerdict(target, { runActive });
     if (verdict) deny(`${target} is a ${verdict.reason}.`);
+
+    const { config } = lib.loadConfig(root);
+    const risk = policy.riskVerdict(target, {
+      runActive,
+      riskPaths: config.riskPaths || [],
+      cleared: clearedGlobs(runs[0]),
+    });
+    if (risk) deny(`${target} is a ${risk.reason}.`);
   }
 
   if (typeof toolInput.command === 'string') {

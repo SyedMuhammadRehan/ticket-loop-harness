@@ -24,6 +24,7 @@
 // Always protected: the frozen contract, the counters, the end-of-run marker, and the sealed
 // receipt chain (both its in-git home and the non-git fallback dir chain.js falls back to).
 const FROZEN_PATH_PATTERNS = [
+  /(^|\/)ticket-runs\/(.+\/)?clearances\.json$/,
   /(^|\/)ticket-runs\/(.+\/)?done\.md$/,
   /(^|\/)ticket-runs\/(.+\/)?budget\.json$/,
   /(^|\/)ticket-runs\/(.+\/)?closed\.json$/,
@@ -208,6 +209,60 @@ function commandVerdict(cmd, opts = {}) {
 }
 
 // null when the path is writable, otherwise { reason }.
+// Minimal glob → RegExp for riskPaths. Supports `**` (any depth, may span /), `*` (one
+// segment), and `?`. Everything else is literal. Deliberately not a full glob library: a
+// riskPath is a coarse "this area needs a human" marker, and an over-broad match errs toward
+// asking, which is the safe direction.
+function globToRegExp(glob) {
+  const g = String(glob).replace(/\\/g, '/');
+  let out = '';
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === '*') {
+      if (g[i + 1] === '*') {
+        out += '.*';
+        i++;
+        if (g[i + 1] === '/') i++; // `**/` also matches zero directories
+      } else {
+        out += '[^/]*';
+      }
+    } else if (c === '?') out += '[^/]';
+    else out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  // Match the tail of the path, so a repo-relative glob also matches an absolute worktree path.
+  return new RegExp(`(^|/)${out}$`, 'i');
+}
+
+// A risk-tier edit is denied unless a human cleared that area and the clearance was RECORDED.
+// Per-glob, so clearing one area never opens another.
+function riskVerdict(filePath, opts = {}) {
+  const riskPaths = opts.riskPaths || [];
+  if (!opts.runActive || riskPaths.length === 0) return null;
+  const p = String(filePath).replace(/\\/g, '/');
+  const hit = riskPaths.find((glob) => {
+    try {
+      return globToRegExp(glob).test(p);
+    } catch {
+      return false;
+    }
+  });
+  if (!hit) return null;
+  const cleared = (opts.cleared || []).some((c) => {
+    try {
+      return c === hit || globToRegExp(c).test(p);
+    } catch {
+      return false;
+    }
+  });
+  if (cleared) return null;
+  return {
+    reason:
+      `risk-tier path (matches riskPaths "${hit}") and no recorded clearance for it. ` +
+      `GATE A/C requires a human to clear this area first; record it with ` +
+      `"ledger.js clear <runDir> ${hit} <why>" once they have. Do NOT clear it yourself`,
+  };
+}
+
 function pathVerdict(filePath, opts = {}) {
   const p = String(filePath).replace(/\\/g, '/').toLowerCase();
   if (FROZEN_PATH_PATTERNS.some((re) => re.test(p))) {
@@ -230,6 +285,8 @@ function pathVerdict(filePath, opts = {}) {
 module.exports = {
   commandVerdict,
   pathVerdict,
+  riskVerdict,
+  globToRegExp,
   isReadOnly,
   protectedRefs,
   segments,

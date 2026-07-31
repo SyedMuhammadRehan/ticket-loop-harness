@@ -217,6 +217,13 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   security, accessibility and the criteria's tests are never on the chopping block —
   cutting those isn't minimalism, it's a bug. (Ladder adapted from
   [ponytail](https://github.com/dietrichgebert/ponytail).)
+- **`riskPaths` is a fence, not a note** — while a run is active, `freeze_guard` matches every
+  edit target against the profile's `riskPaths` globs and **denies** it until a clearance for
+  that area exists. Clearances are per-glob (clearing `lib/ui/auth/**` does not open
+  `**/migrations/**`), are recorded in the sealed chain with a mandatory reason via
+  `ledger.js clear`, and are read by the hook from a write-protected mirror — a malformed
+  mirror denies rather than opening everything. Outside a run the hook ignores `riskPaths`
+  entirely, so ordinary development is never policed.
 - **Bounded, in-place work** — subagents edit in chunks rather than rewriting a file to
   change part of it, prefer the native file tools over `cat`/`grep`/`sed`/`echo >`, and
   return a bounded summary with no file contents restated. A full-file rewrite for a
@@ -226,9 +233,13 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
 
 ### Yours to uphold — and visible in the report if you don't
 
-- **GATE A / B / C and `riskPaths`.** There is no code that matches a diff against `riskPaths`;
-  the profile hands the paths to the orchestrator, which is asked to check them. Treat these as
-  a discipline, not a fence.
+- **Whether a human was really asked.** `riskPaths` *are* now a fence — see below — but the
+  clearance that opens one is recorded by the loop, so nothing proves a human was consulted
+  before it was recorded. What you get is that clearing an area is a deliberate, separate,
+  *sealed* act naming the area and the reason, and it appears in the report; skipping the
+  conversation is visible after the fact rather than invisible.
+- **GATE B (design conflict).** Judgement — no code can tell you a Figma node contradicts the
+  ticket text.
 - **The strike count** per failure class (3 → re-plan) is orchestrator bookkeeping. Only the
   dispatch and re-plan caps are counted mechanically.
 - **Honest failure classification.** `FLAKY_VERIFIER` now requires an alternating history in the

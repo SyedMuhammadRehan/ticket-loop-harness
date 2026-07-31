@@ -17,6 +17,7 @@
 //   ledger.js archive <runDir>                     sanctioned CLEAN-RESTART move
 //   ledger.js status <runDir>                      counters as JSON
 //   ledger.js cost <runDir> [--worktree <path>]    what the run spent (proxies, not tokens)
+//   ledger.js clear <runDir> <glob> <reason>       record a human's GATE A/C risk clearance
 //   ledger.js verify <runDir>                      chain integrity + tamper report
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
@@ -449,6 +450,46 @@ function cmdArchive(runDir) {
 // These are proxies, and they are the useful ones: dispatches are the unit the budget spends,
 // and diff size per dispatch is what tells you whether the implementers are writing less code
 // or just churning. Both come from data the loop cannot quietly edit.
+// GATE A/C clearance for a risk-tier area. freeze_guard denies edits under riskPaths until one
+// of these exists, so this is the recorded act that unlocks it — and it lands in the sealed
+// chain, so the report shows exactly what was cleared and why. The orchestrator is told never
+// to run this without asking a human; that part is not mechanical, and the receipt is what
+// makes skipping it visible afterwards.
+function cmdClear(runDir, glob, reason) {
+  requireChain(runDir);
+  if (!glob) {
+    console.error('ledger clear: need the riskPaths glob to clear, e.g. "lib/ui/auth/**"');
+    process.exit(1);
+  }
+  if (!reason || !reason.trim()) {
+    console.error('ledger clear: need a reason — what did the human approve, and why is it safe?');
+    process.exit(1);
+  }
+  chain.append(runDir, 'clearance', { glob, reason: reason.trim() });
+  mirrorClearances(runDir);
+  console.log(`ledger: cleared "${glob}" — recorded in the chain and mirrored for the hooks`);
+}
+
+function clearancesPath(runDir) {
+  return path.join(runDir, 'clearances.json');
+}
+
+// Fast mirror for freeze_guard: it runs on EVERY edit, so it must not spawn a process to ask
+// the chain. Written only here, hook-protected, and rebuilt from the chain each time so it
+// cannot drift into granting something the chain does not hold.
+function mirrorClearances(runDir) {
+  const cleared = chain.ofKind(runDir, 'clearance').map((r) => ({
+    glob: r.payload.glob,
+    reason: r.payload.reason,
+    at: r.at,
+  }));
+  try {
+    fs.writeFileSync(clearancesPath(runDir), JSON.stringify({ cleared }, null, 2) + '\n');
+  } catch (e) {
+    console.error(`ledger: could not write the clearance mirror (${e.message}) — hooks will keep denying`);
+  }
+}
+
 function cmdCost(runDir) {
   const { baseSha } = caps(runDir);
   const recs = chain.records(runDir);
@@ -619,7 +660,7 @@ function main() {
         '       ledger.js gate <runDir> <stage> [--evidence <file>]... | require <runDir> <stage>\n' +
         '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> [note] | verdict <runDir> <verdict> [--inputs <file>]...\n' +
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
-        '       ledger.js cost <runDir> [--worktree <path>]'
+        '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>'
     );
     process.exit(1);
   }
@@ -647,6 +688,8 @@ function main() {
       return cmdStatus(runDir);
     case 'cost':
       return cmdCost(runDir);
+    case 'clear':
+      return cmdClear(runDir, rest[0], rest.slice(1).join(' '));
     case 'verify':
       return cmdVerify(runDir);
     default:
