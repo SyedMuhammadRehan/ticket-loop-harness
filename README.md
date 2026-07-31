@@ -217,6 +217,12 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   security, accessibility and the criteria's tests are never on the chopping block —
   cutting those isn't minimalism, it's a bug. (Ladder adapted from
   [ponytail](https://github.com/dietrichgebert/ponytail).)
+- **Bounded, in-place work** — subagents edit in chunks rather than rewriting a file to
+  change part of it, prefer the native file tools over `cat`/`grep`/`sed`/`echo >`, and
+  return a bounded summary with no file contents restated. A full-file rewrite for a
+  four-line change costs the run far more than the change is worth, buries the diff the
+  judge has to read, and the judge now flags it. Long artifacts live in the run dir, not in
+  a subagent's reply — anything repeated in chat is paid for on every later turn.
 
 ### Yours to uphold — and visible in the report if you don't
 

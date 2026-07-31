@@ -62,7 +62,9 @@ contract you cannot certify.
    abstraction with a single caller, or is boilerplate no criterion asked for — and quote
    the shorter alternative. COMMENT for excess; BLOCK when a whole added unit was already
    available. NOT excess, however verbose: input validation, error handling, security,
-   accessibility, and the criteria's tests.
+   accessibility, and the criteria's tests. Also flag a file rewritten wholesale to change
+   a few lines (whitespace/reordering churn around a small edit) — it hides the real change
+   from review, so say what the actual change was.
 
 ## Record your verdict — this is part of the job, not paperwork
 

@@ -27,5 +27,7 @@ A design-token check failed inside the worktree at {WORKTREE_PATH}. Fix ONLY thi
 2. If EXPECTED appears wrong (e.g. design-spec extraction error), do NOT fix it
    yourself — return `STATUS: dispute` with your evidence; the orchestrator re-extracts
    from Figma and re-freezes via done-additions.md if needed.
-3. Same hard-stop paths and return format as the implementer prompt:
+3. Edit in place with targeted edits — never rewrite a whole file to change part of it, and
+   never reproduce file contents in your return. Native file tools over `cat`/`sed`/`echo >`.
+4. Same hard-stop paths and return format as the implementer prompt:
    `STATUS: green|red|dispute|GATE_C` + files + test output tail + summary.
