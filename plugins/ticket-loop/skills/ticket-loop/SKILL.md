@@ -272,6 +272,7 @@ subagent three failed dispatches from now. Proportional, same rule as the Survey
    - [ ] C5 (manual): <at most one eyeball check>
    ## Tokens
    - <name>: <value> (source: design-spec.md#<section>)
+   - none (<why>)          ← use this INSTEAD when designSource is none / LOGIC-ONLY
    ## Out of scope
    - <explicit exclusions>
    ```

@@ -240,3 +240,30 @@ test('with the survey present, a real approach.md validates', () => {
     rmDir(root);
   }
 });
+
+// A LOGIC-ONLY run has no tokens, and that has to be sayable. Without an explicit "none" the
+// only way past the source-required rule is to drop the bullet marker so the check stops
+// seeing the line — a formatting trick that reads as a satisfied contract.
+test('Tokens accepts an explicit "none" when there is no design source', () => {
+  for (const line of ['- none', '- none (designSource: none — no visual contract)', '- None (LOGIC-ONLY)']) {
+    const { root, runDir } = writeDraft(
+      VALID_DRAFT.replace('- errorColor: #B00020 (source: design-spec.md#colors)', line)
+    );
+    try {
+      const res = validate(root, runDir);
+      assert.strictEqual(res.status, 0, `"${line}" must be accepted:\n${res.stderr}`);
+    } finally {
+      rmDir(root);
+    }
+  }
+});
+
+test('declaring "none" and then listing tokens is a contradiction', () => {
+  expectInvalid(
+    VALID_DRAFT.replace(
+      '- errorColor: #B00020 (source: design-spec.md#colors)',
+      '- none (no visual contract)\n- errorColor: #B00020 (source: design-spec.md#colors)'
+    ),
+    'declares "none" and then lists'
+  );
+});
