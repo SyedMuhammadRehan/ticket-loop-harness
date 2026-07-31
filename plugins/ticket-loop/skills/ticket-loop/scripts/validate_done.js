@@ -129,9 +129,8 @@ for (const l of nonManual) {
   }
 }
 
-// A LOGIC-ONLY run has no design source and therefore no tokens, which has to be sayable.
-// Without an explicit "none", the only way past the source-required rule is to un-bullet the
-// line so this check stops seeing it — a formatting trick that reads as a satisfied contract.
+// "No tokens" must be sayable: without a marker, the only way past the source-required rule
+// is to un-bullet the line until this check stops seeing it.
 const NO_TOKENS = /^-\s*none\b/i;
 const tokens = bullets(section('Tokens'));
 const declaredNone = tokens.filter((t) => NO_TOKENS.test(t));

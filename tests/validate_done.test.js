@@ -241,9 +241,6 @@ test('with the survey present, a real approach.md validates', () => {
   }
 });
 
-// A LOGIC-ONLY run has no tokens, and that has to be sayable. Without an explicit "none" the
-// only way past the source-required rule is to drop the bullet marker so the check stops
-// seeing the line — a formatting trick that reads as a satisfied contract.
 test('Tokens accepts an explicit "none" when there is no design source', () => {
   for (const line of ['- none', '- none (designSource: none — no visual contract)', '- None (LOGIC-ONLY)']) {
     const { root, runDir } = writeDraft(
