@@ -225,3 +225,35 @@ test('riskPaths do not apply when no run is active', () => {
     rmDir(root);
   }
 });
+
+// The mechanism guarding the file the hook trusts. Without this line in FROZEN_PATH_PATTERNS,
+// a single Write to clearances.json forges a blanket clearance and skips ledger.js entirely.
+test('the clearance mirror itself cannot be written directly', () => {
+  const root = repoWithRiskPaths(['lib/ui/auth/**']);
+  try {
+    const res = runHook({ file_path: `${RUN}/clearances.json` }, root);
+    assert.strictEqual(res.status, 2, `forging the mirror must be denied:\n${res.stderr}`);
+    assert.match(res.stderr, /frozen run artifact/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// Clearance is matched against the riskPath glob, not the file path — otherwise one broad
+// pattern covering the file opens every risk area at once.
+test('a broad clearance pattern does not open areas it was not granted for', () => {
+  for (const cleared of [['**'], ['db/**'], ['lib/**']]) {
+    const root = repoWithRiskPaths(['lib/ui/auth/**', '**/migrations/**'], cleared);
+    try {
+      for (const f of ['lib/ui/auth/login_screen.dart', 'db/migrations/003_add_users.sql']) {
+        assert.strictEqual(
+          runHook({ file_path: f }, root).status,
+          2,
+          `cleared=${JSON.stringify(cleared)} must not open ${f} — it is not a declared riskPath`
+        );
+      }
+    } finally {
+      rmDir(root);
+    }
+  }
+});

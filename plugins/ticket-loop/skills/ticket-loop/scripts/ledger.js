@@ -461,6 +461,18 @@ function cmdClear(runDir, glob, reason) {
     console.error('ledger clear: need the riskPaths glob to clear, e.g. "lib/ui/auth/**"');
     process.exit(1);
   }
+  // Only a glob the profile actually declares may be cleared. Without this, `clear "**"`
+  // would grant one blanket exemption over every risk area, and the per-glob guarantee would
+  // hold for the literals in the README and nothing else.
+  const declared = riskPathsFromConfig();
+  if (!declared.includes(glob)) {
+    console.error(
+      `ledger clear: "${glob}" is not one of the profile's riskPaths, so there is nothing to ` +
+        `clear.\n  Declared: ${declared.length ? declared.map((g) => `"${g}"`).join(', ') : '(none)'}\n` +
+        `  Clear an area exactly as the profile spells it — a broader pattern would open the rest.`
+    );
+    process.exit(1);
+  }
   if (!reason || !reason.trim()) {
     console.error('ledger clear: need a reason — what did the human approve, and why is it safe?');
     process.exit(1);
@@ -468,6 +480,15 @@ function cmdClear(runDir, glob, reason) {
   chain.append(runDir, 'clearance', { glob, reason: reason.trim() });
   mirrorClearances(runDir);
   console.log(`ledger: cleared "${glob}" — recorded in the chain and mirrored for the hooks`);
+}
+
+function riskPathsFromConfig() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join('.agents', 'ticket-loop.config.json'), 'utf8'));
+    return Array.isArray(cfg.riskPaths) ? cfg.riskPaths : [];
+  } catch {
+    return [];
+  }
 }
 
 function clearancesPath(runDir) {
@@ -490,7 +511,10 @@ function mirrorClearances(runDir) {
   }
 }
 
-function cmdCost(runDir) {
+function cmdCost(runDir, worktree) {
+  // The command whose whole purpose is making claims checkable must not report numbers off an
+  // unverified history: on a missing chain the counts would read as a confident zero.
+  requireChain(runDir);
   const { baseSha } = caps(runDir);
   const recs = chain.records(runDir);
   const stamp = (r) => Date.parse(r.at);
@@ -510,10 +534,7 @@ function cmdCost(runDir) {
 
   let diff = null;
   if (baseSha) {
-    const worktree = process.argv.includes('--worktree')
-      ? process.argv[process.argv.indexOf('--worktree') + 1]
-      : '.';
-    const res = spawnSync('git', ['-C', worktree, 'diff', '--numstat', `${baseSha}..HEAD`], {
+    const res = spawnSync('git', ['-C', worktree || '.', 'diff', '--numstat', `${baseSha}..HEAD`], {
       encoding: 'utf8',
       timeout: 30000,
     });
@@ -644,6 +665,7 @@ function main() {
   const restart = argv.includes('--restart');
   if (restart) argv.splice(argv.indexOf('--restart'), 1);
   const source = takeFlag(argv, '--source')[0];
+  const worktree = takeFlag(argv, '--worktree')[0];
   const evidence = takeFlag(argv, '--evidence');
   const inputs = takeFlag(argv, '--inputs');
   const [cmd, runDir, ...rest] = argv;
@@ -687,7 +709,7 @@ function main() {
     case 'status':
       return cmdStatus(runDir);
     case 'cost':
-      return cmdCost(runDir);
+      return cmdCost(runDir, worktree);
     case 'clear':
       return cmdClear(runDir, rest[0], rest.slice(1).join(' '));
     case 'verify':

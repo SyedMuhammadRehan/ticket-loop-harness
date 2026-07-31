@@ -46,14 +46,19 @@ function activeRuns(root) {
 // runs on every single edit; the chain remains authoritative and the mirror is hook-protected.
 // Unreadable or malformed means "nothing cleared", so a damaged mirror denies rather than
 // opening every risk-tier path.
-function clearedGlobs(runDir) {
-  if (!runDir) return [];
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(runDir, 'clearances.json'), 'utf8'));
-    return (parsed.cleared || []).map((c) => c.glob).filter(Boolean);
-  } catch {
-    return [];
+// Unions across every active run: with two runs in flight, reading only the first would deny
+// an edit the other run legitimately cleared, and which one came first depends on readdir order.
+function clearedGlobs(runDirs) {
+  const globs = new Set();
+  for (const runDir of runDirs || []) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(runDir, 'clearances.json'), 'utf8'));
+      for (const c of parsed.cleared || []) if (c.glob) globs.add(c.glob);
+    } catch {
+      // No mirror, or a damaged one: contributes nothing, so the edit stays denied.
+    }
   }
+  return [...globs];
 }
 
 function deny(message) {
@@ -75,13 +80,17 @@ function main() {
     const verdict = policy.pathVerdict(target, { runActive });
     if (verdict) deny(`${target} is a ${verdict.reason}.`);
 
-    const { config } = lib.loadConfig(root);
-    const risk = policy.riskVerdict(target, {
-      runActive,
-      riskPaths: config.riskPaths || [],
-      cleared: clearedGlobs(runs[0]),
-    });
-    if (risk) deny(`${target} is a ${risk.reason}.`);
+    // Only touch the profile when a run is in flight — outside one this hook does no I/O
+    // beyond the run-dir scan.
+    if (runActive) {
+      const { config } = lib.loadConfig(root);
+      const risk = policy.riskVerdict(target, {
+        runActive,
+        riskPaths: config.riskPaths || [],
+        cleared: clearedGlobs(runs),
+      });
+      if (risk) deny(`${target} is a ${risk.reason}.`);
+    }
   }
 
   if (typeof toolInput.command === 'string') {

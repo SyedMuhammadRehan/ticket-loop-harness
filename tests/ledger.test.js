@@ -456,3 +456,39 @@ test('cost degrades honestly when git cannot answer, rather than inventing a dif
     rmDir(root);
   }
 });
+
+// A clearance may only name a glob the profile declares, or one `clear "**"` would be a
+// blanket exemption over every risk area.
+test('clear refuses a glob the profile does not declare', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, riskPaths: ['lib/ui/auth/**'] });
+  assert.strictEqual(ledger(root, ['init', runDir, 'abc123']).status, 0);
+  try {
+    for (const glob of ['**', 'db/**', 'lib/ui/**']) {
+      const res = ledger(root, ['clear', runDir, glob, 'trying it on']);
+      assert.strictEqual(res.status, 1, `"${glob}" is not a declared riskPath:\n${res.stderr}`);
+      assert.match(res.stderr, /not one of the profile's riskPaths/);
+    }
+    const ok = ledger(root, ['clear', runDir, 'lib/ui/auth/**', 'human approved login validation']);
+    assert.strictEqual(ok.status, 0, ok.stderr);
+    const mirror = JSON.parse(fs.readFileSync(path.join(runDir, 'clearances.json'), 'utf8'));
+    assert.deepStrictEqual(mirror.cleared.map((c) => c.glob), ['lib/ui/auth/**']);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('clear demands a reason, and cost refuses to report on an unverified chain', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, riskPaths: ['lib/ui/auth/**'] });
+  try {
+    // No chain yet: cost must refuse rather than print a confident zero.
+    const noChain = ledger(root, ['cost', runDir]);
+    assert.notStrictEqual(noChain.status, 0, 'cost must not report without a chain');
+
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc123']).status, 0);
+    const noReason = ledger(root, ['clear', runDir, 'lib/ui/auth/**']);
+    assert.strictEqual(noReason.status, 1);
+    assert.match(noReason.stderr, /need a reason/);
+  } finally {
+    rmDir(root);
+  }
+});

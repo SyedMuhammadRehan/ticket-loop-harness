@@ -246,14 +246,10 @@ function riskVerdict(filePath, opts = {}) {
     }
   });
   if (!hit) return null;
-  const cleared = (opts.cleared || []).some((c) => {
-    try {
-      return c === hit || globToRegExp(c).test(p);
-    } catch {
-      return false;
-    }
-  });
-  if (cleared) return null;
+  // Clearance matches the riskPath GLOB, never the path. Matching a clearance pattern against
+  // the file would let `clear "**"` — or any broad pattern that happens to cover the file —
+  // open every risk area at once, making "per-glob" false for anything but literal equality.
+  if ((opts.cleared || []).includes(hit)) return null;
   return {
     reason:
       `risk-tier path (matches riskPaths "${hit}") and no recorded clearance for it. ` +
