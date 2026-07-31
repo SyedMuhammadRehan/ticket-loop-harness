@@ -48,6 +48,9 @@ const CONTROL_PLANE_PATTERNS = [
 const PROTECTED_REFS = [
   { re: /ticket-runs/, tier: 'frozen', what: 'a ticket run directory' },
   { re: /[\w.-]+\.approved\.md/, tier: 'frozen', what: 'a frozen approved artifact' },
+  // Approved artifacts are not confined to .agents/, so the namespace globs below do not
+  // cover a wildcard aimed at one.
+  { re: /[*?][^\s"']*\.approved\.md/, tier: 'frozen', what: 'a glob reaching a frozen approved artifact' },
   { re: /ticket-loop[\/\\][^\s]*[\/\\]?chain(\.\d+)?\.jsonl/, tier: 'frozen', what: 'the sealed receipt chain' },
   // The chain DIRECTORY, not just the file inside it: `rm -rf .git/ticket-loop` names no
   // chain.jsonl, and a following `init` would reset every counter. Anchored on the git dir
@@ -136,6 +139,13 @@ const DESTRUCTIVE_REPO = [
   { re: /\bgit\s+reset\s+--hard\b/, what: 'git reset --hard discards in-flight worktree state' },
 ];
 
+// `2>/dev/null`, `>NUL`, `2>&1` write nothing and appear in almost every inspection command,
+// so they must not make one look like a redirection to a file.
+const NULL_REDIRECTION = /\d*>&\d+|\d*>>?\s*(\/dev\/null|nul\b)/gi;
+function stripNullRedirection(s) {
+  return String(s).replace(NULL_REDIRECTION, ' ');
+}
+
 function stripQuotes(cmd) {
   return String(cmd).replace(/["']/g, '');
 }
@@ -155,13 +165,14 @@ function firstToken(segment) {
 
 function isReadOnly(cmd) {
   const lower = String(cmd).toLowerCase();
-  if (/>/.test(lower)) return false; // any redirection, including >>
+  if (/>/.test(stripNullRedirection(lower))) return false; // any redirection, including >>
   if (INLINE_EXEC.some((re) => re.test(lower))) return false;
   if (PIPE_TO_SHELL.test(lower)) return false;
   if (/\$\(|`/.test(lower)) return false; // command substitution can hide anything
   if (/\bsed\b/.test(lower)) return false; // sed writes via -i and via the `w` command
   // `sort -o F` truncates and rewrites F, so the verb alone does not make a statement safe.
-  if (/\bsort\b[^|;&]*(\s-o\b|\s--output\b|--output=)/.test(lower)) return false;
+  // No word boundary after -o: the target may be glued to it (`-oC:\path`).
+  if (/\bsort\b[^|;&]*(\s-o|--output)/.test(lower)) return false;
   if (/\b(tee|awk|xargs|install|truncate|dd|shred)\b/.test(lower)) return false;
 
   for (const seg of segments(lower)) {
@@ -194,7 +205,7 @@ function commandVerdict(cmd, opts = {}) {
   const raw = String(cmd);
   const lower = raw.toLowerCase();
 
-  if (SANCTIONED_COMMAND.test(lower)) return null;
+  if (SANCTIONED_COMMAND.test(stripNullRedirection(lower))) return null;
 
   if (runActive) {
     for (const re of OPAQUE_EXEC) {
@@ -227,7 +238,7 @@ function commandVerdict(cmd, opts = {}) {
     const offender = statements(raw).find((seg) => {
       const low = seg.toLowerCase();
       if (protectedRefs(low, runActive).length === 0) return false;
-      return !SANCTIONED_COMMAND.test(low) && !isReadOnly(seg);
+      return !SANCTIONED_COMMAND.test(stripNullRedirection(low)) && !isReadOnly(seg);
     });
     if (!offender) return null;
     const segRefs = protectedRefs(offender.toLowerCase(), runActive);
