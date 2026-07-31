@@ -209,10 +209,9 @@ function commandVerdict(cmd, opts = {}) {
 }
 
 // null when the path is writable, otherwise { reason }.
-// Minimal glob → RegExp for riskPaths. Supports `**` (any depth, may span /), `*` (one
-// segment), and `?`. Everything else is literal. Deliberately not a full glob library: a
-// riskPath is a coarse "this area needs a human" marker, and an over-broad match errs toward
-// asking, which is the safe direction.
+// Minimal glob → RegExp for riskPaths: `**` (any depth), `*` (one segment), `?`, rest
+// literal. Not a full glob library on purpose — a riskPath is a coarse "this area needs a
+// human" marker, where over-matching only costs an extra question.
 function globToRegExp(glob) {
   const g = String(glob).replace(/\\/g, '/');
   let out = '';

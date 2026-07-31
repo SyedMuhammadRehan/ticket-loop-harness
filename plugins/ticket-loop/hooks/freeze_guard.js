@@ -44,7 +44,8 @@ function activeRuns(root) {
 
 // The clearance mirror ledger.js writes. Read rather than shelled out to, because this hook
 // runs on every single edit; the chain remains authoritative and the mirror is hook-protected.
-// Unreadable or malformed means "nothing cleared", which denies — the safe direction.
+// Unreadable or malformed means "nothing cleared", so a damaged mirror denies rather than
+// opening every risk-tier path.
 function clearedGlobs(runDir) {
   if (!runDir) return [];
   try {
