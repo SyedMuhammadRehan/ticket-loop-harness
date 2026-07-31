@@ -107,6 +107,19 @@ const INLINE_EXEC = [
 // Piping anything into an interpreter is the same hazard by another route.
 const PIPE_TO_SHELL = /\|\s*("?[^"|\s]*[\/\\])?(sh|bash|zsh|cmd(\.exe)?|powershell(\.exe)?|pwsh|python[\d.]*|node(\.exe)?|perl|ruby)\b/;
 
+// Statements, unlike segments(), keep a pipeline whole: `echo <path> | xargs rm` names the
+// path in one stage and deletes it in the next, so the two halves cannot be judged apart.
+function statements(cmd) {
+  return String(cmd)
+    .split(/&&|\|\||[;\n\r]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Moving INTO the protected namespace: every later segment then operates there while naming
+// nothing, so such a command can only be judged whole.
+const CD_INTO_PROTECTED = /\b(cd|pushd|chdir|set-location|sl)\b[^\n;|&]*?(ticket-runs|ticket-loop|\.ticket-loop-chain)/;
+
 // Opaque execution — no legitimate use inside a ticket run, and the whole point is that
 // the guard cannot see what it does.
 const OPAQUE_EXEC = [/-encodedcommand/, /frombase64string/, /\bbase64\b[^|\n]*-{1,2}(d|decode)\b[^\n]*\|/];
@@ -199,6 +212,34 @@ function commandVerdict(cmd, opts = {}) {
   if (refs.length === 0) return null;
 
   if (isReadOnly(raw)) return null;
+
+  // Judging the whole string denies `node ledger.js status <run> ; rm -rf /tmp/scratch`, where
+  // the delete targets something unrelated. Segments are judged separately so an unrelated
+  // write in one does not condemn a read of the run dir in another — but only when nothing in
+  // the command can carry effects ACROSS segments:
+  //   - `cd`/`pushd` into the namespace makes every later segment operate there, which is how
+  //     `cd <run> && rm -rf .` would otherwise slip past a segment that names nothing;
+  //   - substitution and pipe-to-shell can execute text assembled elsewhere in the line.
+  // Either of those and the command is judged as one unit, exactly as before.
+  const crossSegment = CD_INTO_PROTECTED.test(lower) || /\$\(|`/.test(lower) || PIPE_TO_SHELL.test(lower);
+  if (!crossSegment) {
+    // A sanctioned invocation is judged per segment for the same reason: the whole-command
+    // form above cannot match once anything follows it, so `ledger.js status <run> ; npm test`
+    // would otherwise be denied for the harness's own call.
+    const offender = statements(raw).find((seg) => {
+      const low = seg.toLowerCase();
+      if (protectedRefs(low, runActive).length === 0) return false;
+      return !SANCTIONED_COMMAND.test(low) && !isReadOnly(seg);
+    });
+    if (!offender) return null;
+    const segRefs = protectedRefs(offender.toLowerCase(), runActive);
+    return {
+      reason:
+        `this command references ${segRefs[0].what} and is not a read-only command or a ` +
+        `sanctioned harness invocation (default-deny on the protected namespace)`,
+      hit: segRefs[0].what,
+    };
+  }
 
   return {
     reason:
