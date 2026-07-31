@@ -199,10 +199,7 @@ test('the loop\'s own writable artifacts stay writable', () => {
   }
 });
 
-// Judging the whole line denies a legitimate command because something elsewhere in it writes
-// to an unrelated path. Segments are judged separately — but only when nothing can carry an
-// effect across them, or the cd-prefix and substitution bypasses reopen.
-test('an unrelated write in another segment does not condemn a read of the run dir', () => {
+test('an unrelated write in another statement does not condemn a read of the run dir', () => {
   const RM = 'rm -r' + 'f';
   assert.ok(!denied(`node scripts/ledger.js status ${RUN} ; ${RM} /tmp/scratch`));
   assert.ok(!denied(`node scripts/ledger.js verify ${RUN} && ${RM} /tmp/tdir`));
@@ -210,17 +207,14 @@ test('an unrelated write in another segment does not condemn a read of the run d
   assert.ok(!denied(`git diff --no-index ${RUN}/done.md ${RUN}/ledger.md && echo compared`));
 });
 
-test('per-segment judging does not reopen the cross-segment bypasses', () => {
+test('per-statement judging does not reopen the cross-statement bypasses', () => {
   const RM = 'rm -r' + 'f';
-  // cd moves later segments into the namespace while they name nothing.
   assert.ok(denied(`cd ${RUN} && ${RM} .`));
   assert.ok(denied(`cd ${RUN}; echo x > done.md`));
   assert.ok(denied(`pushd ${RUN}; Set-Content done.md '{}'`));
-  // Substitution and pipe-to-shell run text assembled elsewhere on the line.
   assert.ok(denied(`node scripts/ledger.js status ${RUN} $(${RM} ${RUN})`));
   assert.ok(denied('node scripts/ledger.js status ' + RUN + ' `' + RM + ' ' + RUN + '`'));
   assert.ok(denied(`cat ${RUN}/done.md | sh`));
-  // A destructive segment naming the run dir is still its own offender.
   assert.ok(denied(`echo ok ; ${RM} ${RUN}`));
   assert.ok(denied(`npm test && echo pwned > ${RUN}/done.md`));
 });

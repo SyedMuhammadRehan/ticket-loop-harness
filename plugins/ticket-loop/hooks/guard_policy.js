@@ -213,19 +213,12 @@ function commandVerdict(cmd, opts = {}) {
 
   if (isReadOnly(raw)) return null;
 
-  // Judging the whole string denies `node ledger.js status <run> ; rm -rf /tmp/scratch`, where
-  // the delete targets something unrelated. Segments are judged separately so an unrelated
-  // write in one does not condemn a read of the run dir in another — but only when nothing in
-  // the command can carry effects ACROSS segments:
-  //   - `cd`/`pushd` into the namespace makes every later segment operate there, which is how
-  //     `cd <run> && rm -rf .` would otherwise slip past a segment that names nothing;
-  //   - substitution and pipe-to-shell can execute text assembled elsewhere in the line.
-  // Either of those and the command is judged as one unit, exactly as before.
+  // Judged per statement, so `ledger.js status <run> ; rm -rf /tmp/scratch` is not denied for
+  // a delete aimed elsewhere. Anything that can carry an effect between statements — a cd into
+  // the namespace, substitution, pipe-to-shell — forfeits that and the line is judged whole.
   const crossSegment = CD_INTO_PROTECTED.test(lower) || /\$\(|`/.test(lower) || PIPE_TO_SHELL.test(lower);
   if (!crossSegment) {
-    // A sanctioned invocation is judged per segment for the same reason: the whole-command
-    // form above cannot match once anything follows it, so `ledger.js status <run> ; npm test`
-    // would otherwise be denied for the harness's own call.
+    // Sanctioned invocations too: the anchored form above stops matching once anything follows.
     const offender = statements(raw).find((seg) => {
       const low = seg.toLowerCase();
       if (protectedRefs(low, runActive).length === 0) return false;
