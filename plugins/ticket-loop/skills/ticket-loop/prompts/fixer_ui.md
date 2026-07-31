@@ -15,6 +15,9 @@ A design-token check failed inside the worktree at {WORKTREE_PATH}. Fix ONLY thi
 {LEDGER_FORBIDDEN}
 
 ## Rules
+0. Fix at the root, in the smallest place that fixes it for every caller — a shared
+   function, not a patch repeated at each call site. Prefer changing existing code to
+   adding new code; the shortest correct diff wins.
 1. Find the ROOT CAUSE of the mismatch before changing anything, then fix at that
    level. Never change the expected value, never edit the test's assertion to match
    ACTUAL, never touch done.md/*.approved.md. Your return MUST include a line

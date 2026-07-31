@@ -220,6 +220,8 @@ subagent three failed dispatches from now. Proportional, same rule as the Survey
    ## Options
    - A: <approach> — <one-line tradeoff>
    - B: <approach> — <one-line tradeoff>
+   (at least one option should be the CHEAPEST thing that could work — reuse what exists,
+   extend a helper, or do nothing — so "build it new" has to win on merit, not by default)
    ## Chosen
    - <A|B>: <why it wins — and why the loser loses; this line is what saves the re-litigation later>
    ## Failure modes

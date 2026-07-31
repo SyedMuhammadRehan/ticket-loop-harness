@@ -208,6 +208,15 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   was judged feature-sized and `approach.md` becomes *mandatory*; deleting it to skip the
   failure-mode contract no longer works. Every failure mode must map to a criterion or an
   out-of-scope with a reason of real substance, and they can't *all* be waived.
+- **"Minimally" is a procedure, not an adjective** — the implementer climbs a ladder before
+  writing anything (does this need to exist → is it already in the codebase → stdlib →
+  platform feature → an already-installed dependency → one line → only then new code) and
+  reports the rung it stopped at. The approach stage must offer the cheapest option that
+  could work, so "build it new" has to win on merit. The QA judge carries the matching
+  check and quotes a shorter alternative when it finds one. Validation, error handling,
+  security, accessibility and the criteria's tests are never on the chopping block —
+  cutting those isn't minimalism, it's a bug. (Ladder adapted from
+  [ponytail](https://github.com/dietrichgebert/ponytail).)
 
 ### Yours to uphold — and visible in the report if you don't
 
@@ -385,6 +394,12 @@ Recorded: seq 18. Judged inputs: done.approved.md, done-additions.md (hashes sea
 
 You review the branch, address the QA comment if you agree, and merge. The loop never pushed,
 never merged, never touched `main`.
+
+## Prior art
+
+- [ponytail](https://github.com/dietrichgebert/ponytail) (MIT) — the code-minimization
+  decision ladder the implementer, fixer and QA prompts now use. Reimplemented here in this
+  repo's own words and wired into the loop's stages; the idea is theirs.
 
 ## License
 

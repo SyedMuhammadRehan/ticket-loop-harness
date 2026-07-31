@@ -23,10 +23,32 @@ re-plan — design changes get recorded, not smuggled in.
 ## Forbidden approaches (already failed — trying any of these is an automatic reject)
 {LEDGER_FORBIDDEN}
 
+## Before you write anything: climb the ladder
+
+Understand the problem FIRST — read the code the slice touches and trace the real flow.
+Then work down these rungs and STOP at the first that satisfies the criterion:
+
+1. Does this need to exist at all? (the criterion may already hold)
+2. Is it already in this codebase? (check {CODEBASE_MAP} before writing a new helper)
+3. Does the standard library do it?
+4. Is it a native platform/framework feature?
+5. Is it in a dependency the repo ALREADY has? (never add one — see rule 3)
+6. Can it be one line? Then it is one line.
+7. Only now: write the minimum that makes the criterion pass.
+
+State the rung you stopped at in your return. The shortest diff that satisfies the
+criterion and is understood wins; a bigger one is a defect, not thoroughness.
+
+NEVER traded away for brevity: input validation at trust boundaries, error handling that
+prevents data loss or silent failure, security, accessibility, anything the ticket asked
+for explicitly, and the criterion's test. Cutting those is not minimalism, it is a bug.
+Rung 1 never means "skip the test" — the criterion's test proves the behaviour whether the
+implementation is new, reused, or one line.
+
 ## Rules
 1. TDD: write the failing test named in the criterion FIRST, run it, see it fail,
-   then implement minimally, run it green. Use the repo's existing test patterns
-   (study neighboring tests — fakes over mocks).
+   then implement the minimum from the ladder above, run it green. Use the repo's
+   existing test patterns (study neighboring tests — fakes over mocks).
 2. NEVER edit: done.md, done.approved.md, any *.approved.md, generated/golden baselines,
    the dependency manifest.
 3. HARD STOP paths — if your change would touch any of the profile's `riskPaths`
@@ -41,4 +63,5 @@ re-plan — design changes get recorded, not smuggled in.
    explaining your change. If the surrounding code has no comments, yours has none.
    Your code must be indistinguishable in style from the code around it.
 6. Return format (your final message): `STATUS: green|red|GATE_C`, files changed (list),
-   test command run + tail of its output, one-paragraph summary of the approach taken.
+   `rung: <n> — <what you reused, or why new code was needed>`, test command run + tail of
+   its output, one-paragraph summary of the approach taken.

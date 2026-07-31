@@ -57,6 +57,12 @@ contract you cannot certify.
    defect. Also: does the diff actually cover the approach's failure modes the
    done-list claims to cover?
 8. Scope: does the diff contain changes NOT justified by any AC or addition? → BLOCK.
+9. Avoidable code: could any of this diff not exist? Name anything that duplicates a helper
+   already in the codebase, reimplements a standard-library or framework feature, adds an
+   abstraction with a single caller, or is boilerplate no criterion asked for — and quote
+   the shorter alternative. COMMENT for excess; BLOCK when a whole added unit was already
+   available. NOT excess, however verbose: input validation, error handling, security,
+   accessibility, and the criteria's tests.
 
 ## Record your verdict — this is part of the job, not paperwork
 
