@@ -20,7 +20,7 @@ The plugin ships the skill, the scripts, and the hooks (registered automatically
 ```
 claude plugin marketplace update ticket-loop-harness   # refresh the cached source
 claude plugin update ticket-loop@ticket-loop-harness   # actually change versions
-# then QUIT Claude Code and reopen — a new session is not enough
+# then start a NEW session — the running one keeps the version it loaded at start
 ```
 
 `install` is a no-op when the plugin is already present: it prints *"already installed"*
@@ -28,9 +28,10 @@ and changes nothing. Worse, `claude plugin details` reports the version from the
 **marketplace**, not the one you have installed — so it can read 0.5.0 while 0.2.0 is
 still what runs. Use `claude plugin list`, which reports the installed version.
 
-The restart matters because the plugin loader resolves the version at process start.
-Opening a fresh session in a still-running Claude Code keeps the old copy, and the run
-will look normal while exercising old code.
+`update` prints *"Restart to apply changes"*. In practice a new session was enough once the
+update had run — but a session started **before** the update keeps the old version, and the
+run looks entirely normal while exercising old code. That is the trap: nothing in the output
+tells you, so verify rather than assume.
 
 **Confirm which version actually ran** — the run's own artifacts tell you, and this is
 worth checking on the first run after any upgrade:
