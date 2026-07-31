@@ -107,8 +107,8 @@ const INLINE_EXEC = [
 // Piping anything into an interpreter is the same hazard by another route.
 const PIPE_TO_SHELL = /\|\s*("?[^"|\s]*[\/\\])?(sh|bash|zsh|cmd(\.exe)?|powershell(\.exe)?|pwsh|python[\d.]*|node(\.exe)?|perl|ruby)\b/;
 
-// Statements, unlike segments(), keep a pipeline whole: `echo <path> | xargs rm` names the
-// path in one stage and deletes it in the next, so the two halves cannot be judged apart.
+// Keeps a pipeline whole, unlike segments(): `echo <path> | xargs rm` names the target in one
+// stage and deletes it in the next.
 function statements(cmd) {
   return String(cmd)
     .split(/&&|\|\||[;\n\r]+/)
@@ -116,8 +116,7 @@ function statements(cmd) {
     .filter(Boolean);
 }
 
-// Moving INTO the protected namespace: every later segment then operates there while naming
-// nothing, so such a command can only be judged whole.
+// After this, later statements operate in the namespace while naming nothing.
 const CD_INTO_PROTECTED = /\b(cd|pushd|chdir|set-location|sl)\b[^\n;|&]*?(ticket-runs|ticket-loop|\.ticket-loop-chain)/;
 
 // Opaque execution — no legitimate use inside a ticket run, and the whole point is that
@@ -213,9 +212,8 @@ function commandVerdict(cmd, opts = {}) {
 
   if (isReadOnly(raw)) return null;
 
-  // Judged per statement, so `ledger.js status <run> ; rm -rf /tmp/scratch` is not denied for
-  // a delete aimed elsewhere. Anything that can carry an effect between statements — a cd into
-  // the namespace, substitution, pipe-to-shell — forfeits that and the line is judged whole.
+  // Per-statement judging stops a delete aimed elsewhere from condemning a read of the run
+  // dir; anything below can carry an effect between statements, so it forfeits that.
   const crossSegment = CD_INTO_PROTECTED.test(lower) || /\$\(|`/.test(lower) || PIPE_TO_SHELL.test(lower);
   if (!crossSegment) {
     // Sanctioned invocations too: the anchored form above stops matching once anything follows.
