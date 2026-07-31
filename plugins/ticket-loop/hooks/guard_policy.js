@@ -48,6 +48,9 @@ const CONTROL_PLANE_PATTERNS = [
 const PROTECTED_REFS = [
   { re: /ticket-runs/, tier: 'frozen', what: 'a ticket run directory' },
   { re: /[\w.-]+\.approved\.md/, tier: 'frozen', what: 'a frozen approved artifact' },
+  // Approved artifacts are not confined to .agents/, so the namespace globs below do not
+  // cover a wildcard aimed at one.
+  { re: /[*?][^\s"']*\.approved\.md/, tier: 'frozen', what: 'a glob reaching a frozen approved artifact' },
   { re: /ticket-loop[\/\\][^\s]*[\/\\]?chain(\.\d+)?\.jsonl/, tier: 'frozen', what: 'the sealed receipt chain' },
   // The chain DIRECTORY, not just the file inside it: `rm -rf .git/ticket-loop` names no
   // chain.jsonl, and a following `init` would reset every counter. Anchored on the git dir
@@ -55,6 +58,11 @@ const PROTECTED_REFS = [
   // swept up — that would deny work on the harness itself.
   { re: /\.git[\/\\][^\s]*ticket-loop(?![\w.-])/, tier: 'frozen', what: 'the receipt chain directory' },
   { re: /\.ticket-loop-chain/, tier: 'frozen', what: 'the receipt chain directory' },
+  // A wildcard under .agents/ or .git/ reaches the namespace without spelling it, so
+  // `rm -rf .agents/ticket-*/done.md` names no protected path while deleting one.
+  { re: /\.agents[\/\\][^\s"']*[*?]/, tier: 'frozen', what: 'a glob reaching into .agents/' },
+  { re: /\.git[\/\\][^\s"']*[*?]/, tier: 'frozen', what: 'a glob reaching into .git/' },
+  { re: /ticket-[*?]/, tier: 'frozen', what: 'a glob reaching the run directories' },
   { re: /ticket-loop\.config\.json/, tier: 'control', what: 'the enforcement profile' },
   { re: /\.claude[\/\\]hooks[\/\\]state/, tier: 'control', what: 'hook session state' },
   { re: /\.claude[\/\\]settings(\.local)?\.json/, tier: 'control', what: 'Claude Code settings' },
@@ -107,6 +115,18 @@ const INLINE_EXEC = [
 // Piping anything into an interpreter is the same hazard by another route.
 const PIPE_TO_SHELL = /\|\s*("?[^"|\s]*[\/\\])?(sh|bash|zsh|cmd(\.exe)?|powershell(\.exe)?|pwsh|python[\d.]*|node(\.exe)?|perl|ruby)\b/;
 
+// Keeps a pipeline whole, unlike segments(): `echo <path> | xargs rm` names the target in one
+// stage and deletes it in the next.
+function statements(cmd) {
+  return String(cmd)
+    .split(/&&|\|\||[;\n\r]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// After this, later statements operate in the namespace while naming nothing.
+const CD_INTO_PROTECTED = /\b(cd|pushd|chdir|set-location|sl)\b[^\n;|&]*?(ticket-runs|ticket-loop|\.ticket-loop-chain)/;
+
 // Opaque execution — no legitimate use inside a ticket run, and the whole point is that
 // the guard cannot see what it does.
 const OPAQUE_EXEC = [/-encodedcommand/, /frombase64string/, /\bbase64\b[^|\n]*-{1,2}(d|decode)\b[^\n]*\|/];
@@ -118,6 +138,13 @@ const DESTRUCTIVE_REPO = [
   { re: /\bgit\s+stash\b[^\n]*(-u\b|--include-untracked|-a\b|--all)/, what: 'git stash -u sweeps the untracked run directory out of the tree' },
   { re: /\bgit\s+reset\s+--hard\b/, what: 'git reset --hard discards in-flight worktree state' },
 ];
+
+// `2>/dev/null`, `>NUL`, `2>&1` write nothing and appear in almost every inspection command,
+// so they must not make one look like a redirection to a file.
+const NULL_REDIRECTION = /\d*>&\d+|\d*>>?\s*(\/dev\/null|nul\b)/gi;
+function stripNullRedirection(s) {
+  return String(s).replace(NULL_REDIRECTION, ' ');
+}
 
 function stripQuotes(cmd) {
   return String(cmd).replace(/["']/g, '');
@@ -138,11 +165,14 @@ function firstToken(segment) {
 
 function isReadOnly(cmd) {
   const lower = String(cmd).toLowerCase();
-  if (/>/.test(lower)) return false; // any redirection, including >>
+  if (/>/.test(stripNullRedirection(lower))) return false; // any redirection, including >>
   if (INLINE_EXEC.some((re) => re.test(lower))) return false;
   if (PIPE_TO_SHELL.test(lower)) return false;
   if (/\$\(|`/.test(lower)) return false; // command substitution can hide anything
   if (/\bsed\b/.test(lower)) return false; // sed writes via -i and via the `w` command
+  // `sort -o F` truncates and rewrites F, so the verb alone does not make a statement safe.
+  // No word boundary after -o: the target may be glued to it (`-oC:\path`).
+  if (/\bsort\b[^|;&]*(\s-o|--output)/.test(lower)) return false;
   if (/\b(tee|awk|xargs|install|truncate|dd|shred)\b/.test(lower)) return false;
 
   for (const seg of segments(lower)) {
@@ -175,7 +205,7 @@ function commandVerdict(cmd, opts = {}) {
   const raw = String(cmd);
   const lower = raw.toLowerCase();
 
-  if (SANCTIONED_COMMAND.test(lower)) return null;
+  if (SANCTIONED_COMMAND.test(stripNullRedirection(lower))) return null;
 
   if (runActive) {
     for (const re of OPAQUE_EXEC) {
@@ -199,6 +229,26 @@ function commandVerdict(cmd, opts = {}) {
   if (refs.length === 0) return null;
 
   if (isReadOnly(raw)) return null;
+
+  // Per-statement judging stops a delete aimed elsewhere from condemning a read of the run
+  // dir; anything below can carry an effect between statements, so it forfeits that.
+  const crossSegment = CD_INTO_PROTECTED.test(lower) || /\$\(|`/.test(lower) || PIPE_TO_SHELL.test(lower);
+  if (!crossSegment) {
+    // Sanctioned invocations too: the anchored form above stops matching once anything follows.
+    const offender = statements(raw).find((seg) => {
+      const low = seg.toLowerCase();
+      if (protectedRefs(low, runActive).length === 0) return false;
+      return !SANCTIONED_COMMAND.test(stripNullRedirection(low)) && !isReadOnly(seg);
+    });
+    if (!offender) return null;
+    const segRefs = protectedRefs(offender.toLowerCase(), runActive);
+    return {
+      reason:
+        `this command references ${segRefs[0].what} and is not a read-only command or a ` +
+        `sanctioned harness invocation (default-deny on the protected namespace)`,
+      hit: segRefs[0].what,
+    };
+  }
 
   return {
     reason:

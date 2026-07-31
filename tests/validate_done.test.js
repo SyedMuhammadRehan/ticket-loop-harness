@@ -240,3 +240,55 @@ test('with the survey present, a real approach.md validates', () => {
     rmDir(root);
   }
 });
+
+test('Tokens accepts an explicit "none" when there is no design source', () => {
+  for (const line of ['- none', '- none (designSource: none — no visual contract)', '- None (LOGIC-ONLY)']) {
+    const { root, runDir } = writeDraft(
+      VALID_DRAFT.replace('- errorColor: #B00020 (source: design-spec.md#colors)', line)
+    );
+    try {
+      const res = validate(root, runDir);
+      assert.strictEqual(res.status, 0, `"${line}" must be accepted:\n${res.stderr}`);
+    } finally {
+      rmDir(root);
+    }
+  }
+});
+
+test('a token merely NAMED none is still a token', () => {
+  for (const line of ['- none: #B00020', '- none-accent: #B00020', '- none = #B00020']) {
+    expectInvalid(
+      VALID_DRAFT.replace('- errorColor: #B00020 (source: design-spec.md#colors)', line),
+      'token without design-spec source'
+    );
+  }
+});
+
+test('"none" is refused when the profile names a design source', () => {
+  const { root, runDir } = mkRun({
+    designSource: 'figma',
+    verify: { test: 'pytest -q', analyze: 'ruff check .' },
+  });
+  ledger(root, ['init', runDir, 'abc123']);
+  try {
+    fs.writeFileSync(
+      path.join(runDir, 'done.draft.md'),
+      VALID_DRAFT.replace('- errorColor: #B00020 (source: design-spec.md#colors)', '- none (no contract)')
+    );
+    const res = runScript(SCRIPT, [runDir], { cwd: root });
+    assert.strictEqual(res.status, 1);
+    assert.match(res.stderr, /designSource is "figma"/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('declaring "none" and then listing tokens is a contradiction', () => {
+  expectInvalid(
+    VALID_DRAFT.replace(
+      '- errorColor: #B00020 (source: design-spec.md#colors)',
+      '- none (no visual contract)\n- errorColor: #B00020 (source: design-spec.md#colors)'
+    ),
+    'declares "none" and then lists'
+  );
+});

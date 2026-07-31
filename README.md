@@ -240,6 +240,16 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   conversation is visible after the fact rather than invisible.
 - **GATE B (design conflict).** Judgement — no code can tell you a Figma node contradicts the
   ticket text.
+- **Naming a protected file as data is denied like touching it.** The write policy cannot tell
+  a target from a mention, and deliberately does not try: quotes are stripped precisely so a
+  quoted real target is still caught. So while a run is active, a command that merely *contains*
+  a protected filename and is not read-only is refused — a commit message about `done.md`, a
+  heredoc writing a fixture that mentions an approved artifact, a probe script echoing one.
+  Fixing this by trusting quoted content would reopen the bypass the stripping closes, so the
+  friction is intentional. Work around it rather than weakening the rule: pass the text via
+  `git commit -F <file>`, write the file with an editor instead of a shell redirect, or split
+  the command so the statement naming the path is read-only. Costs a developer of the harness
+  more than a user of it.
 - **The strike count** per failure class (3 → re-plan) is orchestrator bookkeeping. Only the
   dispatch and re-plan caps are counted mechanically.
 - **Honest failure classification.** `FLAKY_VERIFIER` now requires an alternating history in the
