@@ -267,3 +267,35 @@ test('per-statement judging does not reopen the cross-statement bypasses', () =>
   assert.ok(denied(`echo ok ; ${RM} ${RUN}`));
   assert.ok(denied(`npm test && echo pwned > ${RUN}/done.md`));
 });
+
+// "It never pushes or merges" is the loop's headline promise, and it lived only in the skill's
+// prose. Refused for the duration of a run; released once the run is closed, because outside
+// one this is the human's repo and their call.
+test('publishing is refused while a run is active', () => {
+  for (const c of [
+    'git push',
+    'git push origin ticket/PROJ-1',
+    'git push --force origin main',
+    'git -C ../ticket-PROJ-1 push origin HEAD',
+    'git merge ticket/PROJ-1',
+    'git rebase main',
+    'gh pr create --fill',
+    'gh pr merge 12 --squash',
+  ]) {
+    assert.ok(denied(c), `should refuse mid-run: ${c}`);
+    assert.ok(!denied(c, false), `should allow with no run active: ${c}`);
+  }
+});
+
+test('the loop\'s own git work is untouched by the publishing fence', () => {
+  for (const c of [
+    'git status',
+    'git diff',
+    'git merge-base HEAD main',
+    'git -C ../ticket-PROJ-1 commit -m "wip(PROJ-1): slice green"',
+    'git worktree add ../ticket-PROJ-1 -b ticket/PROJ-1',
+    'git add -A',
+  ]) {
+    assert.ok(!denied(c), `should allow mid-run: ${c}`);
+  }
+});
