@@ -114,14 +114,11 @@ for (const l of nonManual) {
 const cfg = resolveConfig();
 const firstToken = (cmd) => String(cmd).trim().split(/\s+/)[0].replace(/^.*[\/\\]/, '');
 const expectedFor = { test: cfg.verify && cfg.verify.test, analyzer: cfg.verify && cfg.verify.analyze };
-// A criterion measured against a baseline cannot be settled by the bare verify command: that
-// command reports absolute state, so on a repo with pre-existing findings it exits non-zero
-// whether or not the change added any. The criterion is then permanently red, or a no-op that
-// someone reads past — which is the shape of a check that cannot fail.
+// The bare verify command reports absolute state, so against a non-empty baseline it fails
+// whether or not this change added anything — the criterion cannot decide itself.
 const BASELINE_RELATIVE = /\b(no new|not grow|doesn't grow|does not grow|subset of|baseline|branch[- ]?point|pre-existing)\b/i;
 const TRIVIAL_RUNNER = /^(true|false|:|echo|exit|ls|cd)\b/;
-// firstToken cannot tell `npx eslint .` from `npx eslint-delta --base <sha>` — both are "npx".
-// The tool is what identifies the command, so skip a leading runner to find it.
+// firstToken reads both `npx eslint .` and `npx eslint-delta` as "npx", so find the tool.
 const LAUNCHERS = new Set(['npx', 'npm', 'pnpm', 'yarn', 'bunx', 'bun', 'node', 'python', 'python3', 'dotnet', 'run', 'exec']);
 const toolOf = (cmd) => {
   const tokens = String(cmd).trim().split(/\s+/).filter((t) => t && !t.startsWith('-'));
@@ -139,8 +136,7 @@ for (const l of nonManual) {
   const field = kind === 'analyzer' ? 'verify.analyze' : 'verify.test';
 
   if (BASELINE_RELATIVE.test(l)) {
-    // Exempt from the same-command rule below — comparing to a baseline is exactly the case
-    // that needs a different command — but a stand-in is still a stand-in.
+    // Exempt from the same-command rule below: this is the case that needs a different one.
     if (toolOf(run) === toolOf(expected)) {
       errors.push(
         `criterion ${id} is measured against a baseline, but "${run}" reports absolute state and ` +

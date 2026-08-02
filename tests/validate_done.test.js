@@ -255,9 +255,6 @@ test('Tokens accepts an explicit "none" when there is no design source', () => {
   }
 });
 
-// The first real run produced exactly this: "no new eslint problems vs the branch point",
-// checked by the bare linter — which exits non-zero at a non-empty baseline whether or not the
-// change added anything. Always-red or read past; either way it cannot decide itself.
 test('a baseline-relative criterion cannot be settled by the bare verify command', () => {
   for (const c of [
     '- [ ] C4 (analyzer): no new eslint problems vs branch point 52e2981 (pre-existing 18) | run: ruff check .',
