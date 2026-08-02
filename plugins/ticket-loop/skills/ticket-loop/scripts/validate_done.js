@@ -114,6 +114,20 @@ for (const l of nonManual) {
 const cfg = resolveConfig();
 const firstToken = (cmd) => String(cmd).trim().split(/\s+/)[0].replace(/^.*[\/\\]/, '');
 const expectedFor = { test: cfg.verify && cfg.verify.test, analyzer: cfg.verify && cfg.verify.analyze };
+// A criterion measured against a baseline cannot be settled by the bare verify command: that
+// command reports absolute state, so on a repo with pre-existing findings it exits non-zero
+// whether or not the change added any. The criterion is then permanently red, or a no-op that
+// someone reads past — which is the shape of a check that cannot fail.
+const BASELINE_RELATIVE = /\b(no new|not grow|doesn't grow|does not grow|subset of|baseline|branch[- ]?point|pre-existing)\b/i;
+const TRIVIAL_RUNNER = /^(true|false|:|echo|exit|ls|cd)\b/;
+// firstToken cannot tell `npx eslint .` from `npx eslint-delta --base <sha>` — both are "npx".
+// The tool is what identifies the command, so skip a leading runner to find it.
+const LAUNCHERS = new Set(['npx', 'npm', 'pnpm', 'yarn', 'bunx', 'bun', 'node', 'python', 'python3', 'dotnet', 'run', 'exec']);
+const toolOf = (cmd) => {
+  const tokens = String(cmd).trim().split(/\s+/).filter((t) => t && !t.startsWith('-'));
+  const tool = tokens.find((t, i) => i > 0 || !LAUNCHERS.has(firstToken(t))) || tokens[0] || '';
+  return firstToken(tool);
+};
 for (const l of nonManual) {
   const kind = kindOf(l);
   const run = runOf(l);
@@ -121,9 +135,28 @@ for (const l of nonManual) {
   if (NON_COMMAND_RUNNERS.test(run)) continue;
   const expected = expectedFor[kind === 'token' ? 'test' : kind];
   if (!expected) continue; // nothing configured to compare against; load_config already warns
+  const id = idOf(l) || '?';
+  const field = kind === 'analyzer' ? 'verify.analyze' : 'verify.test';
+
+  if (BASELINE_RELATIVE.test(l)) {
+    // Exempt from the same-command rule below — comparing to a baseline is exactly the case
+    // that needs a different command — but a stand-in is still a stand-in.
+    if (toolOf(run) === toolOf(expected)) {
+      errors.push(
+        `criterion ${id} is measured against a baseline, but "${run}" reports absolute state and ` +
+          `cannot decide it — on a repo with pre-existing findings it fails either way. Name a ` +
+          `command that performs the comparison, or restate the criterion so the command's own ` +
+          `result settles it`
+      );
+    } else if (TRIVIAL_RUNNER.test(run)) {
+      errors.push(`criterion ${id} runs "${run}", which decides nothing`);
+    }
+    continue;
+  }
+
   if (firstToken(run) !== firstToken(expected)) {
     errors.push(
-      `criterion ${idOf(l) || '?'} (${kind}) runs "${run}" but this repo's ${kind === 'analyzer' ? 'verify.analyze' : 'verify.test'} ` +
+      `criterion ${id} (${kind}) runs "${run}" but this repo's ${field} ` +
         `is "${expected}" — a criterion must be checked by the real command, not a stand-in`
     );
   }

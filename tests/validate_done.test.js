@@ -255,6 +255,42 @@ test('Tokens accepts an explicit "none" when there is no design source', () => {
   }
 });
 
+// The first real run produced exactly this: "no new eslint problems vs the branch point",
+// checked by the bare linter — which exits non-zero at a non-empty baseline whether or not the
+// change added anything. Always-red or read past; either way it cannot decide itself.
+test('a baseline-relative criterion cannot be settled by the bare verify command', () => {
+  for (const c of [
+    '- [ ] C4 (analyzer): no new eslint problems vs branch point 52e2981 (pre-existing 18) | run: ruff check .',
+    '- [ ] C4 (analyzer): the problem set stays a subset of the baseline | run: ruff check .',
+    '- [ ] C4 (test): no new failures vs the branch point | run: pytest -q',
+  ]) {
+    expectInvalid(VALID_DRAFT.replace('- [ ] C2 (analyzer): zero analyzer errors | run: ruff check .', c), 'reports absolute state');
+  }
+});
+
+test('a command that performs the comparison is accepted; a stand-in is not', () => {
+  const relative = '- [ ] C2 (analyzer): no new problems vs the baseline | run: ruff-delta --base abc123';
+  const { root, runDir } = writeDraft(
+    VALID_DRAFT.replace('- [ ] C2 (analyzer): zero analyzer errors | run: ruff check .', relative)
+  );
+  try {
+    assert.strictEqual(validate(root, runDir).status, 0, validate(root, runDir).stderr);
+  } finally {
+    rmDir(root);
+  }
+  expectInvalid(
+    VALID_DRAFT.replace('- [ ] C2 (analyzer): zero analyzer errors | run: ruff check .', '- [ ] C2 (analyzer): no new problems vs the baseline | run: true'),
+    'decides nothing'
+  );
+});
+
+test('an absolute criterion still has to name the real command', () => {
+  expectInvalid(
+    VALID_DRAFT.replace('run: ruff check .', 'run: ruff-delta --base abc123'),
+    'must be checked by the real command'
+  );
+});
+
 test('a token merely NAMED none is still a token', () => {
   for (const line of ['- none: #B00020', '- none-accent: #B00020', '- none = #B00020']) {
     expectInvalid(

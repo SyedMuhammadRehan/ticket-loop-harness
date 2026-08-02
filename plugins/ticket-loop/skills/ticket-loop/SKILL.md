@@ -282,6 +282,11 @@ subagent three failed dispatches from now. Proportional, same rule as the Survey
    none` (no visual contract to check). Criterion kinds: test | analyzer | runtime | token
    | manual. Every criterion must be checkable by the named command. Token values come from
    design-spec.md only.
+   **A repo with a pre-existing baseline is the trap here.** "No new analyzer problems vs the
+   branch point" cannot be settled by the bare analyzer: it exits non-zero at any non-empty
+   baseline, so the criterion is red whether or not this change added anything. Either name a
+   command that performs the comparison, or state the criterion absolutely (e.g. a file the
+   change touches is clean). The validator rejects the bare-command form.
    Criterion rules the validator ENFORCES (do not fight it, fix the draft):
    at least one `(test)` or `(runtime)` criterion — an analyzer/token-only contract proves
    nothing about behavior; unique, well-formed `C<n>` ids; no criterion pre-ticked `[x]`;
