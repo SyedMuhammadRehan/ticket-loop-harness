@@ -15,6 +15,32 @@ One command, then it's available in **every** project you open:
 The plugin ships the skill, the scripts, and the hooks (registered automatically via
 `hooks/hooks.json`). Nothing to copy.
 
+### Upgrading — `update`, not `install`, then restart
+
+```
+claude plugin marketplace update ticket-loop-harness   # refresh the cached source
+claude plugin update ticket-loop@ticket-loop-harness   # actually change versions
+# then start a NEW session — the running one keeps the version it loaded at start
+```
+
+`install` is a no-op when the plugin is already present: it prints *"already installed"*
+and changes nothing. Worse, `claude plugin details` reports the version from the
+**marketplace**, not the one you have installed — so it can read 0.5.0 while 0.2.0 is
+still what runs. Use `claude plugin list`, which reports the installed version.
+
+`update` prints *"Restart to apply changes"*. In practice a new session was enough once the
+update had run — but a session started **before** the update keeps the old version, and the
+run looks entirely normal while exercising old code. That is the trap: nothing in the output
+tells you, so verify rather than assume.
+
+**Confirm which version actually ran** — the run's own artifacts tell you, and this is
+worth checking on the first run after any upgrade:
+
+```
+sed -n 4p .agents/ticket-runs/<TICKET>/ledger.md   # want: "counters: sealed receipt chain"
+ls .git/ticket-loop/                               # the sealed chain; absent before 0.4.0
+```
+
 ## 2. Global, by hand (no plugin system)
 
 Copy the skill and hooks into your user-level Claude dir so they load everywhere:
@@ -88,6 +114,25 @@ Same discipline the harness itself enforces — prove it before trusting it:
 This reads the ticket, resolves your profile, and writes a frozen done-list **without
 touching code**. If that produces a sensible `.agents/ticket-runs/<id>/done.md`, do one
 full supervised run on a small, low-risk ticket and watch it.
+
+## Cleaning up a run you want to discard
+
+`rm -rf .agents/ticket-runs/<TICKET>` is **denied** by `freeze_guard` — deleting a run
+directory is how a budget gets silently reset, so the guard blocks it whether you mean well
+or not. Move it instead; `._old_` names are ignored when the hooks look for active runs:
+
+```
+mv .agents/ticket-runs/<TICKET> .agents/ticket-runs/<TICKET>._old_1
+```
+
+For a run that has a sealed chain, prefer the sanctioned step, which records the restart:
+
+```
+node <SKILL_DIR>/scripts/ledger.js archive .agents/ticket-runs/<TICKET>
+```
+
+`archive` needs a chain to move, so it will refuse on a run created by a pre-0.4.0 version —
+use the `mv` above for those.
 
 ## Honest status
 
