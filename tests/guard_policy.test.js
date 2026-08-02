@@ -268,9 +268,6 @@ test('per-statement judging does not reopen the cross-statement bypasses', () =>
   assert.ok(denied(`npm test && echo pwned > ${RUN}/done.md`));
 });
 
-// "It never pushes or merges" is the loop's headline promise, and it lived only in the skill's
-// prose. Refused for the duration of a run; released once the run is closed, because outside
-// one this is the human's repo and their call.
 test('publishing is refused while a run is active', () => {
   for (const c of [
     'git push',

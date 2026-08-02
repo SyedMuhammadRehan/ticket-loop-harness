@@ -139,9 +139,8 @@ const DESTRUCTIVE_REPO = [
   { re: /\bgit\s+reset\s+--hard\b/, what: 'git reset --hard discards in-flight worktree state' },
 ];
 
-// The loop's headline promise is that it hands you a branch and never publishes it. Left as
-// prose that is a hope, so it is refused here for the duration of a run. `merge-base` is a
-// read, hence the negative lookahead.
+// The loop hands you a branch and stops; publishing is refused for the duration of a run.
+// `merge-base` is a read, hence the negative lookahead.
 const PUBLISHING = [
   { re: /\bgit\b[^|;&\n]*\bpush\b/, what: 'git push — the loop hands you a branch; publishing it is yours' },
   { re: /\bgit\b[^|;&\n]*\bmerge(?!-)\b/, what: 'git merge — merging is the human decision this loop exists to inform' },
