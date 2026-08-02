@@ -65,6 +65,46 @@ test('concurrent appends keep the chain intact', async () => {
   }
 });
 
+// The real race window is sub-microsecond, so the denial is fabricated (ACL deny, lifted by a
+// helper 400ms later) rather than raced for. Under POSIX root the chmod does not deny and only
+// the happy path runs.
+test('a transiently denied lock mkdir is waited out, not fatal', async () => {
+  const { root, runDir } = fresh();
+  const chainDir = chain.resolveChainDir(runDir).dir;
+  const { spawnSync } = require('node:child_process');
+  const deny = () =>
+    process.platform === 'win32'
+      ? spawnSync('icacls', [chainDir, '/deny', '*S-1-1-0:(AD)'])
+      : fs.chmodSync(chainDir, 0o555);
+  const restore = () => {
+    if (process.platform === 'win32') spawnSync('icacls', [chainDir, '/remove:d', '*S-1-1-0']);
+    else fs.chmodSync(chainDir, 0o755);
+  };
+  try {
+    const restorer = path.join(root, 'restorer.js');
+    fs.writeFileSync(
+      restorer,
+      `const fs = require('fs');\n` +
+        `const { spawnSync } = require('child_process');\n` +
+        `setTimeout(() => {\n` +
+        `  if (process.platform === 'win32') spawnSync('icacls', [process.argv[2], '/remove:d', '*S-1-1-0']);\n` +
+        `  else fs.chmodSync(process.argv[2], 0o755);\n` +
+        `}, 400);\n`
+    );
+    deny();
+    const kid = spawn(process.execPath, [restorer, chainDir], { stdio: 'ignore' });
+    const exited = new Promise((resolve) => kid.on('exit', resolve));
+
+    const rec = chain.append(runDir, 'dispatch', { label: 'after-denial' });
+    assert.strictEqual(rec.seq, 1, 'the append waits out the denial instead of dying on it');
+    assert.deepStrictEqual(chain.verify(runDir).problems, []);
+    await exited;
+  } finally {
+    restore();
+    rmDir(root);
+  }
+});
+
 test('a stale lock left by a killed process does not deadlock the chain', () => {
   const { root, runDir } = fresh();
   try {
