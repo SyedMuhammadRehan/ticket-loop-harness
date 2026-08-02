@@ -158,6 +158,17 @@ function stripQuotes(cmd) {
   return String(cmd).replace(/["']/g, '');
 }
 
+// Blank the CONTENTS of quoted arguments. Shell metacharacters inside quotes are literal text,
+// not operators — `ledger.js check <run> C5 PASS "allowed <=2 findings"` chains and redirects
+// nothing. Only for deciding whether a command is a bare sanctioned invocation; the reference
+// scan still reads through quotes, so a quoted protected path stays visible to it.
+function maskQuoted(s) {
+  const str = String(s);
+  // A leading quoted span is the executable ("C:\Program Files\nodejs\node.exe"), which the
+  // sanctioned pattern still has to recognise — mask arguments, not the command itself.
+  return str.replace(/"[^"]*"|'[^']*'/g, (m, off) => (/^\s*$/.test(str.slice(0, off)) ? m : '""'));
+}
+
 function segments(cmd) {
   return String(cmd)
     .split(/\|\||&&|[;|\n\r]+/)
@@ -213,7 +224,7 @@ function commandVerdict(cmd, opts = {}) {
   const raw = String(cmd);
   const lower = raw.toLowerCase();
 
-  if (SANCTIONED_COMMAND.test(stripNullRedirection(lower))) return null;
+  if (SANCTIONED_COMMAND.test(maskQuoted(stripNullRedirection(lower)))) return null;
 
   if (runActive) {
     for (const re of OPAQUE_EXEC) {
@@ -251,7 +262,7 @@ function commandVerdict(cmd, opts = {}) {
     const offender = statements(raw).find((seg) => {
       const low = seg.toLowerCase();
       if (protectedRefs(low, runActive).length === 0) return false;
-      return !SANCTIONED_COMMAND.test(stripNullRedirection(low)) && !isReadOnly(seg);
+      return !SANCTIONED_COMMAND.test(maskQuoted(stripNullRedirection(low))) && !isReadOnly(seg);
     });
     if (!offender) return null;
     const segRefs = protectedRefs(offender.toLowerCase(), runActive);
