@@ -158,10 +158,9 @@ function stripQuotes(cmd) {
   return String(cmd).replace(/["']/g, '');
 }
 
-// Blank the CONTENTS of quoted arguments. Shell metacharacters inside quotes are literal text,
-// not operators — `ledger.js check <run> C5 PASS "allowed <=2 findings"` chains and redirects
-// nothing. Only for deciding whether a command is a bare sanctioned invocation; the reference
-// scan still reads through quotes, so a quoted protected path stays visible to it.
+// A metacharacter inside quotes is literal text, not an operator. Used only to decide whether
+// a command is a bare sanctioned invocation; the reference scan still reads through quotes, so
+// a quoted protected path stays visible to it.
 function maskQuoted(s) {
   const str = String(s);
   // A leading quoted span is the executable ("C:\Program Files\nodejs\node.exe"), which the

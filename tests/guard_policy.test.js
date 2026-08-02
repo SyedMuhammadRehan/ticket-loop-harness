@@ -297,9 +297,6 @@ test('the loop\'s own git work is untouched by the publishing fence', () => {
   }
 });
 
-// A shell metacharacter inside a quoted argument is literal text, not an operator. A live run
-// stalled here: `ledger.js check <run> C5 PASS "allowed <=2 findings"` was refused for the
-// "<" in its own note.
 test('punctuation inside a quoted argument does not disqualify a sanctioned call', () => {
   for (const note of ['allowed <=2 set-state-in-effect', 'count > 2 fails', 'badge shows 3 & survives reload']) {
     assert.ok(!denied(`node scripts/ledger.js check ${RUN} C5 PASS "${note}"`), `note: ${note}`);
