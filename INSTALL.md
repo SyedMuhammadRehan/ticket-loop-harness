@@ -33,6 +33,12 @@ update had run — but a session started **before** the update keeps the old ver
 run looks entirely normal while exercising old code. That is the trap: nothing in the output
 tells you, so verify rather than assume.
 
+**Maintainers: `update` compares version numbers, so shipping a behaviour change without
+bumping one is invisible.** Merge a fix at the same version and the command answers *"already
+at the latest version"* while every installed copy keeps running the old code — a success
+message over stale bytes, which is the same failure as the two above wearing a third face.
+`package.json`, the plugin manifest and the marketplace entry must all move together.
+
 **Confirm which version actually ran** — the run's own artifacts tell you, and this is
 worth checking on the first run after any upgrade:
 
