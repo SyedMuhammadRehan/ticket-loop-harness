@@ -139,6 +139,14 @@ const DESTRUCTIVE_REPO = [
   { re: /\bgit\s+reset\s+--hard\b/, what: 'git reset --hard discards in-flight worktree state' },
 ];
 
+// `merge-base` is a read, hence the negative lookahead.
+const PUBLISHING = [
+  { re: /\bgit\b[^|;&\n]*\bpush\b/, what: 'git push — the loop hands you a branch; publishing it is yours' },
+  { re: /\bgit\b[^|;&\n]*\bmerge(?!-)\b/, what: 'git merge — merging is the human decision this loop exists to inform' },
+  { re: /\bgit\b[^|;&\n]*\brebase\b/, what: 'git rebase — rewriting history mid-run breaks the base the receipts are anchored to' },
+  { re: /\bgh\b[^|;&\n]*\bpr\b[^|;&\n]*\b(merge|create)\b/, what: 'gh pr — opening or merging a PR publishes work the run has not finished proving' },
+];
+
 // `2>/dev/null`, `>NUL`, `2>&1` write nothing and appear in almost every inspection command,
 // so they must not make one look like a redirection to a file.
 const NULL_REDIRECTION = /\d*>&\d+|\d*>>?\s*(\/dev\/null|nul\b)/gi;
@@ -221,6 +229,11 @@ function commandVerdict(cmd, opts = {}) {
     for (const d of DESTRUCTIVE_REPO) {
       if (d.re.test(lower)) {
         return { reason: d.what, hit: 'destructive repo command' };
+      }
+    }
+    for (const pub of PUBLISHING) {
+      if (pub.re.test(lower)) {
+        return { reason: pub.what, hit: 'publishing command' };
       }
     }
   }

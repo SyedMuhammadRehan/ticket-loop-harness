@@ -37,7 +37,9 @@ flowchart TD
   orchestrator's discipline, not a fence; see [what's mechanical](#how-the-loop-stays-honest).
 - **The loop** records every failure in a ledger and never repeats a dead approach; 3 strikes force a re-plan, 2 failed re-plans stop and escalate, a 25-dispatch budget caps the worst case (the dispatch and re-plan caps are enforced by hooks, at the tool call).
 - **Adversarial QA** is a fresh-context judge that reads the frozen spec and the diff, but is blind to the implementer's reasoning.
-- The loop **never pushes or merges** — it hands you a branch and a report.
+- The loop **never pushes or merges** — a hook refuses `git push`, `merge`, `rebase` and
+  `gh pr create|merge` for the duration of a run, so this is a fence rather than a promise.
+  Outside a run it does not police your repo.
 - Every counter, gate, check result and verdict lands in a **sealed receipt chain** outside the
   run directory, and each receipt has to carry the artifact the stage produced — so the closing
   report's integrity section is a machine check of *what was recorded*. Whether that check gets
@@ -180,6 +182,10 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
 - **Dispatch budget, enforced at the dispatch** — `dispatch_guard.js` is a `PreToolUse` hook on
   the subagent tool. It counts every subagent call and refuses the tool at the cap. Not calling
   `ledger.js` buys no extra tries. 2-re-plan circuit breaker likewise.
+- **The work stays yours to publish** — while a run is active the guard refuses `git push`,
+  `git merge`, `git rebase` and `gh pr create|merge`. The loop commits each green slice inside
+  its own worktree and stops there; nothing reaches a remote or your default branch. Once the
+  run is closed the fence lifts, because then it is just your repo again.
 - **Frozen done-list** — `freeze_guard.js` is **default-deny** over the protected namespace: a
   command that references `done.md` / `*.approved.md` / the chain is refused unless it is
   read-only or an exact sanctioned harness invocation. That covers the routes a verb blocklist
