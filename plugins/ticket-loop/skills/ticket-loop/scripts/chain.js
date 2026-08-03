@@ -215,22 +215,26 @@ function withLock(runDir, fn) {
       fs.mkdirSync(lock);
       break;
     } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      let age;
-      try {
-        age = Date.now() - fs.statSync(lock).mtimeMs;
-      } catch {
-        age = Infinity; // vanished between mkdir and stat — try again immediately
-      }
-      if (age > LOCK_STALE_MS) {
+      // On Windows a mkdir racing the releaser's rmdir is refused as access-denied rather
+      // than already-exists, so all three errnos mean "not now" and wait out the deadline.
+      if (e.code !== 'EEXIST' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
+      if (e.code === 'EEXIST') {
+        let age;
         try {
-          fs.rmdirSync(lock);
-        } catch {}
-        continue;
+          age = Date.now() - fs.statSync(lock).mtimeMs;
+        } catch {
+          age = Infinity; // vanished between mkdir and stat — try again immediately
+        }
+        if (age > LOCK_STALE_MS) {
+          try {
+            fs.rmdirSync(lock);
+          } catch {}
+          continue;
+        }
       }
       if (Date.now() >= deadline) {
         const err = new Error(
-          `receipt chain busy: ${lock} held by another process for longer than ${LOCK_WAIT_MS}ms. ` +
+          `receipt chain busy: could not take ${lock} within ${LOCK_WAIT_MS}ms (last error: ${e.code}). ` +
             `If no ticket-loop process is running, remove that directory.`
         );
         err.code = 'CHAIN_LOCKED';

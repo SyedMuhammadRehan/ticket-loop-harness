@@ -296,3 +296,28 @@ test('the loop\'s own git work is untouched by the publishing fence', () => {
     assert.ok(!denied(c), `should allow mid-run: ${c}`);
   }
 });
+
+test('punctuation inside a quoted argument does not disqualify a sanctioned call', () => {
+  for (const note of ['allowed <=2 set-state-in-effect', 'count > 2 fails', 'badge shows 3 & survives reload']) {
+    assert.ok(!denied(`node scripts/ledger.js check ${RUN} C5 PASS "${note}"`), `note: ${note}`);
+  }
+});
+
+// The sanctioned check runs before the publishing fence, so a note that merely mentions a
+// publishing verb must still be recognised as sanctioned rather than falling through to it.
+test('a sanctioned call keeps its quoted note when it follows another statement', () => {
+  assert.ok(!denied(`npm test && node scripts/ledger.js check ${RUN} C1 PASS "allowed <=2 findings"`));
+  assert.ok(!denied(`npm run build; node scripts/ledger.js check ${RUN} C2 PASS "count > 2 fails"`));
+});
+
+test('a sanctioned note may mention a fenced command without being refused', () => {
+  assert.ok(!denied(`node scripts/ledger.js check ${RUN} C1 PASS "verified, count > 2, before git push"`));
+  assert.ok(!denied(`node scripts/ledger.js check ${RUN} C2 PASS "reviewer will git merge this"`));
+});
+
+test('operators outside quotes still disqualify it', () => {
+  const RM = 'rm -r' + 'f';
+  assert.ok(denied(`node scripts/ledger.js status ${RUN} > ${RUN}/done.md`));
+  assert.ok(denied(`node scripts/ledger.js status ${RUN} $(${RM} ${RUN})`));
+  assert.ok(denied(`node scripts/ledger.js status ${RUN}; ${RM} ${RUN}`));
+});
