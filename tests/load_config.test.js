@@ -1,8 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 const path = require('node:path');
-const { SCRIPTS_DIR, mkFakeRepo, rmDir, runScript } = require('./helpers.js');
+const { SCRIPTS_DIR, mkFakeRepo, mkTmpDir, rmDir, runScript } = require('./helpers.js');
 
 const SCRIPT = path.join(SCRIPTS_DIR, 'load_config.js');
 
@@ -153,6 +154,70 @@ test('--get resolves dotted keys', () => {
   try {
     const res = runScript(SCRIPT, ['--get', 'verify.test'], { cwd: repo });
     assert.strictEqual(res.stdout.trim(), 'go test ./...');
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// Reproduce the versioned cache layout: sibling version dirs, each with its own manifest.
+function fakeInstall(runningVersion, otherVersions) {
+  const root = mkTmpDir('tl-cache');
+  const scriptRel = path.join('skills', 'ticket-loop', 'scripts');
+  for (const v of [runningVersion, ...otherVersions]) {
+    fs.mkdirSync(path.join(root, v, scriptRel), { recursive: true });
+    fs.writeFileSync(path.join(root, v, 'plugin.json'), JSON.stringify({ name: 'ticket-loop', version: v }));
+  }
+  const script = path.join(root, runningVersion, scriptRel, 'load_config.js');
+  fs.copyFileSync(path.join(SCRIPTS_DIR, 'load_config.js'), script);
+  const repo = mkFakeRepo({ verify: { test: 'x' } });
+  return { root, script, repo };
+}
+
+test('a stale skill running beside a newer install is reported', () => {
+  const { root, script, repo } = fakeInstall('0.2.0', ['0.8.0']);
+  try {
+    const cfg = JSON.parse(runScript(script, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg._meta.skillVersion, '0.2.0');
+    assert.strictEqual(cfg._meta.newerVersionInstalled, '0.8.0');
+    assert.ok(
+      cfg._meta.warnings.some((w) => w.includes('0.2.0') && w.includes('0.8.0') && /restart|new session/i.test(w)),
+      `expected a loud skew warning, got: ${JSON.stringify(cfg._meta.warnings)}`
+    );
+  } finally {
+    rmDir(root);
+    rmDir(repo);
+  }
+});
+
+test('the newest installed version reports no skew', () => {
+  const { root, script, repo } = fakeInstall('0.8.0', ['0.2.0', '0.7.0']);
+  try {
+    const cfg = JSON.parse(runScript(script, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg._meta.skillVersion, '0.8.0');
+    assert.strictEqual(cfg._meta.newerVersionInstalled, null);
+    assert.ok(!cfg._meta.warnings.some((w) => /restart|new session/i.test(w)));
+  } finally {
+    rmDir(root);
+    rmDir(repo);
+  }
+});
+
+test('version ordering is numeric, not lexical', () => {
+  const { root, script, repo } = fakeInstall('0.9.0', ['0.10.0']);
+  try {
+    const cfg = JSON.parse(runScript(script, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg._meta.newerVersionInstalled, '0.10.0', '0.10.0 is newer than 0.9.0');
+  } finally {
+    rmDir(root);
+    rmDir(repo);
+  }
+});
+
+test('a repo checkout has no sibling versions and reports no skew', () => {
+  const repo = mkFakeRepo({ verify: { test: 'x' } });
+  try {
+    const cfg = JSON.parse(runScript(path.join(SCRIPTS_DIR, 'load_config.js'), [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg._meta.newerVersionInstalled, null);
   } finally {
     rmDir(repo);
   }
