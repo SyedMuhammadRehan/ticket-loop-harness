@@ -105,6 +105,29 @@ test('a transiently denied lock mkdir is waited out, not fatal', async () => {
   }
 });
 
+test('a lock whose age cannot be measured is never broken', () => {
+  const { root, runDir } = fresh();
+  try {
+    const lock = path.join(chain.resolveChainDir(runDir).dir, chain.LOCK_NAME);
+
+    fs.mkdirSync(lock);
+    assert.strictEqual(chain.isStale(lock), false, 'a fresh lock is not stale');
+
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    fs.utimesSync(lock, old, old);
+    assert.strictEqual(chain.isStale(lock), true, 'an abandoned lock is stale');
+
+    fs.rmdirSync(lock);
+    assert.strictEqual(
+      chain.isStale(lock),
+      false,
+      'an unmeasurable lock must not be reported stale — a fresh holder may own the name by now'
+    );
+  } finally {
+    rmDir(root);
+  }
+});
+
 test('a stale lock left by a killed process does not deadlock the chain', () => {
   const { root, runDir } = fresh();
   try {

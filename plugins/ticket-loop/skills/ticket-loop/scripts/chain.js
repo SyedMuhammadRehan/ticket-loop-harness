@@ -206,6 +206,17 @@ function rotateUnlocked(runDir) {
 //
 // Single-line appends are left to the OS: a lone small write to a file opened for append is
 // atomic on POSIX and on Windows, so readers cannot see half a record and are not blocked.
+// Only a lock whose age is KNOWN and past the window may be broken. If the stat fails the
+// lock vanished mid-check, and by now the name may belong to a fresh holder — treating that
+// as breakable is how two writers end up in the critical section together.
+function isStale(lock, now = Date.now()) {
+  try {
+    return now - fs.statSync(lock).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
 function withLock(runDir, fn) {
   const lock = path.join(resolveChainDir(runDir).dir, LOCK_NAME);
   const deadline = Date.now() + LOCK_WAIT_MS;
@@ -218,19 +229,11 @@ function withLock(runDir, fn) {
       // On Windows a mkdir racing the releaser's rmdir is refused as access-denied rather
       // than already-exists, so all three errnos mean "not now" and wait out the deadline.
       if (e.code !== 'EEXIST' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
-      if (e.code === 'EEXIST') {
-        let age;
+      if (e.code === 'EEXIST' && isStale(lock)) {
         try {
-          age = Date.now() - fs.statSync(lock).mtimeMs;
-        } catch {
-          age = Infinity; // vanished between mkdir and stat — try again immediately
-        }
-        if (age > LOCK_STALE_MS) {
-          try {
-            fs.rmdirSync(lock);
-          } catch {}
-          continue;
-        }
+          fs.rmdirSync(lock);
+        } catch {}
+        continue;
       }
       if (Date.now() >= deadline) {
         const err = new Error(
@@ -360,6 +363,7 @@ module.exports = {
   rotate,
   append,
   withLock,
+  isStale,
   LOCK_NAME,
   verify,
   records,
