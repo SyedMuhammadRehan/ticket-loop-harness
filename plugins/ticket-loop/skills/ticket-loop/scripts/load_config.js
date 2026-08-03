@@ -40,6 +40,41 @@ const VALID_DESIGN_SOURCES = ['none', 'figma', 'openapi'];
 const VALID_TICKET_SOURCES = ['jira', 'github', 'gitlab', 'trello', 'manual'];
 const MODEL_ROLES = Object.keys(DEFAULTS.models);
 
+// A skill binds at session start; the hooks reload from disk on every call. So after a
+// `plugin update` a session can run an old playbook against new enforcement, which fails late
+// and reads as a harness bug. Compare this file's own plugin version against the newest one
+// installed beside it. Silent outside the versioned cache layout (a checkout has no siblings).
+function pluginVersionSkew() {
+  let dir = __dirname;
+  for (let i = 0; i < 6; i++) {
+    const manifest = [path.join(dir, 'plugin.json'), path.join(dir, '.claude-plugin', 'plugin.json')].find((p) =>
+      fs.existsSync(p)
+    );
+    if (manifest) {
+      try {
+        const running = JSON.parse(fs.readFileSync(manifest, 'utf8')).version;
+        if (!running) return null;
+        const parts = (v) => v.split('.').map(Number);
+        const newer = (a, b) => {
+          const [x, y] = [parts(a), parts(b)];
+          for (let k = 0; k < 3; k++) if ((x[k] || 0) !== (y[k] || 0)) return (x[k] || 0) > (y[k] || 0);
+          return false;
+        };
+        const siblings = fs
+          .readdirSync(path.dirname(dir))
+          .filter((n) => /^\d+\.\d+\.\d+$/.test(n) && newer(n, running));
+        return { running, newest: siblings.sort((a, b) => (newer(a, b) ? 1 : -1)).pop() || null };
+      } catch {
+        return null;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
 function findRepoRoot(start) {
   let dir = start;
   for (let i = 0; i < 8; i++) {
@@ -114,7 +149,22 @@ function resolve() {
     );
     cfg.qaScope.smallDiffLines = DEFAULTS.qaScope.smallDiffLines;
   }
-  cfg._meta = { repoRoot: root, configPath, configFound: fs.existsSync(configPath), warnings };
+  const skew = pluginVersionSkew();
+  if (skew && skew.newest) {
+    warnings.push(
+      `STALE SKILL: this playbook is v${skew.running} but v${skew.newest} is installed. Skills bind ` +
+        `at session start, so an update mid-session leaves the playbook old while the hooks run new — ` +
+        `the run will fail late in ways that look like harness bugs. STOP and start a new session.`
+    );
+  }
+  cfg._meta = {
+    repoRoot: root,
+    configPath,
+    configFound: fs.existsSync(configPath),
+    skillVersion: skew ? skew.running : null,
+    newerVersionInstalled: skew ? skew.newest : null,
+    warnings,
+  };
   return cfg;
 }
 

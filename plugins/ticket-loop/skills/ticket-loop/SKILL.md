@@ -52,6 +52,13 @@ the worktree dir. If the resolver reports `configFound:false` or a null `verify.
 treat it like a spec§13 degradation: STOP and ask the user for the missing commands / scope
 rather than assuming Flutter.
 
+**If `_meta.newerVersionInstalled` is set, STOP before Stage 0 step 2 and say so.** You are
+running an old playbook while the hooks execute the new one — skills bind at session start,
+so a `plugin update` mid-session cannot reach you. The run would create a chain and
+implement, then fail at receipts the old playbook never learned to write, and the failure
+would read as a harness bug. Tell the user which version you are (`_meta.skillVersion`),
+which is installed, and that a NEW SESSION is the only fix. Do not proceed.
+
 ## Stage 0 — PREFLIGHT
 
 1. Load the profile (above) with `load_config.js`; record `stack` + resolved verify
