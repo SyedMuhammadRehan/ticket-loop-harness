@@ -23,17 +23,14 @@ const DEFAULTS = {
     // Commit trailer for repos that require AI disclosure; null = clean commits.
     commitTrailer: null,
   },
-  // Model per dispatch role; 'inherit' = the session model. Full power is the default —
-  // cheaper tiers are a per-repo decision, never a silent one. The QA judge is the run's
-  // backstop, so it is the role a repo should downgrade last, if ever.
+  // Model per dispatch role; 'inherit' = the session model.
   models: {
     survey: 'inherit',
     implementer: 'inherit',
     fixer: 'inherit',
     qa: 'inherit',
   },
-  // A committed diff at or under this many changed lines (and touching no riskPaths) lets
-  // the QA judge read focused instead of sweeping the codebase. 0 = always sweep.
+  // Changed-line count at or under which the QA judge reads focused; 0 = always sweep.
   qaScope: {
     smallDiffLines: 60,
   },
