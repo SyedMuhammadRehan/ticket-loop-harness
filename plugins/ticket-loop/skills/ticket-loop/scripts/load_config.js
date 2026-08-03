@@ -61,8 +61,9 @@ function pluginVersionSkew() {
           return false;
         };
         const siblings = fs
-          .readdirSync(path.dirname(dir))
-          .filter((n) => /^\d+\.\d+\.\d+$/.test(n) && newer(n, running));
+          .readdirSync(path.dirname(dir), { withFileTypes: true })
+          .filter((d) => d.isDirectory() && /^\d+\.\d+\.\d+$/.test(d.name) && newer(d.name, running))
+          .map((d) => d.name);
         return { running, newest: siblings.sort((a, b) => (newer(a, b) ? 1 : -1)).pop() || null };
       } catch {
         return null;

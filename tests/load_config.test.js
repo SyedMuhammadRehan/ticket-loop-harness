@@ -213,6 +213,19 @@ test('version ordering is numeric, not lexical', () => {
   }
 });
 
+test('a stray FILE named like a version is not an installed version', () => {
+  const { root, script, repo } = fakeInstall('0.8.0', []);
+  try {
+    fs.writeFileSync(path.join(root, '9.9.9'), '');
+    const cfg = JSON.parse(runScript(script, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg._meta.newerVersionInstalled, null);
+    assert.ok(!cfg._meta.warnings.some((w) => w.includes('9.9.9')));
+  } finally {
+    rmDir(root);
+    rmDir(repo);
+  }
+});
+
 test('a repo checkout has no sibling versions and reports no skew', () => {
   const repo = mkFakeRepo({ verify: { test: 'x' } });
   try {
