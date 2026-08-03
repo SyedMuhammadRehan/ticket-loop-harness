@@ -159,9 +159,7 @@ test('--get resolves dotted keys', () => {
   }
 });
 
-// A skill binds at session start, so `plugin update` mid-session leaves the playbook stale
-// while the hooks keep running from disk. That skew fails late and reads as a harness bug, so
-// the resolver reports it: this file's own plugin version against the newest installed beside it.
+// Reproduce the versioned cache layout: sibling version dirs, each with its own manifest.
 function fakeInstall(runningVersion, otherVersions) {
   const root = mkTmpDir('tl-cache');
   const scriptRel = path.join('skills', 'ticket-loop', 'scripts');
