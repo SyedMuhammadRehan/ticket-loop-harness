@@ -17,6 +17,14 @@
     "worktreePrefix": "../ticket-",
     "buildResolverAgent": "dart-build-resolver",
     "memoryFile": ".agents/ticket-loop-memory.md",
+    "//models": "Model per dispatch role; 'inherit' (the default for every role) = the session model. Downgrade survey first (read-only mapping, mistakes caught downstream), implementer second (verification + QA backstop it), qa last or never (it IS the backstop). qaScope.smallDiffLines: a diff at or under this many changed lines touching no riskPaths gets a focused QA read instead of a codebase sweep; 0 = always sweep.",
+    "models": {
+      "survey": "haiku",
+      "implementer": "sonnet",
+      "fixer": "sonnet",
+      "qa": "inherit"
+    },
+    "qaScope": { "smallDiffLines": 60 },
     "attribution": {
       "//": "commitTrailer: string to append to every worktree commit (for repos that REQUIRE disclosure), or null for clean commits with no AI attribution. Repo policy decides — the default is null.",
       "commitTrailer": null

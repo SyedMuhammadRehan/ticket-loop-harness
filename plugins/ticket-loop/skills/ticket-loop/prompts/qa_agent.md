@@ -30,6 +30,11 @@ contract you cannot certify.
 - Implementation diff (committed AND uncommitted, so nothing hides outside a commit): {DIFF}
 - Verification results: {CHECK_RESULTS}
 - Repo conventions to enforce: {CONVENTIONS}
+- Reading scope: {QA_SCOPE}
+
+The scope bounds what you READ, never what you may conclude: a FOCUSED scope still carries
+full verdict authority, and if what you read points at something outside it, follow the
+pointer — the scope is a budget, not a blindfold.
 
 ## Judge, in order
 

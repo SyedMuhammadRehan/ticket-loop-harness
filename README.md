@@ -92,6 +92,8 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `worktreePrefix` | where the isolated worktree is created |
 | `buildResolverAgent` | which subagent fixes build/compile failures |
 | `memoryFile` | cross-run lessons file the loop reads at the start and appends to at the end (`null` disables) |
+| `models` | model per dispatch role (`survey` / `implementer` / `fixer` / `qa`), each defaulting to `inherit` = the session model. Opt-in cost tiering: downgrade `survey` first (read-only, caught downstream), `implementer` second (verification + QA backstop it), `qa` last or never — it is the backstop. The model used lands in the ledger label and report |
+| `qaScope.smallDiffLines` | a committed diff at or under this many changed lines (default 60) touching no `riskPaths` gets a *focused* QA read (changed files + their consumers + the contract) instead of a codebase sweep; `0` = always sweep. Scope never shrinks verdict authority, and risk-path touches always get the full read |
 | `hooks.postEdit` / `hooks.stopGate` | what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile. `stopGate` also takes `baseRef` (the branch point committed slices are diffed against), `worktrees` (`all`/`ticket`/`cwd`), and `requireMatchingTest` (block source changes no test covers) |
 | `attribution.commitTrailer` | repo policy on AI attribution: a trailer string appended to every worktree commit (for teams that require disclosure), or `null` (default) for clean commits with none. The implementer is also barred from AI-style narration comments — new code must be indistinguishable from the code around it |
 
@@ -256,6 +258,12 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   `git commit -F <file>`, write the file with an editor instead of a shell redirect, or split
   the command so the statement naming the path is read-only. Costs a developer of the harness
   more than a user of it.
+- **Which model a dispatch actually ran on.** The profile's `models` block and the
+  diff-scaled QA scope are playbook-followed: the orchestrator is instructed to pass the
+  configured model and scope, and to say so in the ledger label — but no hook can verify
+  which model a subagent ran on. What you get is the same as elsewhere: the choice is
+  recorded and sealed, so a cheaper-than-configured run is visible in the report, not
+  provably impossible.
 - **The strike count** per failure class (3 → re-plan) is orchestrator bookkeeping. Only the
   dispatch and re-plan caps are counted mechanically.
 - **Honest failure classification.** `FLAKY_VERIFIER` now requires an alternating history in the
