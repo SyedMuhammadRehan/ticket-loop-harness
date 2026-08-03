@@ -78,6 +78,76 @@ test('attribution defaults to no commit trailer; repo policy can set one', () =>
   }
 });
 
+test('models default to inherit everywhere — full power unless a repo opts out', () => {
+  const repo = mkFakeRepo({});
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+    assert.deepStrictEqual(cfg.models, {
+      survey: 'inherit',
+      implementer: 'inherit',
+      fixer: 'inherit',
+      qa: 'inherit',
+    });
+    assert.strictEqual(cfg.qaScope.smallDiffLines, 60);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('a repo can tier dispatch models; unset roles keep inherit', () => {
+  const repo = mkFakeRepo({ models: { survey: 'haiku', implementer: 'sonnet' } });
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg.models.survey, 'haiku');
+    assert.strictEqual(cfg.models.implementer, 'sonnet');
+    assert.strictEqual(cfg.models.qa, 'inherit');
+    assert.strictEqual(cfg.models.fixer, 'inherit');
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('an unknown models role is dropped with a warning, not silently carried', () => {
+  const repo = mkFakeRepo({ models: { judge: 'haiku' } });
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg.models.judge, undefined);
+    assert.ok(cfg._meta.warnings.some((w) => w.includes('unknown models role "judge"')));
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('a non-string or empty model is forced back to inherit with a warning', () => {
+  const repo = mkFakeRepo({ models: { survey: 42, qa: '  ' } });
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg.models.survey, 'inherit');
+    assert.strictEqual(cfg.models.qa, 'inherit');
+    assert.ok(cfg._meta.warnings.some((w) => w.includes('invalid models.survey')));
+    assert.ok(cfg._meta.warnings.some((w) => w.includes('invalid models.qa')));
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('qaScope.smallDiffLines takes overrides, allows 0, and rejects garbage loudly', () => {
+  const set = mkFakeRepo({ qaScope: { smallDiffLines: 120 } });
+  const never = mkFakeRepo({ qaScope: { smallDiffLines: 0 } });
+  const bad = mkFakeRepo({ qaScope: { smallDiffLines: -5 } });
+  try {
+    assert.strictEqual(JSON.parse(runScript(SCRIPT, [], { cwd: set }).stdout).qaScope.smallDiffLines, 120);
+    assert.strictEqual(JSON.parse(runScript(SCRIPT, [], { cwd: never }).stdout).qaScope.smallDiffLines, 0);
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: bad }).stdout);
+    assert.strictEqual(cfg.qaScope.smallDiffLines, 60);
+    assert.ok(cfg._meta.warnings.some((w) => w.includes('invalid qaScope.smallDiffLines')));
+  } finally {
+    rmDir(set);
+    rmDir(never);
+    rmDir(bad);
+  }
+});
+
 test('--get resolves dotted keys', () => {
   const repo = mkFakeRepo({ verify: { test: 'go test ./...' } });
   try {

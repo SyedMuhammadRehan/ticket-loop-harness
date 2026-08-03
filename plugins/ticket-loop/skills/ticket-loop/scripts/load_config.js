@@ -23,10 +23,25 @@ const DEFAULTS = {
     // Commit trailer for repos that require AI disclosure; null = clean commits.
     commitTrailer: null,
   },
+  // Model per dispatch role; 'inherit' = the session model. Full power is the default —
+  // cheaper tiers are a per-repo decision, never a silent one. The QA judge is the run's
+  // backstop, so it is the role a repo should downgrade last, if ever.
+  models: {
+    survey: 'inherit',
+    implementer: 'inherit',
+    fixer: 'inherit',
+    qa: 'inherit',
+  },
+  // A committed diff at or under this many changed lines (and touching no riskPaths) lets
+  // the QA judge read focused instead of sweeping the codebase. 0 = always sweep.
+  qaScope: {
+    smallDiffLines: 60,
+  },
 };
 
 const VALID_DESIGN_SOURCES = ['none', 'figma', 'openapi'];
 const VALID_TICKET_SOURCES = ['jira', 'github', 'gitlab', 'trello', 'manual'];
+const MODEL_ROLES = Object.keys(DEFAULTS.models);
 
 function findRepoRoot(start) {
   let dir = start;
@@ -86,6 +101,21 @@ function resolve() {
   }
   if (!cfg.verify || cfg.verify.test == null) {
     warnings.push('no verify.test command configured — Stage 5 cannot run the suite; skill must ask.');
+  }
+  for (const role of Object.keys(cfg.models)) {
+    if (!MODEL_ROLES.includes(role)) {
+      warnings.push(`unknown models role "${role}" — ignored (valid: ${MODEL_ROLES.join(', ')})`);
+      delete cfg.models[role];
+    } else if (typeof cfg.models[role] !== 'string' || !cfg.models[role].trim()) {
+      warnings.push(`invalid models.${role} — must be a model name or "inherit"; forcing "inherit"`);
+      cfg.models[role] = 'inherit';
+    }
+  }
+  if (!Number.isInteger(cfg.qaScope.smallDiffLines) || cfg.qaScope.smallDiffLines < 0) {
+    warnings.push(
+      `invalid qaScope.smallDiffLines "${cfg.qaScope.smallDiffLines}" — must be an integer >= 0; forcing ${DEFAULTS.qaScope.smallDiffLines}`
+    );
+    cfg.qaScope.smallDiffLines = DEFAULTS.qaScope.smallDiffLines;
   }
   cfg._meta = { repoRoot: root, configPath, configFound: fs.existsSync(configPath), warnings };
   return cfg;

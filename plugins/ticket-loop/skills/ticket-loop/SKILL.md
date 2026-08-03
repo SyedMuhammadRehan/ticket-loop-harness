@@ -326,6 +326,13 @@ enforced by the `dispatch_guard` hook, which counts every subagent tool call whe
 you make this call and refuses the tool at the cap (the two are de-duplicated, never summed).
 So skipping it does not get you extra tries — it only costs you a legible report.
 
+**Dispatch models (profile `models`):** each role has a configured model — `models.survey`,
+`models.implementer`, `models.fixer`, `models.qa`, all defaulting to `inherit`. When a
+role's value is not `inherit`, pass it as the Agent tool's `model` parameter for that
+dispatch and append it to the ledger label (`"implementer: C3 [sonnet]"`) so the report
+shows which tier did the work; `inherit` means omit the parameter and label. Cost tiers are
+the repo config's decision — never downgrade (or upgrade) a dispatch on your own judgement.
+
 **GATE C — continuous path-guard:** if any planned or in-progress edit touches a
 risk-tier path (the profile's `riskPaths` — example (from config `riskPaths`): auth `<auth-dirs>`; API DTOs
 `<api-contract-dirs>`; `pubspec.yaml` — PLUS the always-on rule of deleting/weakening
@@ -443,6 +450,17 @@ it from ledger.md, attempt history, implementer/fixer return messages, and repor
 Fill `{CONVENTIONS}` with the conventions recorded in codebase-map.md plus the profile's
 `stack`; if the survey was skipped, fill it with "the conventions evident in the surrounding
 code — no stack-specific assumptions".
+
+**Scope the judge to the diff (profile `qaScope`):** total the changed lines — committed
+(`git -C ../ticket-<TICKET> diff --shortstat <base>..HEAD`, insertions plus deletions) and
+uncommitted (`diff --shortstat HEAD`). If that total is at most `qaScope.smallDiffLines`
+AND no changed file matches the profile's `riskPaths`, fill `{QA_SCOPE}` with:
+"FOCUSED — read the changed files, every file that imports or consumes them, and the
+contract artifacts; skip the wider codebase sweep." Otherwise fill it with:
+"FULL — sweep as widely as the contract and diff warrant." A risk-path touch always gets
+FULL regardless of size, and the scope goes into the ledger label (`"qa: contract
+[focused]"`) so a focused review can never pass itself off as a full one. The scope changes
+what the judge reads, never what it may conclude — verdict authority is identical.
 
 Fill `{DIFF}` with BOTH committed and uncommitted work, or the judge approves something
 different from what the human receives:
