@@ -105,9 +105,6 @@ test('a transiently denied lock mkdir is waited out, not fatal', async () => {
   }
 });
 
-// Breaking a lock is only safe when its age is known. A lock that vanishes between the mkdir
-// and the stat has an unmeasurable age, and the name may already belong to a fresh holder —
-// removing it then puts two writers in the critical section at once.
 test('a lock whose age cannot be measured is never broken', () => {
   const { root, runDir } = fresh();
   try {
