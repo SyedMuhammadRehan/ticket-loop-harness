@@ -209,17 +209,17 @@ function rotateUnlocked(runDir) {
 // Only a lock whose age is KNOWN and past the window may be broken. If the stat fails the
 // lock vanished mid-check, and by now the name may belong to a fresh holder — treating that
 // as breakable is how two writers end up in the critical section together.
-function isStale(lock, now = Date.now()) {
+function isStale(lock) {
   try {
-    return now - fs.statSync(lock).mtimeMs > LOCK_STALE_MS;
+    return Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS;
   } catch {
     return false;
   }
 }
 
-function withLock(runDir, fn) {
+function withLock(runDir, fn, waitMs = LOCK_WAIT_MS) {
   const lock = path.join(resolveChainDir(runDir).dir, LOCK_NAME);
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   for (;;) {
     try {
@@ -230,14 +230,16 @@ function withLock(runDir, fn) {
       // than already-exists, so all three errnos mean "not now" and wait out the deadline.
       if (e.code !== 'EEXIST' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
       if (e.code === 'EEXIST' && isStale(lock)) {
+        // A break that fails (debris inside the lock, an ACL) falls through to the
+        // deadline: retrying it forever would spin without ever reaching the timeout.
         try {
           fs.rmdirSync(lock);
+          continue;
         } catch {}
-        continue;
       }
       if (Date.now() >= deadline) {
         const err = new Error(
-          `receipt chain busy: could not take ${lock} within ${LOCK_WAIT_MS}ms (last error: ${e.code}). ` +
+          `receipt chain busy: could not take ${lock} within ${waitMs}ms (last error: ${e.code}). ` +
             `If no ticket-loop process is running, remove that directory.`
         );
         err.code = 'CHAIN_LOCKED';

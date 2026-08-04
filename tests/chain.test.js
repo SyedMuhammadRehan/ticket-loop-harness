@@ -128,6 +128,44 @@ test('a lock whose age cannot be measured is never broken', () => {
   }
 });
 
+// A stale lock that cannot be removed (something external dropped a file inside it, or an
+// ACL denies the rmdir) must end in a loud CHAIN_LOCKED at the deadline — not a hot retry
+// loop that never reaches the deadline check. The waiter runs in a child with a kill timer
+// so the failure mode under review (an infinite spin) fails this test instead of hanging it.
+test('a stale lock that cannot be removed times out loudly instead of spinning', async () => {
+  const { root, runDir } = fresh();
+  try {
+    const lock = path.join(chain.resolveChainDir(runDir).dir, chain.LOCK_NAME);
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, 'debris'), ''); // rmdir now fails ENOTEMPTY
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    fs.utimesSync(lock, old, old);
+
+    const waiter = path.join(root, 'waiter.js');
+    fs.writeFileSync(
+      waiter,
+      `const chain = require(${JSON.stringify(path.join(SCRIPTS_DIR, 'chain.js'))});\n` +
+        `try {\n` +
+        `  chain.withLock(process.argv[2], () => {}, 500);\n` +
+        `  process.exit(3);\n` + // entering the critical section under a held lock is its own bug
+        `} catch (e) {\n` +
+        `  process.exit(e.code === 'CHAIN_LOCKED' ? 0 : 1);\n` +
+        `}\n`
+    );
+    const code = await new Promise((resolve) => {
+      const kid = spawn(process.execPath, [waiter, runDir], { stdio: 'ignore' });
+      const killer = setTimeout(() => kid.kill('SIGKILL'), 10000);
+      kid.on('exit', (c, sig) => {
+        clearTimeout(killer);
+        resolve(sig ? 'spun-until-killed' : c);
+      });
+    });
+    assert.strictEqual(code, 0, 'the waiter must throw CHAIN_LOCKED at its deadline');
+  } finally {
+    rmDir(root);
+  }
+});
+
 test('a stale lock left by a killed process does not deadlock the chain', () => {
   const { root, runDir } = fresh();
   try {
