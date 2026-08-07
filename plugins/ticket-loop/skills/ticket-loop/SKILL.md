@@ -352,6 +352,24 @@ enforced by the `dispatch_guard` hook, which counts every subagent tool call whe
 you make this call and refuses the tool at the cap (the two are de-duplicated, never summed).
 So skipping it does not get you extra tries — it only costs you a legible report.
 
+**Do not dispatch what is cheaper to do yourself.** A subagent costs its entire prompt —
+contract, codebase map, approach, design excerpt — before it writes a line, so a small slice
+pays more in setup than in work. Do it INLINE, with the same TDD discipline and the same
+ledger entry, when the slice is test-only, or is a one-file change you expect to come in
+under the profile's `dispatchPolicy.minSliceLines` (default 50). Dispatch when the slice is
+genuinely feature-sized, when it needs a fresh context to avoid inheriting your assumptions,
+or when it is the QA judge — whose independence is the point and is never traded for tokens.
+Judgement call, and `ledger.js cost` reports lines-per-dispatch afterwards so a run full of
+tiny dispatches is visible.
+
+**Fill the prompt templates with EXCERPTS, never whole files.** `{CODEBASE_MAP}`,
+`{APPROACH}` and `{DESIGN_EXCERPT}` mean the lines that bear on THIS slice — the widgets it
+reuses, the chosen shape, the tokens it binds. Pasting the whole survey re-buys it on every
+dispatch. The templates are ordered so their stable text caches and your fills come last:
+fill the sections where they are, do not reorder them, and do not prepend a preamble of your
+own. `ledger.js cost` reports the size of every prompt shipped and how many exceeded
+`dispatchPolicy.promptBudgetChars`.
+
 **When a dispatch dies without producing anything** — an API stall, the session limit, a crash —
 record what it produced:
 `node <SKILL_DIR>/scripts/ledger.js outcome .agents/ticket-runs/<TICKET> <seq> died "<what killed it>"`

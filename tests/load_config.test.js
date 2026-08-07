@@ -236,6 +236,38 @@ test('a repo checkout has no sibling versions and reports no skew', () => {
   }
 });
 
+// --- dispatch policy ---
+
+test('dispatchPolicy has defaults and rejects values that disable it', () => {
+  const repo = mkFakeRepo({ verify: { test: 'x' }, hooks: { stopGate: { extensions: ['.py'], mode: 'full' } } });
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg.dispatchPolicy.minSliceLines, 50);
+    assert.strictEqual(cfg.dispatchPolicy.promptBudgetChars, 32000);
+  } finally {
+    rmDir(repo);
+  }
+
+  for (const bad of [{ minSliceLines: -1 }, { minSliceLines: 'lots' }, { promptBudgetChars: 0 }]) {
+    const repo = mkFakeRepo({
+      verify: { test: 'x' },
+      hooks: { stopGate: { extensions: ['.py'], mode: 'full' } },
+      dispatchPolicy: bad,
+    });
+    try {
+      const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+      assert.ok(
+        cfg._meta.warnings.some((w) => w.includes('dispatchPolicy')),
+        `${JSON.stringify(bad)} should warn: ${cfg._meta.warnings.join(' | ')}`
+      );
+      assert.strictEqual(cfg.dispatchPolicy.minSliceLines, 50);
+      assert.strictEqual(cfg.dispatchPolicy.promptBudgetChars, 32000);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
 // --- stop-gate preflight ---
 //
 // A profile with no hooks.stopGate block wedges a run: the gate blocks every turn-end while one

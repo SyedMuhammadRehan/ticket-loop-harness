@@ -73,6 +73,16 @@ function ledgerProtocol(ledger, cwd) {
   return Number.isInteger(n) ? n : null;
 }
 
+// The filled prompt is visible here and nowhere else: the skill's own bookkeeping call sees
+// only a label, and the subagent's result says nothing about what it was handed. Characters,
+// not tokens — nothing outside the model can count those.
+function promptCharsOf(toolInput) {
+  return ['prompt', 'description'].reduce(
+    (n, k) => n + (typeof toolInput[k] === 'string' ? toolInput[k].length : 0),
+    0
+  );
+}
+
 function labelFor(toolInput) {
   const kind = toolInput.subagent_type || toolInput.agentType || 'agent';
   const what = toolInput.description || (typeof toolInput.prompt === 'string' ? toolInput.prompt.split('\n')[0] : '');
@@ -115,9 +125,14 @@ function main() {
     process.exit(2);
   }
 
+  const toolInput = input.tool_input || {};
   const res = spawnSync(
     process.execPath,
-    [ledger, 'dispatch', runDir, labelFor(input.tool_input || {}), '--source', 'hook'],
+    [
+      ledger, 'dispatch', runDir, labelFor(toolInput),
+      '--source', 'hook',
+      '--prompt-chars', String(promptCharsOf(toolInput)),
+    ],
     { encoding: 'utf8', cwd: root, timeout: LEDGER_TIMEOUT_MS }
   );
 

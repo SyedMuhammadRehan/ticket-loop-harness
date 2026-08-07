@@ -34,6 +34,13 @@ const DEFAULTS = {
   qaScope: {
     smallDiffLines: 60,
   },
+  // A dispatch costs its whole prompt before it does any work, so small jobs are cheaper
+  // done inline. Both are advisory to the orchestrator and reported afterwards, not enforced
+  // at the dispatch — nothing at that moment can know how large the change will turn out.
+  dispatchPolicy: {
+    minSliceLines: 50,
+    promptBudgetChars: 32000,
+  },
 };
 
 const VALID_DESIGN_SOURCES = ['none', 'figma', 'openapi'];
@@ -186,6 +193,13 @@ function resolve() {
       `invalid qaScope.smallDiffLines "${cfg.qaScope.smallDiffLines}" — must be an integer >= 0; forcing ${DEFAULTS.qaScope.smallDiffLines}`
     );
     cfg.qaScope.smallDiffLines = DEFAULTS.qaScope.smallDiffLines;
+  }
+  for (const [key, min] of [['minSliceLines', 0], ['promptBudgetChars', 1]]) {
+    const v = cfg.dispatchPolicy[key];
+    if (!Number.isInteger(v) || v < min) {
+      warnings.push(`invalid dispatchPolicy.${key} "${v}" — must be an integer >= ${min}; forcing ${DEFAULTS.dispatchPolicy[key]}`);
+      cfg.dispatchPolicy[key] = DEFAULTS.dispatchPolicy[key];
+    }
   }
   warnings.push(...stopGateWarnings(cfg));
   const skew = pluginVersionSkew();

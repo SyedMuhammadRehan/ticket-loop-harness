@@ -2,7 +2,7 @@
 
 Status: {COMPLETE | INCOMPLETE — <why>}   ← the WORK: did every criterion pass
 Branch: {BRANCH} (worktree {WORKTREE}) — merge/push are manual
-Duration: {WALL_CLOCK} | Dispatches: {N}/{MAX} ({N} died — see Cost) | Re-plans: {N}/{MAX}
+Duration: {WALL_CLOCK} | Dispatches: {N}/{MAX} ({N} died, {N} over prompt budget — see Cost) | Re-plans: {N}/{MAX}
 Toolchain: {TOOLCHAIN_LINE from stage 0}
 Profile: stack={STACK}, ticketSource={TICKET_SOURCE}, designSource={DESIGN_SOURCE}
 Verify commands: analyze=`{VERIFY_ANALYZE}` test=`{VERIFY_TEST}`
