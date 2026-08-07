@@ -76,6 +76,43 @@ function pluginVersionSkew() {
   return null;
 }
 
+// Preflight for the stop gate's own parameters, all of which are only fixable BEFORE a run
+// starts: mid-run, stop_gate blocks every turn-end without a usable block and freeze_guard
+// holds this file frozen, so the only exit is archiving the run.
+function stopGateWarnings(cfg) {
+  const sg = cfg.hooks && cfg.hooks.stopGate;
+  if (!sg || typeof sg !== 'object') {
+    return [
+      'no hooks.stopGate block — while a run is active the stop gate refuses every turn-end ' +
+        'without one, and the profile is frozen for that window, so the run would have to be ' +
+        'archived to add it. Add the block now, before starting.',
+    ];
+  }
+  const warnings = [];
+  if (!Array.isArray(sg.extensions) || sg.extensions.length === 0) {
+    warnings.push(
+      'hooks.stopGate.extensions is empty — no changed file can match it, so every turn-end ' +
+        'reports "NOTHING was verified" while looking configured.'
+    );
+  }
+  if ((sg.mode || 'full') === 'targeted' && !sg.testCommand) {
+    warnings.push('hooks.stopGate.mode is "targeted" but there is no hooks.stopGate.testCommand — nothing would ever run.');
+  }
+  if ((sg.mode || 'full') === 'full' && !(cfg.verify && cfg.verify.test)) {
+    warnings.push('hooks.stopGate.mode is "full" but verify.test is null — the gate has no suite to run.');
+  }
+  if (sg.exclude) {
+    try {
+      new RegExp(sg.exclude);
+    } catch (e) {
+      // stop_gate drops an unparsable exclude and filters nothing, so a typo silently widens
+      // what gets tested.
+      warnings.push(`hooks.stopGate.exclude is not a valid regex (${e.message}) — it would be ignored, excluding nothing.`);
+    }
+  }
+  return warnings;
+}
+
 function findRepoRoot(start) {
   let dir = start;
   for (let i = 0; i < 8; i++) {
@@ -150,6 +187,7 @@ function resolve() {
     );
     cfg.qaScope.smallDiffLines = DEFAULTS.qaScope.smallDiffLines;
   }
+  warnings.push(...stopGateWarnings(cfg));
   const skew = pluginVersionSkew();
   if (skew && skew.newest) {
     warnings.push(

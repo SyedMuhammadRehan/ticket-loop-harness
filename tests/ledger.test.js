@@ -3,7 +3,41 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mkRun, rmDir, ledger, chainDirFor, HOOKS_DIR } = require('./helpers.js');
+const { mkRun, rmDir, ledger, chainDirFor, runScript, HOOKS_DIR, SCRIPTS_DIR } = require('./helpers.js');
+const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
+
+const DRAFT =
+  '# Done\n## Criteria\n- [ ] C1 (test): behaviour holds | run: x tests\n' +
+  '- [ ] C2 (analyzer): clean | run: y .\n## Tokens\n- none\n## Out of scope\n- the offline banner\n';
+
+// A run driven all the way to `close`, which is the only thing that writes closed.json.
+function closedRun() {
+  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
+  assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
+  const write = (name, body) => {
+    const p = path.join(runDir, name);
+    fs.writeFileSync(p, body);
+    return p;
+  };
+  const brief = write('ticket-brief.md', '# brief\n');
+  ledger(root, ['gate', runDir, 'intake', '--evidence', brief]);
+  write('done.draft.md', DRAFT);
+  runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
+  runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root });
+  ledger(root, ['check', runDir, 'C1', 'PASS']);
+  ledger(root, ['gate', runDir, 'verify', '--evidence', brief]);
+  ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
+  ledger(root, [
+    'verdict', runDir, 'APPROVE',
+    '--inputs', path.join(runDir, `done${'.approved'}.md`),
+    '--inputs', path.join(runDir, 'done-additions.md'),
+  ]);
+  ledger(root, ['gate', runDir, 'qa', '--evidence', brief]);
+  const report = write('report.md', '# Report\n');
+  ledger(root, ['gate', runDir, 'report', '--evidence', report]);
+  assert.strictEqual(ledger(root, ['close', runDir]).status, 0);
+  return { root, runDir, report };
+}
 
 function init(base) {
   const { root, runDir } = mkRun({ verify: { test: 'node tests/run.js' } });
@@ -523,6 +557,211 @@ test('verify passes a clearance that ledger.js actually recorded', () => {
     const res = ledger(root, ['verify', runDir]);
     assert.strictEqual(res.status, 0, res.stdout);
     assert.doesNotMatch(res.stdout, /FORGED CLEARANCE/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- revisions ---
+//
+// ledger.md and approach.md keep being written after their gate by design, so treating every
+// later edit as tampering makes a run that followed the playbook report a broken chain.
+// Recordable, then — but only as a sealed act naming a reason.
+
+function sealedRun() {
+  const { root, runDir } = init();
+  const approach = path.join(runDir, 'approach.md');
+  fs.writeFileSync(approach, '# Approach\noriginal\n');
+  assert.strictEqual(ledger(root, ['gate', runDir, 'approach', '--evidence', approach]).status, 0);
+  return { root, runDir, approach };
+}
+
+test('an unrecorded edit to a sealed file is still TAMPERED', () => {
+  const { root, runDir, approach } = sealedRun();
+  try {
+    fs.writeFileSync(approach, '# Approach\nrewritten\n');
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4, res.stdout);
+    assert.match(res.stdout, /TAMPERED: .*approach\.md/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a recorded revision keeps the chain intact and appears in the report', () => {
+  const { root, runDir, approach } = sealedRun();
+  try {
+    fs.writeFileSync(approach, '# Approach\nrewritten\n');
+    const rev = ledger(root, ['revise', runDir, approach, '--reason', 'validator reflow of the failure modes']);
+    assert.strictEqual(rev.status, 0, rev.stderr);
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 0, res.stdout);
+    const report = JSON.parse(res.stdout);
+    assert.strictEqual(report.intact, true);
+    assert.strictEqual(report.revisions.length, 1);
+    assert.match(report.revisions[0].file, /approach\.md/);
+    assert.match(report.revisions[0].reason, /reflow/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The receipt covers the content it was recorded against and nothing after it, or one revision
+// would license every later edit.
+test('editing again after a revision is TAMPERED', () => {
+  const { root, runDir, approach } = sealedRun();
+  try {
+    fs.writeFileSync(approach, '# Approach\nrewritten\n');
+    assert.strictEqual(ledger(root, ['revise', runDir, approach, '--reason', 'validator reflow of failure modes']).status, 0);
+    fs.writeFileSync(approach, '# Approach\nrewritten again, quietly\n');
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4, res.stdout);
+    assert.match(res.stdout, /TAMPERED/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The frozen contract is the one thing a revision must never reach: moving the criteria after
+// the freeze is the failure the freeze exists to prevent.
+test('revise refuses frozen artifacts and the enforcement profile', () => {
+  const { root, runDir } = init();
+  try {
+    for (const name of ['done.md', `done${'.approved'}.md`, 'budget.json', 'clearances.json']) {
+      const file = path.join(runDir, name);
+      fs.writeFileSync(file, 'x\n');
+      const res = ledger(root, ['revise', runDir, file, '--reason', 'a perfectly good reason']);
+      assert.strictEqual(res.status, 1, `${name} should refuse: ${res.stdout}`);
+      assert.match(res.stderr, /frozen/i);
+    }
+    const cfg = path.join(root, '.agents', 'ticket-loop.config.json');
+    const res = ledger(root, ['revise', runDir, cfg, '--reason', 'a perfectly good reason']);
+    assert.strictEqual(res.status, 1, res.stdout);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('revise refuses a thin reason, an unsealed file, and an unchanged file', () => {
+  const { root, runDir, approach } = sealedRun();
+  try {
+    fs.writeFileSync(approach, '# Approach\nrewritten\n');
+    assert.strictEqual(ledger(root, ['revise', runDir, approach, '--reason', 'wip']).status, 1);
+
+    const stray = path.join(runDir, 'notes.md');
+    fs.writeFileSync(stray, 'never sealed\n');
+    const unsealed = ledger(root, ['revise', runDir, stray, '--reason', 'a perfectly good reason']);
+    assert.strictEqual(unsealed.status, 1, unsealed.stdout);
+    assert.match(unsealed.stderr, /no receipt/i);
+
+    assert.strictEqual(ledger(root, ['revise', runDir, approach, '--reason', 'the real reflow reason']).status, 0);
+    const again = ledger(root, ['revise', runDir, approach, '--reason', 'another good reason here']);
+    assert.strictEqual(again.status, 1, again.stdout);
+    assert.match(again.stderr, /unchanged/i);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The additive half of the contract is contract too: a revision receipt over it would turn
+// "a criterion was removed after the judge read it" into a recorded, clean-verifying edit.
+test('revise refuses the additive contract', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
+  assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
+  fs.writeFileSync(path.join(runDir, 'done.draft.md'), DRAFT);
+  runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
+  assert.strictEqual(runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root }).status, 0);
+  try {
+    const additions = path.join(runDir, 'done-additions.md');
+    fs.writeFileSync(additions, '# Done additions\n(criterion removed)\n');
+    const res = ledger(root, ['revise', runDir, additions, '--reason', 'tidying up the additions file']);
+    assert.strictEqual(res.status, 1, res.stdout);
+    assert.match(res.stderr, /frozen/i);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- a closed run stays closed ---
+//
+// Records added after close seal and link perfectly, so only the close marker's count and last
+// seal can catch a run that kept collecting receipts after the gates were lifted.
+
+test('mutating a closed run is refused', () => {
+  const { root, runDir } = closedRun();
+  try {
+    for (const args of [
+      ['check', runDir, 'C9', 'PASS'],
+      ['dispatch', runDir, 'more work'],
+      ['gate', runDir, 'implement', '--evidence', path.join(runDir, 'report.md')],
+      ['replan', runDir, 'another go'],
+    ]) {
+      const res = ledger(root, args);
+      assert.strictEqual(res.status, 1, `${args[0]} should refuse on a closed run: ${res.stdout}`);
+      assert.match(res.stderr, /closed/i);
+    }
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('verify reports records appended after close', () => {
+  const { root, runDir } = closedRun();
+  try {
+    // Straight at the chain, the way a bypass of ledger.js would reach it.
+    chain.append(runDir, 'check', { id: 'C9', result: 'PASS', note: 'snuck in' });
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4, res.stdout);
+    assert.match(res.stdout, /after the run was closed/i);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('an untouched closed run verifies clean', () => {
+  const { root, runDir } = closedRun();
+  try {
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 0, res.stdout);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- dispatch outcomes ---
+//
+// A dispatch killed by a stall or the session limit still spends budget. Counting it is right;
+// reporting it as a productive pass is not.
+
+test('a died outcome is recorded and reported without changing the spend', () => {
+  const { root, runDir } = init();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'survey']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'design-extractor']).status, 0);
+    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 2);
+
+    const res = ledger(root, ['outcome', runDir, '3', 'died', 'API stalled mid-stream']);
+    assert.strictEqual(res.status, 0, res.stderr);
+
+    const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.dispatches, 2, 'a died dispatch still spent its budget');
+    assert.strictEqual(status.dispatchesDied, 1);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('outcome refuses a non-dispatch seq, an unknown verdict, and a second verdict', () => {
+  const { root, runDir } = init();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'survey']).status, 0);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '1', 'died']).status, 1, 'seq 1 is the init record');
+    assert.strictEqual(ledger(root, ['outcome', runDir, '99', 'died']).status, 1);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '2', 'maybe']).status, 1);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '2', 'died', 'session limit']).status, 0);
+    const dup = ledger(root, ['outcome', runDir, '2', 'ok']);
+    assert.strictEqual(dup.status, 1, dup.stdout);
+    assert.match(dup.stderr, /already/i);
   } finally {
     rmDir(root);
   }

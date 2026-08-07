@@ -235,3 +235,55 @@ test('a repo checkout has no sibling versions and reports no skew', () => {
     rmDir(repo);
   }
 });
+
+// --- stop-gate preflight ---
+//
+// A profile with no hooks.stopGate block wedges a run: the gate blocks every turn-end while one
+// is active, and freeze_guard freezes the profile for that window, so the block cannot be added
+// without archiving the run.
+
+test('missing hooks.stopGate is a preflight warning naming the wedge', () => {
+  const repo = mkFakeRepo({ stack: 'python', verify: { test: 'pytest -q' } });
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+    const hit = cfg._meta.warnings.find((w) => w.includes('hooks.stopGate'));
+    assert.ok(hit, `no stopGate warning in ${JSON.stringify(cfg._meta.warnings)}`);
+    assert.match(hit, /archiv/i);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('a usable stopGate block produces no stopGate warning', () => {
+  const repo = mkFakeRepo({
+    verify: { test: 'pytest -q' },
+    hooks: { stopGate: { extensions: ['.py'], mode: 'full' } },
+  });
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+    assert.ok(!cfg._meta.warnings.some((w) => w.includes('hooks.stopGate')), cfg._meta.warnings.join('\n'));
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// A block that matches nothing is not a configured gate — it is a gate that reports
+// "NOTHING was verified" at every turn-end while looking configured.
+test('a stopGate block that cannot verify anything warns', () => {
+  const cases = [
+    [{ extensions: [], mode: 'full' }, /extensions/],
+    [{ extensions: ['.py'], mode: 'targeted' }, /testCommand/],
+    [{ extensions: ['.py'], mode: 'full', exclude: '([' }, /exclude/],
+  ];
+  for (const [stopGate, expected] of cases) {
+    const repo = mkFakeRepo({ verify: { test: 'pytest -q' }, hooks: { stopGate } });
+    try {
+      const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+      const hit = cfg._meta.warnings.find((w) => w.includes('hooks.stopGate'));
+      assert.ok(hit, `${JSON.stringify(stopGate)} should warn`);
+      assert.match(hit, expected);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});

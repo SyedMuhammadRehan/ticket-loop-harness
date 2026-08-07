@@ -390,8 +390,12 @@ function main() {
       console.error(
         `stop_gate: a ticket run is ACTIVE (${runs.map((r) => path.basename(r)).join(', ')}) but there is no usable ` +
           `hooks.stopGate config${error ? ` (${error})` : ''} — refusing to confirm a "done" claim it cannot verify.\n` +
-          `  Restore .agents/ticket-loop.config.json (its hash is sealed in the run's init receipt: ` +
-          `"ledger.js verify <runDir>" will show the drift), or archive the run.`
+          `  If the profile DRIFTED, restore it: its hash is sealed in the run's init receipt, so ` +
+          `"ledger.js verify <runDir>" shows what changed.\n` +
+          `  If the block was never there, it cannot be added now — freeze_guard holds the profile frozen ` +
+          `while a run is active, deliberately, because editing it mid-run is how the gates get disarmed. ` +
+          `The only exit is "ledger.js archive <runDir>". Add hooks.stopGate first, then start again: ` +
+          `load_config.js reports this at Stage 0, where the fix is free.`
       );
       process.exit(2);
     }
