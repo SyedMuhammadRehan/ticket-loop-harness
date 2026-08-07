@@ -51,6 +51,10 @@ const MIN_REVISION_REASON = 8;
 const UNREVISABLE = [
   /(^|\/)done\.md$/,
   /\.approved\.md$/,
+  // The additive half is contract too. It is left writable on purpose (criteria may be ADDED
+  // mid-run), but once a verdict seals it, a revision receipt would turn "a criterion was
+  // removed after the judge read it" into a recorded, clean-verifying edit.
+  /(^|\/)done-additions\.md$/,
   /(^|\/)budget\.json$/,
   /(^|\/)closed\.json$/,
   /(^|\/)clearances\.json$/,
@@ -182,6 +186,21 @@ function requireChain(runDir) {
   return v;
 }
 
+// A closed run is finished: `close` released the dispatch budget and the control-plane freeze
+// on the strength of the receipts as they stood. Letting it collect more afterwards means the
+// gates were lifted against one history and the report describes another, so every mutating
+// command stops here. Reading (status, cost, verify) and `archive` stay available.
+function requireOpen(runDir, what) {
+  if (!fs.existsSync(closedPath(runDir))) return;
+  console.error(
+    `ledger ${what}: ${runDir} is CLOSED — refusing to record anything more.\n` +
+      `  Closing released the budget and the control-plane freeze against the receipts as they were; ` +
+      `appending now would leave the report describing a different run.\n` +
+      `  A new pass over this ticket is "ledger.js archive ${runDir}" then a fresh "init ... --restart".`
+  );
+  process.exit(1);
+}
+
 function cmdInit(runDir, baseSha, opts) {
   fs.mkdirSync(runDir, { recursive: true });
 
@@ -278,6 +297,7 @@ function cmdInit(runDir, baseSha, opts) {
 
 function cmdDispatch(runDir, label, opts) {
   requireChain(runDir);
+  requireOpen(runDir, 'dispatch');
   const { maxDispatches } = caps(runDir);
   const { count } = dispatchCount(runDir);
   if (count >= maxDispatches) {
@@ -293,6 +313,7 @@ function cmdDispatch(runDir, label, opts) {
 
 function cmdReplan(runDir, reason) {
   requireChain(runDir);
+  requireOpen(runDir, 'replan');
   const { maxReplans } = caps(runDir);
   const used = chain.ofKind(runDir, 'replan').length;
   if (used >= maxReplans) {
@@ -308,6 +329,7 @@ function cmdReplan(runDir, reason) {
 
 function cmdGate(runDir, stage, evidence) {
   requireChain(runDir);
+  requireOpen(runDir, 'gate');
   if (!STAGES.includes(stage)) {
     console.error(`ledger gate: unknown stage "${stage}" — one of ${STAGES.join(', ')}`);
     process.exit(1);
@@ -372,6 +394,7 @@ function sealsOf(records, file) {
 // and every revision carries a reason into the report where a human reads it.
 function cmdRevise(runDir, file, reason) {
   requireChain(runDir);
+  requireOpen(runDir, 'revise');
   if (!file) {
     console.error('ledger revise: need the file that changed, e.g. "ledger.js revise <runDir> <runDir>/approach.md --reason \\"...\\""');
     process.exit(1);
@@ -432,6 +455,7 @@ function cmdRevise(runDir, file, reason) {
 // refund one would make the budget negotiable after the fact.
 function cmdOutcome(runDir, seqArg, outcome, note) {
   requireChain(runDir);
+  requireOpen(runDir, 'outcome');
   const normalized = String(outcome || '').toLowerCase();
   if (!DISPATCH_OUTCOMES.includes(normalized)) {
     console.error(`ledger outcome: outcome must be one of ${DISPATCH_OUTCOMES.join(', ')}`);
@@ -469,6 +493,7 @@ function cmdRequire(runDir, stage) {
 
 function cmdCheck(runDir, id, result, note) {
   requireChain(runDir);
+  requireOpen(runDir, 'check');
   const normalized = String(result || '').toUpperCase();
   if (!CHECK_RESULTS.includes(normalized)) {
     console.error(`ledger check: result must be one of ${CHECK_RESULTS.join(', ')}`);
@@ -486,6 +511,7 @@ function cmdCheck(runDir, id, result, note) {
 // `ledger.js verdict <run> APPROVE` with no inputs and no judge.
 function cmdVerdict(runDir, verdict, inputs) {
   requireChain(runDir);
+  requireOpen(runDir, 'verdict');
   const normalized = String(verdict || '').toUpperCase().replace(/[\s-]+/g, '_');
   if (!VERDICTS.includes(normalized)) {
     console.error(`ledger verdict: must be one of ${VERDICTS.join(', ')}`);
@@ -596,6 +622,7 @@ function cmdArchive(runDir) {
 // makes skipping it visible afterwards.
 function cmdClear(runDir, glob, reason) {
   requireChain(runDir);
+  requireOpen(runDir, 'clear');
   if (!glob) {
     console.error('ledger clear: need the riskPaths glob to clear, e.g. "lib/ui/auth/**"');
     process.exit(1);
@@ -738,6 +765,25 @@ function cmdVerify(runDir) {
       }
     } catch {
       problems.push('budget.json missing or unreadable (mirror only — not fatal)');
+    }
+
+    // The close marker records where the chain stood when the run ended. Nothing else notices
+    // records added afterwards: they seal and link perfectly, so the history stays "intact"
+    // while describing a run that kept going after the budget and the control-plane freeze
+    // were released on the strength of the receipts as they were.
+    try {
+      const marker = JSON.parse(fs.readFileSync(closedPath(runDir), 'utf8'));
+      const last = v.records.length ? v.records[v.records.length - 1].hmac : null;
+      if (marker.chainRecords !== v.records.length || (marker.lastSeal || null) !== last) {
+        problems.push(
+          `records were appended after the run was closed: the close marker recorded ` +
+            `${marker.chainRecords} record(s) ending ${(marker.lastSeal || 'none').toString().slice(0, 12)}…, ` +
+            `the chain now holds ${v.records.length} ending ${(last || 'none').toString().slice(0, 12)}…`
+        );
+      }
+    } catch {
+      // No marker means the run is simply still open; an unreadable one is not evidence of
+      // anything on its own, and freeze_guard protects it from ordinary writes.
     }
 
     // freeze_guard trusts the clearance mirror without consulting the chain, because it runs on

@@ -194,6 +194,12 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   refuses without a `report` receipt; that marker, not the presence of `report.md`, is what
   releases the dispatch budget and the control-plane freeze. The old signal meant the loop's own
   deliverable was the off switch for every gate.
+- **A closed run stays closed** — every mutating `ledger.js` command refuses once `closed.json`
+  exists, and `verify` compares the chain against the record count and last seal the close
+  marker captured. Closing releases the dispatch budget and the control-plane freeze on the
+  strength of the receipts as they stood; without this a run could keep collecting them
+  afterwards and still verify intact, with the report describing a different run than the one
+  the gates were lifted for.
 - **Dispatch budget, enforced at the dispatch** — `dispatch_guard.js` is a `PreToolUse` hook on
   the subagent tool. It counts every subagent call and refuses the tool at the cap. Not calling
   `ledger.js` buys no extra tries. 2-re-plan circuit breaker likewise.

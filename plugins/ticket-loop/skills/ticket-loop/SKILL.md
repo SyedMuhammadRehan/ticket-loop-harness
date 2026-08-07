@@ -569,6 +569,9 @@ APPROVE → stage 7.
    and `closed.json` is itself write-protected — so writing `report.md` no longer ends the run
    on its own (that used to make the loop's own deliverable the off switch for every gate).
    If a run is being abandoned rather than reported, `ledger.js archive` is the way out.
+   Close LAST: every recording command refuses afterwards, and `verify` reports anything that
+   reached the chain after the marker. If something still needs a receipt — a late check, a
+   revision, a dispatch outcome — record it before closing.
 6. Final message to the user: status (COMPLETE / INCOMPLETE+why), report path, worktree
    branch name, the integrity line from `ledger.js verify`, and the reminder that merge +
    push + golden regeneration (if flagged) are manual human actions.

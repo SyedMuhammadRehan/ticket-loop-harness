@@ -3,7 +3,41 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mkRun, rmDir, ledger, chainDirFor, HOOKS_DIR } = require('./helpers.js');
+const { mkRun, rmDir, ledger, chainDirFor, runScript, HOOKS_DIR, SCRIPTS_DIR } = require('./helpers.js');
+const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
+
+const DRAFT =
+  '# Done\n## Criteria\n- [ ] C1 (test): behaviour holds | run: x tests\n' +
+  '- [ ] C2 (analyzer): clean | run: y .\n## Tokens\n- none\n## Out of scope\n- the offline banner\n';
+
+// A run driven all the way to `close`, which is the only thing that writes closed.json.
+function closedRun() {
+  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
+  assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
+  const write = (name, body) => {
+    const p = path.join(runDir, name);
+    fs.writeFileSync(p, body);
+    return p;
+  };
+  const brief = write('ticket-brief.md', '# brief\n');
+  ledger(root, ['gate', runDir, 'intake', '--evidence', brief]);
+  write('done.draft.md', DRAFT);
+  runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
+  runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root });
+  ledger(root, ['check', runDir, 'C1', 'PASS']);
+  ledger(root, ['gate', runDir, 'verify', '--evidence', brief]);
+  ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
+  ledger(root, [
+    'verdict', runDir, 'APPROVE',
+    '--inputs', path.join(runDir, `done${'.approved'}.md`),
+    '--inputs', path.join(runDir, 'done-additions.md'),
+  ]);
+  ledger(root, ['gate', runDir, 'qa', '--evidence', brief]);
+  const report = write('report.md', '# Report\n');
+  ledger(root, ['gate', runDir, 'report', '--evidence', report]);
+  assert.strictEqual(ledger(root, ['close', runDir]).status, 0);
+  return { root, runDir, report };
+}
 
 function init(base) {
   const { root, runDir } = mkRun({ verify: { test: 'node tests/run.js' } });
@@ -626,6 +660,72 @@ test('revise refuses a thin reason, an unsealed file, and an unchanged file', ()
     const again = ledger(root, ['revise', runDir, approach, '--reason', 'another good reason here']);
     assert.strictEqual(again.status, 1, again.stdout);
     assert.match(again.stderr, /unchanged/i);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The additive half of the contract is contract too: a revision receipt over it would turn
+// "a criterion was removed after the judge read it" into a recorded, clean-verifying edit.
+test('revise refuses the additive contract', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
+  assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
+  fs.writeFileSync(path.join(runDir, 'done.draft.md'), DRAFT);
+  runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
+  assert.strictEqual(runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root }).status, 0);
+  try {
+    const additions = path.join(runDir, 'done-additions.md');
+    fs.writeFileSync(additions, '# Done additions\n(criterion removed)\n');
+    const res = ledger(root, ['revise', runDir, additions, '--reason', 'tidying up the additions file']);
+    assert.strictEqual(res.status, 1, res.stdout);
+    assert.match(res.stderr, /frozen/i);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- a closed run stays closed ---
+//
+// close records how many records the chain held and what the last seal was. Nothing used to
+// compare them, so a run could be closed — releasing the budget and the control-plane freeze —
+// and then go on collecting receipts, with `verify` still reporting intact.
+
+test('mutating a closed run is refused', () => {
+  const { root, runDir } = closedRun();
+  try {
+    for (const args of [
+      ['check', runDir, 'C9', 'PASS'],
+      ['dispatch', runDir, 'more work'],
+      ['gate', runDir, 'implement', '--evidence', path.join(runDir, 'report.md')],
+      ['replan', runDir, 'another go'],
+    ]) {
+      const res = ledger(root, args);
+      assert.strictEqual(res.status, 1, `${args[0]} should refuse on a closed run: ${res.stdout}`);
+      assert.match(res.stderr, /closed/i);
+    }
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('verify reports records appended after close', () => {
+  const { root, runDir } = closedRun();
+  try {
+    // Straight at the chain, the way a bypass of ledger.js would reach it.
+    chain.append(runDir, 'check', { id: 'C9', result: 'PASS', note: 'snuck in' });
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4, res.stdout);
+    assert.match(res.stdout, /after the run was closed/i);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('an untouched closed run verifies clean', () => {
+  const { root, runDir } = closedRun();
+  try {
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 0, res.stdout);
   } finally {
     rmDir(root);
   }
