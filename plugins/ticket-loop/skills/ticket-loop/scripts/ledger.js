@@ -18,6 +18,8 @@
 //   ledger.js status <runDir>                      counters as JSON
 //   ledger.js cost <runDir> [--worktree <path>]    what the run spent (proxies, not tokens)
 //   ledger.js clear <runDir> <glob> <reason>       record a human's GATE A/C risk clearance
+//   ledger.js revise <runDir> <file> --reason ".."  account for an edit to a sealed document
+//   ledger.js outcome <runDir> <seq> <ok|died>     what a dispatch actually produced
 //   ledger.js verify <runDir>                      chain integrity + tamper report
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
@@ -37,6 +39,23 @@ const MAX_REPLANS = 2;
 const STAGES = ['intake', 'survey', 'design', 'approach', 'validate', 'freeze', 'implement', 'verify', 'qa', 'report'];
 const VERDICTS = ['BLOCK', 'APPROVE_WITH_COMMENTS', 'APPROVE'];
 const CHECK_RESULTS = ['PASS', 'FAIL', 'SKIPPED'];
+const DISPATCH_OUTCOMES = ['ok', 'died'];
+const MIN_REVISION_REASON = 8;
+
+// Files a revision receipt may never cover. The frozen contract heads the list: a run that can
+// restate its criteria after the freeze has no contract at all, which is the failure the freeze
+// exists to prevent. The rest are control-plane state with their own dedicated checks in
+// `verify` — routing them through a reason string would launder exactly what those checks look
+// for. Everything else a gate seals (the brief, the survey, the approach, the ledger, the
+// report) is a document the playbook goes on writing, and is revisable.
+const UNREVISABLE = [
+  /(^|\/)done\.md$/,
+  /\.approved\.md$/,
+  /(^|\/)budget\.json$/,
+  /(^|\/)closed\.json$/,
+  /(^|\/)clearances\.json$/,
+  /(^|\/)ticket-loop\.config\.json$/,
+];
 
 // What each stage must show before its receipt is recorded. Evidence cannot be optional: ten
 // gates plus an APPROVE verdict would otherwise be eleven free commands, leaving `verify`
@@ -53,7 +72,10 @@ const STAGE_PROOF = {
   approach: { artifact: 'approach.md' },
   validate: { receipt: 'validate', how: 'run validate_done.js against the draft — it seals the receipt' },
   freeze: { artifact: 'done.md' },
-  implement: { anyEvidence: true, how: 'seal the diff, the ledger, or the files the slices touched' },
+  implement: {
+    anyEvidence: true,
+    how: 'seal the diff or the files the slices touched — ledger.md keeps growing after this gate, so sealing it costs a "revise" receipt per attempt',
+  },
   verify: { receipt: 'check', how: 'record each criterion result with "ledger.js check" first' },
   qa: { receipt: 'verdict', how: 'the judge records its own verdict with "ledger.js verdict"' },
   report: { artifact: 'report.md' },
@@ -96,11 +118,19 @@ function dispatchCount(runDir) {
   return { count: Math.max(byHook, byScript), byHook, byScript };
 }
 
+// Dispatches that produced nothing — killed by an API stall, a session limit, a crash. They
+// still spent their slot, so this never reduces the count; it exists so the report can say
+// "10 dispatches, 3 of them died" instead of implying ten productive passes.
+function diedCount(runDir) {
+  return chain.ofKind(runDir, 'outcome').filter((r) => r.payload && r.payload.outcome === 'died').length;
+}
+
 function counters(runDir) {
   const { maxDispatches, maxReplans, baseSha } = caps(runDir);
   const d = dispatchCount(runDir);
   return {
     dispatches: d.count,
+    dispatchesDied: diedCount(runDir),
     replans: chain.ofKind(runDir, 'replan').length,
     maxDispatches,
     maxReplans,
@@ -313,6 +343,115 @@ function cmdGate(runDir, stage, evidence) {
 
   chain.append(runDir, 'gate', { stage, evidence: hashed });
   console.log(`ledger: gate "${stage}" recorded${hashed.length ? ` (${hashed.length} evidence file(s) sealed)` : ''}`);
+}
+
+// Every path that compares a sealed file against the one on disk resolves it the same way,
+// or an absolute receipt and a relative argument would name the same file and never match.
+function samePath(a, b) {
+  return path.resolve(String(a)) === path.resolve(String(b));
+}
+
+// Receipts that sealed this file, oldest first.
+function sealsOf(records, file) {
+  const out = [];
+  for (const r of records) {
+    for (const e of (r.payload && (r.payload.evidence || r.payload.inputs)) || []) {
+      if (samePath(e.file, file)) out.push({ record: r, evidence: e });
+    }
+  }
+  return out;
+}
+
+// Record that a sealed document legitimately changed. The playbook keeps writing several of
+// the files its gates seal — ledger.md grows an entry per attempt, approach.md gains a
+// "## Revisions" block — so without this, following the playbook exactly produces a chain that
+// accuses itself, and an integrity line nobody believes is worth less than none.
+//
+// This does not weaken the tamper check: the receipt covers the ONE content hash it was
+// recorded against, so a later edit is TAMPERED again; the frozen contract is refused outright;
+// and every revision carries a reason into the report where a human reads it.
+function cmdRevise(runDir, file, reason) {
+  requireChain(runDir);
+  if (!file) {
+    console.error('ledger revise: need the file that changed, e.g. "ledger.js revise <runDir> <runDir>/approach.md --reason \\"...\\""');
+    process.exit(1);
+  }
+  const abs = path.resolve(file);
+  if (!fs.existsSync(abs)) {
+    console.error(`ledger revise: ${file} does not exist — a revision must describe a real file.`);
+    process.exit(1);
+  }
+  if (UNREVISABLE.some((re) => re.test(abs.replace(/\\/g, '/')))) {
+    console.error(
+      `ledger revise: ${file} is frozen — it may not be revised at all.\n` +
+        `  The frozen contract cannot be restated after the freeze, and control-plane state has its own ` +
+        `checks in "verify" that a reason string would launder. New criteria go in done-additions.md.`
+    );
+    process.exit(1);
+  }
+  if (!reason || reason.trim().replace(/[^a-z0-9]/gi, '').length < MIN_REVISION_REASON) {
+    console.error(
+      `ledger revise: need a reason a human can act on — what changed in ${path.basename(abs)}, and why.\n` +
+        `  "wip" or "fix" is the absence of one wearing the syntax.`
+    );
+    process.exit(1);
+  }
+
+  const records = chain.records(runDir);
+  const seals = sealsOf(records, abs);
+  if (seals.length === 0) {
+    console.error(
+      `ledger revise: no receipt ever sealed ${file}, so there is nothing to revise.\n` +
+        `  Only a file a gate committed to can drift, and only that drift needs accounting for.`
+    );
+    process.exit(1);
+  }
+
+  const now = chain.sha256File(abs);
+  const prior = records.filter((r) => r.kind === 'revise' && samePath(r.payload.file, abs)).pop();
+  const expected = prior ? prior.payload.sha256 : seals[seals.length - 1].evidence.sha256;
+  if (now === expected) {
+    console.error(
+      `ledger revise: ${path.basename(abs)} is unchanged since it was last sealed — nothing to record.\n` +
+        `  Make the edit first; a receipt recorded ahead of the change would not cover it.`
+    );
+    process.exit(1);
+  }
+
+  chain.append(runDir, 'revise', {
+    file: String(file).replace(/\\/g, '/'),
+    sha256: now,
+    reason: reason.trim(),
+    supersedes: (prior || seals[seals.length - 1].record).seq,
+  });
+  console.log(`ledger: revision of ${path.basename(abs)} recorded — it will show in the report's Integrity section`);
+}
+
+// The outcome of a dispatch is only known after it returns, so it is a separate record. It
+// never changes the count: a dispatch that died still spent the slot, and letting an outcome
+// refund one would make the budget negotiable after the fact.
+function cmdOutcome(runDir, seqArg, outcome, note) {
+  requireChain(runDir);
+  const normalized = String(outcome || '').toLowerCase();
+  if (!DISPATCH_OUTCOMES.includes(normalized)) {
+    console.error(`ledger outcome: outcome must be one of ${DISPATCH_OUTCOMES.join(', ')}`);
+    process.exit(1);
+  }
+  const seq = Number(seqArg);
+  const target = chain.records(runDir).find((r) => r.seq === seq);
+  if (!target || target.kind !== 'dispatch') {
+    console.error(
+      `ledger outcome: seq ${seqArg} is ${target ? `a "${target.kind}" record` : 'not in the chain'}, not a dispatch.\n` +
+        `  "ledger.js status ${runDir}" and the chain list the dispatch seqs.`
+    );
+    process.exit(1);
+  }
+  if (chain.ofKind(runDir, 'outcome').some((r) => r.payload.dispatchSeq === seq)) {
+    console.error(`ledger outcome: the dispatch at seq ${seq} already has an outcome — it is recorded once and not revised.`);
+    process.exit(1);
+  }
+  chain.append(runDir, 'outcome', { dispatchSeq: seq, outcome: normalized, note: note || null });
+  console.log(`ledger: dispatch seq ${seq} recorded as ${normalized}${normalized === 'died' ? ' (it still spent its budget slot)' : ''}`);
 }
 
 function cmdRequire(runDir, stage) {
@@ -558,6 +697,7 @@ function cmdCost(runDir, worktree) {
       {
         note: 'proxies derived from the sealed chain and git — NOT token counts',
         dispatches,
+        dispatchesDied: diedCount(runDir),
         replans: byKind.replan || 0,
         receiptsByKind: byKind,
         wallClockMs: first != null && last != null ? last - first : null,
@@ -581,6 +721,7 @@ function cmdStatus(runDir) {
 function cmdVerify(runDir) {
   const v = chain.verify(runDir);
   const problems = [...v.problems];
+  const revisions = [];
 
   if (v.ok) {
     const c = counters(runDir);
@@ -639,7 +780,11 @@ function cmdVerify(runDir) {
       }
     }
 
-    // Every sealed evidence file must still hash to what its receipt recorded.
+    // Every sealed evidence file must still hash to what its receipt recorded — unless a
+    // later `revise` receipt accounts for exactly the content now on disk. A revision covers
+    // the one hash it named, so anything written after it lands here as tampering again.
+    const reviseRecords = v.records.filter((r) => r.kind === 'revise');
+    const counted = new Set();
     for (const r of v.records) {
       for (const e of (r.payload && (r.payload.evidence || r.payload.inputs)) || []) {
         const abs = path.isAbsolute(e.file) ? e.file : path.join(process.cwd(), e.file);
@@ -650,9 +795,24 @@ function cmdVerify(runDir) {
           problems.push(`${r.kind}${r.payload.stage ? ` "${r.payload.stage}"` : ''} sealed ${e.file}, which is now missing`);
           continue;
         }
-        if (now !== e.sha256) {
+        if (now === e.sha256) continue;
+
+        const accounted = reviseRecords
+          .filter((rv) => rv.seq > r.seq && rv.payload.sha256 === now && samePath(rv.payload.file, abs))
+          .pop();
+        if (!accounted) {
           problems.push(`TAMPERED: ${e.file} changed after it was sealed by the ${r.kind} receipt (seq ${r.seq})`);
+          continue;
         }
+        const key = `${accounted.seq}|${e.file}`;
+        if (counted.has(key)) continue;
+        counted.add(key);
+        revisions.push({
+          file: e.file,
+          reason: accounted.payload.reason,
+          seq: accounted.seq,
+          sealedBy: `${r.kind}${r.payload.stage ? ` "${r.payload.stage}"` : ''} (seq ${r.seq})`,
+        });
       }
     }
   }
@@ -663,6 +823,9 @@ function cmdVerify(runDir) {
     records: v.records.length,
     intact: problems.length === 0,
     problems,
+    // Accounted-for edits to sealed documents. Not problems, but not nothing either: the
+    // report prints them so a human sees what was rewritten after its gate, and why.
+    revisions,
     counters: v.ok ? counters(runDir) : null,
   };
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
@@ -689,6 +852,7 @@ function main() {
   const worktree = takeFlag(argv, '--worktree')[0];
   const evidence = takeFlag(argv, '--evidence');
   const inputs = takeFlag(argv, '--inputs');
+  const revisionReason = takeFlag(argv, '--reason')[0];
   const [cmd, runDir, ...rest] = argv;
 
   // Takes no runDir: it is the compatibility probe the hooks run before trusting this script.
@@ -703,7 +867,8 @@ function main() {
         '       ledger.js gate <runDir> <stage> [--evidence <file>]... | require <runDir> <stage>\n' +
         '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> [note] | verdict <runDir> <verdict> [--inputs <file>]...\n' +
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
-        '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>'
+        '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
+        '       ledger.js revise <runDir> <file> --reason "<why>" | outcome <runDir> <dispatchSeq> <ok|died> [note]'
     );
     process.exit(1);
   }
@@ -733,6 +898,10 @@ function main() {
       return cmdCost(runDir, worktree);
     case 'clear':
       return cmdClear(runDir, rest[0], rest.slice(1).join(' '));
+    case 'revise':
+      return cmdRevise(runDir, rest[0], revisionReason);
+    case 'outcome':
+      return cmdOutcome(runDir, rest[0], rest[1], rest.slice(2).join(' '));
     case 'verify':
       return cmdVerify(runDir);
     default:

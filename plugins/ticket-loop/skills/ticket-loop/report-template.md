@@ -1,8 +1,8 @@
 # Ticket Loop Report — {TICKET}
 
-Status: {COMPLETE | INCOMPLETE — <why>}
+Status: {COMPLETE | INCOMPLETE — <why>}   ← the WORK: did every criterion pass
 Branch: {BRANCH} (worktree {WORKTREE}) — merge/push are manual
-Duration: {WALL_CLOCK} | Dispatches: {N}/{MAX} | Re-plans: {N}/{MAX}
+Duration: {WALL_CLOCK} | Dispatches: {N}/{MAX} ({N} died — see Cost) | Re-plans: {N}/{MAX}
 Toolchain: {TOOLCHAIN_LINE from stage 0}
 Profile: stack={STACK}, ticketSource={TICKET_SOURCE}, designSource={DESIGN_SOURCE}
 Verify commands: analyze=`{VERIFY_ANALYZE}` test=`{VERIFY_TEST}`
@@ -18,8 +18,12 @@ agrees with the sealed counters.
 {LEDGER_VERIFY_OUTPUT}
 ```
 
-Integrity: {INTACT | TAMPERED — list every problem line above and STOP; do not claim COMPLETE}
+Integrity: {INTACT | TAMPERED — list every problem line above and STOP}   ← the HISTORY: can
+the results above be trusted. Separate from Status on purpose: "every criterion passed but the
+receipts are unreliable" and "the receipts are clean but three criteria failed" need different
+things from the human, and one combined verdict hides which one happened.
 Stage receipts: {list of recorded gates, e.g. intake, design, approach, validate, freeze, verify, qa}
+Revisions: {none | one line per entry in the verify output's `revisions`: <file> — <reason>}
 Restarts: {none | retired chain.N.jsonl at <seal> — say why the run was restarted}
 
 ## Cost

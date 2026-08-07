@@ -52,7 +52,29 @@ const duplicateHeadings = (names, src) =>
     const re = new RegExp(`^## ${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'gim');
     return (src.match(re) || []).length > 1;
   });
-const bullets = (s) => s.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- '));
+// A wrapped bullet is ONE bullet. The `| run:` and `| covered-by:` tags routinely land on a
+// continuation line, and reading line-by-line drops them — so the checks below would demand a
+// tag that is present, with nothing in the message to explain why it is not seen. Indented
+// non-list text continues the bullet above; unindented text ends the list, so a paragraph
+// after it is not folded in.
+const bullets = (s) => {
+  const out = [];
+  let open = false;
+  for (const raw of s.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('- ')) {
+      out.push(line);
+      open = true;
+    } else if (!line) {
+      continue;
+    } else if (!/^\s/.test(raw)) {
+      open = false;
+    } else if (open) {
+      out[out.length - 1] += ` ${line}`;
+    }
+  }
+  return out;
+};
 
 const errors = [];
 const criteria = bullets(section('Criteria'));

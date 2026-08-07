@@ -325,3 +325,80 @@ test('declaring "none" and then listing tokens is a contradiction', () => {
     'declares "none" and then lists'
   );
 });
+
+// --- wrapped bullets ---
+//
+// Markdown wraps. A `| covered-by:` or `| run:` tag that lands on a continuation line belongs
+// to the bullet above it, and a line-by-line filter drops it — making the validator demand a
+// tag that is already there, which no amount of re-reading the file explains.
+
+const WRAPPED_APPROACH = `# Approach
+## Options
+- O1 — extend the existing screen
+- O2 — a sibling screen
+## Chosen
+- O2, because the design shows its own nav entry
+## Failure modes
+- **Pre-existing compile breakage** in the golden test fails the suite at BASE.
+  Mitigation: verify commands are scoped to the non-golden dirs.
+  | covered-by: C1
+`;
+
+test('a failure mode whose covered-by tag wrapped onto a continuation line is accepted', () => {
+  const { root, runDir } = writeDraft(VALID_DRAFT, {
+    'approach.md': WRAPPED_APPROACH,
+    'codebase-map.md': '# map\n',
+  });
+  try {
+    const res = validate(root, runDir);
+    assert.strictEqual(res.status, 0, `expected valid, got:\n${res.stderr}`);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// Joining continuation lines must not become a way to pass without the tag at all.
+test('a wrapped failure mode with no covered-by anywhere is still rejected', () => {
+  expectInvalid(VALID_DRAFT, 'covered-by', {
+    'approach.md': WRAPPED_APPROACH.replace('  | covered-by: C1\n', '  and nothing covers it.\n'),
+    'codebase-map.md': '# map\n',
+  });
+});
+
+test('a criterion whose run: command wrapped onto a continuation line is accepted', () => {
+  const wrapped = `# Done — T-1
+## Criteria
+- [ ] C1 (test): the repository maps a 404 response to a NotFound result rather than throwing
+  | run: pytest tests/test_repo.py
+- [ ] C2 (analyzer): zero analyzer errors | run: ruff check .
+## Tokens
+- errorColor: #B00020 (source: design-spec.md#colors)
+## Out of scope
+- offline banner
+`;
+  const { root, runDir } = writeDraft(wrapped);
+  try {
+    const res = validate(root, runDir);
+    assert.strictEqual(res.status, 0, `expected valid, got:\n${res.stderr}`);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// Unindented prose after a list is not part of the last bullet.
+test('unindented prose after a bullet list is not folded into the last bullet', () => {
+  expectInvalid(VALID_DRAFT, 'covered-by', {
+    'approach.md': `# Approach
+## Options
+- O1 — one way
+- O2 — another
+## Chosen
+- O2
+## Failure modes
+- the mitigation is described below
+
+This paragraph is not part of the bullet. | covered-by: C1
+`,
+    'codebase-map.md': '# map\n',
+  });
+});

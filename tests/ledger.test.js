@@ -527,3 +527,145 @@ test('verify passes a clearance that ledger.js actually recorded', () => {
     rmDir(root);
   }
 });
+
+// --- revisions ---
+//
+// ledger.md and approach.md are artifacts the playbook itself keeps writing after their gate:
+// every attempt appends to one, and new findings go under the other's "## Revisions". Sealing
+// them and then treating any later edit as tampering makes a run that followed the playbook
+// exactly report a broken chain — which teaches the operator to read the integrity line as
+// noise. A revision is therefore recordable, but only as a sealed act naming a reason.
+
+function sealedRun() {
+  const { root, runDir } = init();
+  const approach = path.join(runDir, 'approach.md');
+  fs.writeFileSync(approach, '# Approach\noriginal\n');
+  assert.strictEqual(ledger(root, ['gate', runDir, 'approach', '--evidence', approach]).status, 0);
+  return { root, runDir, approach };
+}
+
+test('an unrecorded edit to a sealed file is still TAMPERED', () => {
+  const { root, runDir, approach } = sealedRun();
+  try {
+    fs.writeFileSync(approach, '# Approach\nrewritten\n');
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4, res.stdout);
+    assert.match(res.stdout, /TAMPERED: .*approach\.md/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a recorded revision keeps the chain intact and appears in the report', () => {
+  const { root, runDir, approach } = sealedRun();
+  try {
+    fs.writeFileSync(approach, '# Approach\nrewritten\n');
+    const rev = ledger(root, ['revise', runDir, approach, '--reason', 'validator reflow of the failure modes']);
+    assert.strictEqual(rev.status, 0, rev.stderr);
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 0, res.stdout);
+    const report = JSON.parse(res.stdout);
+    assert.strictEqual(report.intact, true);
+    assert.strictEqual(report.revisions.length, 1);
+    assert.match(report.revisions[0].file, /approach\.md/);
+    assert.match(report.revisions[0].reason, /reflow/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The receipt covers the content it was recorded against and nothing after it, or one revision
+// would license every later edit.
+test('editing again after a revision is TAMPERED', () => {
+  const { root, runDir, approach } = sealedRun();
+  try {
+    fs.writeFileSync(approach, '# Approach\nrewritten\n');
+    assert.strictEqual(ledger(root, ['revise', runDir, approach, '--reason', 'validator reflow of failure modes']).status, 0);
+    fs.writeFileSync(approach, '# Approach\nrewritten again, quietly\n');
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4, res.stdout);
+    assert.match(res.stdout, /TAMPERED/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The frozen contract is the one thing a revision must never reach: moving the criteria after
+// the freeze is the failure the freeze exists to prevent.
+test('revise refuses frozen artifacts and the enforcement profile', () => {
+  const { root, runDir } = init();
+  try {
+    for (const name of ['done.md', `done${'.approved'}.md`, 'budget.json', 'clearances.json']) {
+      const file = path.join(runDir, name);
+      fs.writeFileSync(file, 'x\n');
+      const res = ledger(root, ['revise', runDir, file, '--reason', 'a perfectly good reason']);
+      assert.strictEqual(res.status, 1, `${name} should refuse: ${res.stdout}`);
+      assert.match(res.stderr, /frozen/i);
+    }
+    const cfg = path.join(root, '.agents', 'ticket-loop.config.json');
+    const res = ledger(root, ['revise', runDir, cfg, '--reason', 'a perfectly good reason']);
+    assert.strictEqual(res.status, 1, res.stdout);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('revise refuses a thin reason, an unsealed file, and an unchanged file', () => {
+  const { root, runDir, approach } = sealedRun();
+  try {
+    fs.writeFileSync(approach, '# Approach\nrewritten\n');
+    assert.strictEqual(ledger(root, ['revise', runDir, approach, '--reason', 'wip']).status, 1);
+
+    const stray = path.join(runDir, 'notes.md');
+    fs.writeFileSync(stray, 'never sealed\n');
+    const unsealed = ledger(root, ['revise', runDir, stray, '--reason', 'a perfectly good reason']);
+    assert.strictEqual(unsealed.status, 1, unsealed.stdout);
+    assert.match(unsealed.stderr, /no receipt/i);
+
+    assert.strictEqual(ledger(root, ['revise', runDir, approach, '--reason', 'the real reflow reason']).status, 0);
+    const again = ledger(root, ['revise', runDir, approach, '--reason', 'another good reason here']);
+    assert.strictEqual(again.status, 1, again.stdout);
+    assert.match(again.stderr, /unchanged/i);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- dispatch outcomes ---
+//
+// A dispatch killed by an API stall or a session limit still spends budget. Counting it is
+// right; reporting it as a productive pass is not.
+
+test('a died outcome is recorded and reported without changing the spend', () => {
+  const { root, runDir } = init();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'survey']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'design-extractor']).status, 0);
+    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 2);
+
+    const res = ledger(root, ['outcome', runDir, '3', 'died', 'API stalled mid-stream']);
+    assert.strictEqual(res.status, 0, res.stderr);
+
+    const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.dispatches, 2, 'a died dispatch still spent its budget');
+    assert.strictEqual(status.dispatchesDied, 1);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('outcome refuses a non-dispatch seq, an unknown verdict, and a second verdict', () => {
+  const { root, runDir } = init();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'survey']).status, 0);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '1', 'died']).status, 1, 'seq 1 is the init record');
+    assert.strictEqual(ledger(root, ['outcome', runDir, '99', 'died']).status, 1);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '2', 'maybe']).status, 1);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '2', 'died', 'session limit']).status, 0);
+    const dup = ledger(root, ['outcome', runDir, '2', 'ok']);
+    assert.strictEqual(dup.status, 1, dup.stdout);
+    assert.match(dup.stderr, /already/i);
+  } finally {
+    rmDir(root);
+  }
+});

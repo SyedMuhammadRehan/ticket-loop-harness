@@ -52,6 +52,13 @@ the worktree dir. If the resolver reports `configFound:false` or a null `verify.
 treat it like a spec§13 degradation: STOP and ask the user for the missing commands / scope
 rather than assuming Flutter.
 
+**A `hooks.stopGate` warning in `_meta.warnings` is also a STOP — before the worktree exists.**
+Without a usable block the stop gate refuses every turn-end once the run is active, and
+`freeze_guard` freezes the profile for that whole window, so the block cannot be added
+afterwards: the run would have to be archived and everything since Stage 0 redone. Show the
+user the warning, ask them to add the block (`config.example.json` has one), and start again.
+Fixing it here costs a minute; discovering it at the first Stop costs the run.
+
 **If `_meta.newerVersionInstalled` is set, STOP before Stage 0 step 2 and say so.** You are
 running an old playbook while the hooks execute the new one — skills bind at session start,
 so a `plugin update` mid-session cannot reach you. The run would create a chain and
@@ -128,6 +135,18 @@ which is installed, and that a NEW SESSION is the only fix. Do not proceed.
    |---|---|
    ## Attempts
    ```
+
+   **Editing a document after its gate sealed it:** record it, don't just do it —
+   `node <SKILL_DIR>/scripts/ledger.js revise <runDir> <file> --reason "<what changed and why>"`.
+   Several documents keep growing after their gate by design (`ledger.md` gains an attempt per
+   dispatch, `approach.md` gains `## Revisions`), and an unrecorded change to a sealed file is
+   reported as TAMPERED — correctly, since nothing else distinguishes it from one. The receipt
+   covers the content it named, so the NEXT edit needs its own. `done.md`, `*.approved.md` and
+   the profile are refused outright: the frozen contract does not get revised, it gets added to
+   via `done-additions.md`.
+
+   Cheaper still: prefer sealing what is finished. `--evidence` on the implement gate wants the
+   diff or the touched files, not `ledger.md`.
 
    On RESUME, skip init — it refuses to reset an existing chain, so prior counts stand.
    Only `init --restart` after a sanctioned `ledger.js archive` starts fresh, and it records
@@ -333,6 +352,19 @@ enforced by the `dispatch_guard` hook, which counts every subagent tool call whe
 you make this call and refuses the tool at the cap (the two are de-duplicated, never summed).
 So skipping it does not get you extra tries — it only costs you a legible report.
 
+**When a dispatch dies without producing anything** — an API stall, the session limit, a crash —
+record what it produced:
+`node <SKILL_DIR>/scripts/ledger.js outcome .agents/ticket-runs/<TICKET> <seq> died "<what killed it>"`
+(the seq is the dispatch record's, from `ledger.js status`). It still spent its slot and the
+count does not move; what changes is that the report says how much of the budget bought
+nothing, instead of implying every dispatch was a productive pass. Re-dispatching after a death
+is a NEW dispatch and costs another slot — that is the real budget, so say so in the report.
+
+**Dispatches that produce a file must persist as they go.** A long-running extraction or survey
+that writes its artifact only at the end loses everything to one stalled stream. Instruct such
+agents to write each section to the run dir as it completes, and to append rather than rewrite,
+so a death costs one chunk instead of the whole dispatch.
+
 **Dispatch models (profile `models`):** each role has a configured model — `models.survey`,
 `models.implementer`, `models.fixer`, `models.qa`, all defaulting to `inherit`. When a
 role's value is not `inherit`, pass it as the Agent tool's `model` parameter for that
@@ -428,9 +460,10 @@ Ledger entry after every attempt (append under `## Attempts`):
   status INCOMPLETE. Otherwise write a materially different approach for that slice
   (different widget structure / different state placement / different data flow — not a
   parameter tweak) and continue. If approach.md exists, record the change there under
-  `## Revisions` (`- R<n>: <what changed> — because <what reality proved wrong>`); a
-  re-plan is a design decision, and unrecorded design changes are what the QA judge
-  BLOCKs as silent drift.
+  `## Revisions` (`- R<n>: <what changed> — because <what reality proved wrong>`), then
+  `ledger.js revise <runDir> <runDir>/approach.md --reason "re-plan R<n>: <what changed>"`
+  because the approach gate sealed that file; a re-plan is a design decision, and unrecorded
+  design changes are what the QA judge BLOCKs as silent drift.
 - HARD BUDGET: `ledger.js dispatch` exits 2 when the 25-dispatch cap is hit — stop
   looping, go to Stage 7 with status INCOMPLETE. The script is authoritative; never
   bypass it by dispatching without the call.
@@ -504,8 +537,20 @@ APPROVE → stage 7.
    profile has not drifted since Stage 0, and that budget.json agrees with the sealed
    counters. It replaces the old self-reported `git diff --no-index` tamper check, which
    compared two files that any tamper would have written together.
-   **Exit 4 means the run's own history is unreliable: report status INCOMPLETE, state the
-   problems verbatim, and escalate to the human. Never report COMPLETE over a broken chain.**
+   **Exit 4 means the run's own history is unreliable: state the problems verbatim, set
+   `Integrity: TAMPERED`, and escalate to the human. Never claim an intact chain over a broken
+   one.**
+
+   Report the two separately — `Status:` is about the WORK (did every criterion pass), and
+   `Integrity:` is about the HISTORY (can those results be trusted). Collapsing them loses the
+   distinction the human needs: "all criteria passed but the receipts are unreliable" and
+   "the receipts are clean but three criteria failed" are different situations with different
+   next steps. A run whose chain is broken never gets a COMPLETE *Status* either — but say
+   which of the two failed, and why.
+
+   `revisions` in the verify output are NOT problems: they are edits to sealed documents that
+   were recorded with a reason. List them in the Integrity section with their reasons so the
+   human can see what was rewritten after its gate.
 2. Embed side-by-side evidence: for each visual criterion, the Figma reference PNG and
    the runtime capture path.
 3. If `--update-jira` (retained as the flag name; posts to the configured `ticketSource`):

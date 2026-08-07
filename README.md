@@ -177,6 +177,19 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   `check`, `qa` needs a `verdict`. A verdict must seal the frozen contract and follow a dispatch
   recorded after the freeze. Before this, all ten gates plus an `APPROVE` were eleven free
   commands over a run in which nothing happened.
+- **An edit to a sealed document costs a receipt** — several artifacts keep growing after their
+  gate by design (`ledger.md` gains an attempt per dispatch, `approach.md` gains `## Revisions`),
+  so `ledger.js revise <file> --reason "…"` records the change and `verify` reports it as a
+  revision rather than tampering. The receipt covers the one content hash it named — the next
+  edit needs its own — and `done.md`, `*.approved.md`, `budget.json`, `clearances.json` and the
+  profile are refused outright, because a contract that can be restated after the freeze is not
+  a contract. Without this the strict check made a run that followed the playbook exactly
+  accuse itself, and an integrity line nobody believes is worth less than none.
+- **Preflight validates the harness, not just the run** — `load_config.js` reports a missing or
+  unusable `hooks.stopGate` block at Stage 0, and the playbook stops there. Once a run is active
+  the stop gate refuses every turn-end without that block *and* `freeze_guard` freezes the
+  profile, so the only exit is archiving the run: a precondition the harness needs has to be
+  checked where fixing it is still free.
 - **A run ends on a sealed close, not on a file** — `ledger.js close` writes `closed.json` and
   refuses without a `report` receipt; that marker, not the presence of `report.md`, is what
   releases the dispatch budget and the control-plane freeze. The old signal meant the loop's own
@@ -248,6 +261,14 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   conversation is visible after the fact rather than invisible.
 - **GATE B (design conflict).** Judgement — no code can tell you a Figma node contradicts the
   ticket text.
+- **Whether a revision reason is true.** `ledger.js revise` proves that a sealed document
+  changed, when, and to exactly what content — not that the stated reason is the real one. What
+  it buys is that every post-gate edit is a deliberate, separate, sealed act carrying a reason
+  into the report, instead of a silent rewrite. Read the reasons; they are the loop's own words.
+- **Whether a dispatch outcome is honest.** The dispatch *count* is mechanical (`dispatch_guard`
+  counts the tool call). The `died` outcome is the orchestrator's own report: a dispatch that
+  produced nothing can be left unrecorded, which understates the waste rather than the spend.
+  The budget it consumed is still counted either way.
 - **Naming a protected file as data is denied like touching it.** The write policy cannot tell
   a target from a mention, and deliberately does not try: quotes are stripped precisely so a
   quoted real target is still caught. So while a run is active, a command that merely *contains*
