@@ -52,11 +52,9 @@ const duplicateHeadings = (names, src) =>
     const re = new RegExp(`^## ${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'gim');
     return (src.match(re) || []).length > 1;
   });
-// A wrapped bullet is ONE bullet. The `| run:` and `| covered-by:` tags routinely land on a
-// continuation line, and reading line-by-line drops them — so the checks below would demand a
-// tag that is present, with nothing in the message to explain why it is not seen. Indented
-// non-list text continues the bullet above; unindented text ends the list, so a paragraph
-// after it is not folded in.
+// A wrapped bullet is ONE bullet: the `| run:` and `| covered-by:` tags routinely land on a
+// continuation line. Indented non-list text continues the bullet above; unindented text ends
+// the list, so a following paragraph is not folded in.
 const bullets = (s) => {
   const out = [];
   let open = false;

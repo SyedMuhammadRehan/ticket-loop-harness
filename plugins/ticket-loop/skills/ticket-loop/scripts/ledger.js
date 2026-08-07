@@ -42,18 +42,14 @@ const CHECK_RESULTS = ['PASS', 'FAIL', 'SKIPPED'];
 const DISPATCH_OUTCOMES = ['ok', 'died'];
 const MIN_REVISION_REASON = 8;
 
-// Files a revision receipt may never cover. The frozen contract heads the list: a run that can
-// restate its criteria after the freeze has no contract at all, which is the failure the freeze
-// exists to prevent. The rest are control-plane state with their own dedicated checks in
-// `verify` — routing them through a reason string would launder exactly what those checks look
-// for. Everything else a gate seals (the brief, the survey, the approach, the ledger, the
-// report) is a document the playbook goes on writing, and is revisable.
+// Files a revision receipt may never cover: the frozen contract, and control-plane state whose
+// own checks in `verify` a reason string would launder. Everything else a gate seals is a
+// document the playbook goes on writing.
 const UNREVISABLE = [
   /(^|\/)done\.md$/,
   /\.approved\.md$/,
-  // The additive half is contract too. It is left writable on purpose (criteria may be ADDED
-  // mid-run), but once a verdict seals it, a revision receipt would turn "a criterion was
-  // removed after the judge read it" into a recorded, clean-verifying edit.
+  // Writable on purpose (criteria may be ADDED mid-run), but the verdict seals it, so a
+  // revision over it would launder a criterion removed after the judge read it.
   /(^|\/)done-additions\.md$/,
   /(^|\/)budget\.json$/,
   /(^|\/)closed\.json$/,
@@ -122,9 +118,8 @@ function dispatchCount(runDir) {
   return { count: Math.max(byHook, byScript), byHook, byScript };
 }
 
-// Dispatches that produced nothing — killed by an API stall, a session limit, a crash. They
-// still spent their slot, so this never reduces the count; it exists so the report can say
-// "10 dispatches, 3 of them died" instead of implying ten productive passes.
+// Dispatches that produced nothing. They still spent their slot, so this never reduces the
+// count — it only lets the report say how much of the budget bought nothing.
 function diedCount(runDir) {
   return chain.ofKind(runDir, 'outcome').filter((r) => r.payload && r.payload.outcome === 'died').length;
 }
@@ -186,10 +181,9 @@ function requireChain(runDir) {
   return v;
 }
 
-// A closed run is finished: `close` released the dispatch budget and the control-plane freeze
-// on the strength of the receipts as they stood. Letting it collect more afterwards means the
-// gates were lifted against one history and the report describes another, so every mutating
-// command stops here. Reading (status, cost, verify) and `archive` stay available.
+// `close` released the dispatch budget and the control-plane freeze against the receipts as
+// they stood; collecting more afterwards leaves the report describing a different run. Reads
+// and `archive` stay available.
 function requireOpen(runDir, what) {
   if (!fs.existsSync(closedPath(runDir))) return;
   console.error(
@@ -384,14 +378,9 @@ function sealsOf(records, file) {
   return out;
 }
 
-// Record that a sealed document legitimately changed. The playbook keeps writing several of
-// the files its gates seal — ledger.md grows an entry per attempt, approach.md gains a
-// "## Revisions" block — so without this, following the playbook exactly produces a chain that
-// accuses itself, and an integrity line nobody believes is worth less than none.
-//
-// This does not weaken the tamper check: the receipt covers the ONE content hash it was
-// recorded against, so a later edit is TAMPERED again; the frozen contract is refused outright;
-// and every revision carries a reason into the report where a human reads it.
+// Record that a sealed document legitimately changed: several files a gate seals keep growing
+// afterwards (ledger.md per attempt, approach.md under "## Revisions"). The receipt covers the
+// ONE content hash it was recorded against, so a later edit is TAMPERED again.
 function cmdRevise(runDir, file, reason) {
   requireChain(runDir);
   requireOpen(runDir, 'revise');
@@ -450,9 +439,8 @@ function cmdRevise(runDir, file, reason) {
   console.log(`ledger: revision of ${path.basename(abs)} recorded — it will show in the report's Integrity section`);
 }
 
-// The outcome of a dispatch is only known after it returns, so it is a separate record. It
-// never changes the count: a dispatch that died still spent the slot, and letting an outcome
-// refund one would make the budget negotiable after the fact.
+// Known only after the dispatch returns, so it is a separate record. It never changes the
+// count — refunding a spent slot would make the budget negotiable after the fact.
 function cmdOutcome(runDir, seqArg, outcome, note) {
   requireChain(runDir);
   requireOpen(runDir, 'outcome');
@@ -767,10 +755,8 @@ function cmdVerify(runDir) {
       problems.push('budget.json missing or unreadable (mirror only — not fatal)');
     }
 
-    // The close marker records where the chain stood when the run ended. Nothing else notices
-    // records added afterwards: they seal and link perfectly, so the history stays "intact"
-    // while describing a run that kept going after the budget and the control-plane freeze
-    // were released on the strength of the receipts as they were.
+    // Records added after the run ended seal and link perfectly, so nothing else notices them.
+    // The close marker is the only record of where the chain stood when the gates were lifted.
     try {
       const marker = JSON.parse(fs.readFileSync(closedPath(runDir), 'utf8'));
       const last = v.records.length ? v.records[v.records.length - 1].hmac : null;
@@ -782,8 +768,7 @@ function cmdVerify(runDir) {
         );
       }
     } catch {
-      // No marker means the run is simply still open; an unreadable one is not evidence of
-      // anything on its own, and freeze_guard protects it from ordinary writes.
+      // No marker means the run is still open; freeze_guard protects it from ordinary writes.
     }
 
     // freeze_guard trusts the clearance mirror without consulting the chain, because it runs on
@@ -826,9 +811,8 @@ function cmdVerify(runDir) {
       }
     }
 
-    // Every sealed evidence file must still hash to what its receipt recorded — unless a
-    // later `revise` receipt accounts for exactly the content now on disk. A revision covers
-    // the one hash it named, so anything written after it lands here as tampering again.
+    // Every sealed evidence file must still hash to what its receipt recorded, unless a later
+    // `revise` receipt names exactly the content now on disk.
     const reviseRecords = v.records.filter((r) => r.kind === 'revise');
     const counted = new Set();
     for (const r of v.records) {
@@ -869,8 +853,7 @@ function cmdVerify(runDir) {
     records: v.records.length,
     intact: problems.length === 0,
     problems,
-    // Accounted-for edits to sealed documents. Not problems, but not nothing either: the
-    // report prints them so a human sees what was rewritten after its gate, and why.
+    // Accounted-for edits to sealed documents — not problems, but the report prints them.
     revisions,
     counters: v.ok ? counters(runDir) : null,
   };

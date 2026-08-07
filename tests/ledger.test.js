@@ -564,11 +564,9 @@ test('verify passes a clearance that ledger.js actually recorded', () => {
 
 // --- revisions ---
 //
-// ledger.md and approach.md are artifacts the playbook itself keeps writing after their gate:
-// every attempt appends to one, and new findings go under the other's "## Revisions". Sealing
-// them and then treating any later edit as tampering makes a run that followed the playbook
-// exactly report a broken chain — which teaches the operator to read the integrity line as
-// noise. A revision is therefore recordable, but only as a sealed act naming a reason.
+// ledger.md and approach.md keep being written after their gate by design, so treating every
+// later edit as tampering makes a run that followed the playbook report a broken chain.
+// Recordable, then — but only as a sealed act naming a reason.
 
 function sealedRun() {
   const { root, runDir } = init();
@@ -686,9 +684,8 @@ test('revise refuses the additive contract', () => {
 
 // --- a closed run stays closed ---
 //
-// close records how many records the chain held and what the last seal was. Nothing used to
-// compare them, so a run could be closed — releasing the budget and the control-plane freeze —
-// and then go on collecting receipts, with `verify` still reporting intact.
+// Records added after close seal and link perfectly, so only the close marker's count and last
+// seal can catch a run that kept collecting receipts after the gates were lifted.
 
 test('mutating a closed run is refused', () => {
   const { root, runDir } = closedRun();
@@ -733,8 +730,8 @@ test('an untouched closed run verifies clean', () => {
 
 // --- dispatch outcomes ---
 //
-// A dispatch killed by an API stall or a session limit still spends budget. Counting it is
-// right; reporting it as a productive pass is not.
+// A dispatch killed by a stall or the session limit still spends budget. Counting it is right;
+// reporting it as a productive pass is not.
 
 test('a died outcome is recorded and reported without changing the spend', () => {
   const { root, runDir } = init();

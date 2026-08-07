@@ -328,9 +328,8 @@ test('declaring "none" and then listing tokens is a contradiction', () => {
 
 // --- wrapped bullets ---
 //
-// Markdown wraps. A `| covered-by:` or `| run:` tag that lands on a continuation line belongs
-// to the bullet above it, and a line-by-line filter drops it — making the validator demand a
-// tag that is already there, which no amount of re-reading the file explains.
+// A `| covered-by:` or `| run:` tag that lands on a continuation line belongs to the bullet
+// above it, and a line-by-line filter drops it.
 
 const WRAPPED_APPROACH = `# Approach
 ## Options

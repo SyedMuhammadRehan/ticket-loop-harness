@@ -76,11 +76,9 @@ function pluginVersionSkew() {
   return null;
 }
 
-// Preflight for the stop gate's own parameters. Everything here is only cheap to fix BEFORE a
-// run starts: once one is active, stop_gate blocks every turn-end without a usable block, and
-// freeze_guard holds this file frozen for that whole window — so the block cannot be added and
-// the only exit is archiving the run and losing the work done so far. The gate cannot warn
-// about itself in time; the resolver runs at Stage 0, which is where the fix is free.
+// Preflight for the stop gate's own parameters, all of which are only fixable BEFORE a run
+// starts: mid-run, stop_gate blocks every turn-end without a usable block and freeze_guard
+// holds this file frozen, so the only exit is archiving the run.
 function stopGateWarnings(cfg) {
   const sg = cfg.hooks && cfg.hooks.stopGate;
   if (!sg || typeof sg !== 'object') {
@@ -107,8 +105,8 @@ function stopGateWarnings(cfg) {
     try {
       new RegExp(sg.exclude);
     } catch (e) {
-      // stop_gate drops an unparsable exclude and filters nothing, so a typo here silently
-      // widens what gets tested rather than failing loudly.
+      // stop_gate drops an unparsable exclude and filters nothing, so a typo silently widens
+      // what gets tested.
       warnings.push(`hooks.stopGate.exclude is not a valid regex (${e.message}) — it would be ignored, excluding nothing.`);
     }
   }

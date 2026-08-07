@@ -238,10 +238,9 @@ test('a repo checkout has no sibling versions and reports no skew', () => {
 
 // --- stop-gate preflight ---
 //
-// A profile with no hooks.stopGate block wedges a run: the stop gate blocks every turn-end
-// while a run is active, and freeze_guard freezes the profile for that whole window, so the
-// block cannot be added without archiving the run. Stage 0 is the only place the fix is free,
-// which is why the resolver has to say so before any work starts.
+// A profile with no hooks.stopGate block wedges a run: the gate blocks every turn-end while one
+// is active, and freeze_guard freezes the profile for that window, so the block cannot be added
+// without archiving the run.
 
 test('missing hooks.stopGate is a preflight warning naming the wedge', () => {
   const repo = mkFakeRepo({ stack: 'python', verify: { test: 'pytest -q' } });
