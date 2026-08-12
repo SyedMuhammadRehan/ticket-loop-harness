@@ -728,6 +728,45 @@ test('an untouched closed run verifies clean', () => {
   }
 });
 
+// --- what each dispatch ships ---
+//
+// The context handed to a subagent is paid for in full on every dispatch, and nothing about
+// the result reveals how big it was. Recording it is what turns "the run felt expensive" into
+// a number the report can carry.
+
+test('dispatch records the size of the prompt it shipped, and cost reports it', () => {
+  const { root, runDir } = mkRun({
+    verify: { test: 'x' },
+    dispatchPolicy: { promptBudgetChars: 1000 },
+  });
+  assert.strictEqual(ledger(root, ['init', runDir, 'abc123']).status, 0);
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'small', '--prompt-chars', '400']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'bloated', '--prompt-chars', '5000']).status, 0);
+
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.strictEqual(cost.subagentPrompts.total, 5400);
+    assert.strictEqual(cost.subagentPrompts.max, 5000);
+    assert.strictEqual(cost.subagentPrompts.overBudget, 1);
+    assert.strictEqual(cost.subagentPrompts.budget, 1000);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a dispatch with no recorded prompt size does not fake one', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' } });
+  assert.strictEqual(ledger(root, ['init', runDir, 'abc123']).status, 0);
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'unmeasured']).status, 0);
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.strictEqual(cost.subagentPrompts.measured, 0);
+    assert.strictEqual(cost.subagentPrompts.total, null);
+  } finally {
+    rmDir(root);
+  }
+});
+
 // --- dispatch outcomes ---
 //
 // A dispatch killed by a stall or the session limit still spends budget. Counting it is right;

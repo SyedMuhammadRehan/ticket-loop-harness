@@ -25,6 +25,8 @@
       "qa": "inherit"
     },
     "qaScope": { "smallDiffLines": 60 },
+    "//dispatchPolicy": "A subagent costs its whole prompt before it works, so small slices are cheaper inline. minSliceLines: below this many expected changed lines, do the slice inline rather than dispatching (test-only slices always inline). promptBudgetChars: prompts above this are reported as over-budget by 'ledger.js cost'. Both are advisory and reported afterwards — nothing at dispatch time can know how large a change will turn out.",
+    "dispatchPolicy": { "minSliceLines": 50, "promptBudgetChars": 32000 },
     "attribution": {
       "//": "commitTrailer: string to append to every worktree commit (for repos that REQUIRE disclosure), or null for clean commits with no AI attribution. Repo policy decides — the default is null.",
       "commitTrailer": null

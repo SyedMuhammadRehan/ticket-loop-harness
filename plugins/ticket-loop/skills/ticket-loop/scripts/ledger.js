@@ -40,6 +40,8 @@ const STAGES = ['intake', 'survey', 'design', 'approach', 'validate', 'freeze', 
 const VERDICTS = ['BLOCK', 'APPROVE_WITH_COMMENTS', 'APPROVE'];
 const CHECK_RESULTS = ['PASS', 'FAIL', 'SKIPPED'];
 const DISPATCH_OUTCOMES = ['ok', 'died'];
+// Mirrors load_config's dispatchPolicy default, for a run whose profile does not set one.
+const DEFAULT_PROMPT_BUDGET = 32000;
 const MIN_REVISION_REASON = 8;
 
 // Files a revision receipt may never cover: the frozen contract, and control-plane state whose
@@ -300,7 +302,14 @@ function cmdDispatch(runDir, label, opts) {
     );
     process.exit(2);
   }
-  chain.append(runDir, 'dispatch', { label: label || null, source: opts && opts.source ? opts.source : 'script' });
+  const promptChars = Number(opts && opts.promptChars);
+  chain.append(runDir, 'dispatch', {
+    label: label || null,
+    source: opts && opts.source ? opts.source : 'script',
+    // Only the hook sees the filled prompt, so a script-recorded dispatch leaves this null
+    // rather than guessing — an invented zero would read as a free dispatch.
+    promptChars: Number.isFinite(promptChars) && promptChars >= 0 ? promptChars : null,
+  });
   mirrorBudget(runDir);
   console.log(`ledger: dispatch OK — ${dispatchCount(runDir).count}/${maxDispatches} used`);
 }
@@ -636,13 +645,38 @@ function cmdClear(runDir, glob, reason) {
   console.log(`ledger: cleared "${glob}" — recorded in the chain and mirrored for the hooks`);
 }
 
-function riskPathsFromConfig() {
+function readConfig() {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join('.agents', 'ticket-loop.config.json'), 'utf8'));
-    return Array.isArray(cfg.riskPaths) ? cfg.riskPaths : [];
+    return JSON.parse(fs.readFileSync(path.join('.agents', 'ticket-loop.config.json'), 'utf8'));
   } catch {
-    return [];
+    return {};
   }
+}
+
+function riskPathsFromConfig() {
+  const cfg = readConfig();
+  return Array.isArray(cfg.riskPaths) ? cfg.riskPaths : [];
+}
+
+// What the subagents were handed, from the sizes the hook recorded. Dispatches with no
+// recorded size are counted separately rather than folded in as zero.
+function promptStats(runDir) {
+  const budget = Number((readConfig().dispatchPolicy || {}).promptBudgetChars) || DEFAULT_PROMPT_BUDGET;
+  const sizes = chain
+    .ofKind(runDir, 'dispatch')
+    .map((r) => r.payload && r.payload.promptChars)
+    .filter((n) => Number.isFinite(n));
+  if (sizes.length === 0) return { measured: 0, unmeasured: chain.ofKind(runDir, 'dispatch').length, total: null, max: null, avg: null, overBudget: 0, budget };
+  const total = sizes.reduce((a, b) => a + b, 0);
+  return {
+    measured: sizes.length,
+    unmeasured: chain.ofKind(runDir, 'dispatch').length - sizes.length,
+    total,
+    max: Math.max(...sizes),
+    avg: Math.round(total / sizes.length),
+    overBudget: sizes.filter((n) => n > budget).length,
+    budget,
+  };
 }
 
 function clearancesPath(runDir) {
@@ -713,6 +747,7 @@ function cmdCost(runDir, worktree) {
         note: 'proxies derived from the sealed chain and git — NOT token counts',
         dispatches,
         dispatchesDied: diedCount(runDir),
+        subagentPrompts: promptStats(runDir),
         replans: byKind.replan || 0,
         receiptsByKind: byKind,
         wallClockMs: first != null && last != null ? last - first : null,
@@ -878,6 +913,7 @@ function main() {
   const restart = argv.includes('--restart');
   if (restart) argv.splice(argv.indexOf('--restart'), 1);
   const source = takeFlag(argv, '--source')[0];
+  const promptChars = takeFlag(argv, '--prompt-chars')[0];
   const worktree = takeFlag(argv, '--worktree')[0];
   const evidence = takeFlag(argv, '--evidence');
   const inputs = takeFlag(argv, '--inputs');
@@ -906,7 +942,7 @@ function main() {
     case 'init':
       return cmdInit(runDir, rest[0], { restart });
     case 'dispatch':
-      return cmdDispatch(runDir, rest.join(' '), { source });
+      return cmdDispatch(runDir, rest.join(' '), { source, promptChars });
     case 'replan':
       return cmdReplan(runDir, rest.join(' '));
     case 'gate':

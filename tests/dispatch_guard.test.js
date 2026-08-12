@@ -289,3 +289,23 @@ test('a ledger too old to have a protocol is refused loudly, not called', () => 
     rmDir(root);
   }
 });
+
+// The hook is the only place that sees the filled prompt, so it is the only place that can
+// measure it. Without this the report can say how many dispatches ran but not how much
+// context each one was handed.
+test('the hook records how large the prompt it let through was', () => {
+  const { root, runDir } = setup();
+  try {
+    const prompt = 'x'.repeat(1234);
+    const res = dispatch(root, { subagent_type: 'implementer', description: 'slice C1', prompt });
+    assert.strictEqual(res.status, 0, res.stderr);
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.strictEqual(cost.subagentPrompts.measured, 1);
+    assert.ok(
+      cost.subagentPrompts.max >= prompt.length,
+      `expected >= ${prompt.length}, got ${cost.subagentPrompts.max}`
+    );
+  } finally {
+    rmDir(root);
+  }
+});

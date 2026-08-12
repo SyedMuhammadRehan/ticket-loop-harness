@@ -194,6 +194,12 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   refuses without a `report` receipt; that marker, not the presence of `report.md`, is what
   releases the dispatch budget and the control-plane freeze. The old signal meant the loop's own
   deliverable was the off switch for every gate.
+- **What each dispatch was handed is recorded** — the filled prompt is visible only to
+  `dispatch_guard`, which measures it and seals the size with the dispatch receipt, so
+  `ledger.js cost` reports total/max/average prompt size and how many exceeded
+  `dispatchPolicy.promptBudgetChars`. A dispatch recorded by the script rather than the hook
+  leaves the size null instead of guessing. This measures the largest recurring cost in a run;
+  it does not cap it — see "Yours to uphold".
 - **A closed run stays closed** — every mutating `ledger.js` command refuses once `closed.json`
   exists, and `verify` compares the chain against the record count and last seal the close
   marker captured. Closing releases the dispatch budget and the control-plane freeze on the
@@ -267,6 +273,13 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   conversation is visible after the fact rather than invisible.
 - **GATE B (design conflict).** Judgement — no code can tell you a Figma node contradicts the
   ticket text.
+- **Dispatching only what is worth dispatching.** A subagent costs its whole prompt before it
+  works, so `dispatchPolicy.minSliceLines` says do small and test-only slices inline. Nothing
+  can enforce it: at dispatch time no one knows how large the change will turn out. The prompt
+  templates are ordered so their stable text caches and the per-dispatch fills come last, and
+  a test holds that ordering — but whether you fill them with excerpts or paste whole files is
+  yours. Both show up in `ledger.js cost` afterwards (lines per dispatch, prompt sizes), which
+  is the difference between a cost you can see and one you cannot.
 - **Whether a revision reason is true.** `ledger.js revise` proves that a sealed document
   changed, when, and to exactly what content — not that the stated reason is the real one. What
   it buys is that every post-gate edit is a deliberate, separate, sealed act carrying a reason

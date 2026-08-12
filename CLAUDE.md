@@ -34,6 +34,12 @@ purpose, confirm the suite goes red) over trusting a green run.
 Corollary: **do not claim in README/INSTALL what the code does not do.** The "Yours to
 uphold" section exists to list the gaps honestly. Add to it rather than quietly overstating.
 
+`INVARIANTS.md` is the map: every guarantee, its enforcing symbol, and the test that kills it.
+Read it before changing the enforcement layer — the defects that keep recurring are
+interactions between two rows, which the code alone does not make visible. Adding a mechanism
+means adding a row; `tests/invariants.test.js` fails when a cited symbol or test stops
+existing, and when an enforcement file has no row at all.
+
 ## Testing
 
 ```
