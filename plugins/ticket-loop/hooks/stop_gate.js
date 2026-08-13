@@ -231,6 +231,10 @@ function looksLikeFlake(output, conf) {
 // that ends in "not verified" has to SAY so, or Stage 7 has nothing to disclose and the report
 // reads COMPLETE over work no test touched.
 function verifyTree(tree, conf, verifyTest, runActive) {
+  // No run means no "done" claim, so nothing runs — not even the git walk. A repo keeps its
+  // profile permanently, and ordinary sessions in it end turns with files dirty.
+  if (!runActive) return { ok: true, skipped: true };
+
   const { files: changed, rawCount, baseRef, baseIsHead } = changedSourceFiles(tree, conf);
   const notes = [];
 
@@ -239,7 +243,6 @@ function verifyTree(tree, conf, verifyTest, runActive) {
   let forceFull = false;
 
   if (changed.length === 0) {
-    if (!runActive) return { ok: true, skipped: true };
     if (rawCount > 0) {
       // Files DID change and the profile's filters excluded all of them. That is the repo
       // owner's call, so it does not block — but it must still say so, or Stage 7's "report

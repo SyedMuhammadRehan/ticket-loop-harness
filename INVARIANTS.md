@@ -98,7 +98,8 @@ review were interactions between two rows below, which the code alone did not ma
 | 33 | A tiny timeoutMs cannot disable the gate | `stop_gate.js` → `MIN_TEST_TIMEOUT_MS` | `stop_gate.test.js` :: `a tiny timeoutMs cannot disable the gate (it is floored)` | A 50ms timeout would turn every run into "could not verify" |
 | 34 | An unusable stopGate config blocks mid-run | `stop_gate.js` → `activeRuns` | `stop_gate.test.js` :: `an active run with an unusable stopGate config BLOCKS instead of passing silently` | A deleted block is what disarming this gate looks like |
 | 35 | Filters that match nothing say so | `stop_gate.js` → `applyFilters` | `stop_gate.test.js` :: `a profile whose filters match nothing says so instead of passing quietly` | Silently verifying zero files reads identically to a green run |
-| 36 | Outside a run the gate stays inert | `stop_gate.js` → `main` | `stop_gate.test.js` :: `outside a run the gate stays quiet and cheap` | A broken install must not break unrelated projects |
+| 36 | Outside a run the gate runs nothing at all | `stop_gate.js` → `verifyTree` | `stop_gate.test.js` :: `outside a run the gate runs nothing, even when changed files match` | A repo keeps its profile permanently; verifying every turn-end would tax unrelated sessions |
+| 43 | Mid-run the same tree still blocks on red | `stop_gate.js` → `verifyTree` | `stop_gate.test.js` :: `the identical situation mid-run still blocks on a red suite` | Row 36 must not turn the gate off altogether |
 
 ## Preflight
 
