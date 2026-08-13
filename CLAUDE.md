@@ -55,9 +55,28 @@ the invariant, then prove the test fails without it.
 ## Comments
 
 Match the surrounding density. State constraints the code cannot express — why merge-base
-rather than `git status`, why default-deny, why a fallback is refused on Windows. Never
-narrate change history ("used to", "the regression this fixes", "CRITICAL FIX"); that is a
-commit message, and it rots. Never add AI-attribution markers.
+rather than `git status`, why default-deny, why a fallback is refused on Windows.
+
+**State the constraint and stop.** Comment noise is the most repeated defect in this repo's
+history, and it arrives in four shapes, all of which have shipped here at least once:
+
+- **Arguing after stating.** One sentence gives the constraint; the next three defend it or
+  quote this file back at itself. Cut to the constraint.
+- **The same comment repeated.** A trailing note pasted beside every call in a series. If the
+  call needs it said that often, name the call better.
+- **Narrating the change.** "The older version did X", "why the old blocklist was replaced",
+  "this fixes the regression" — that is a commit message beside the code that replaced it, and
+  it rots on the next refactor. Write as if the current shape is the only one there has been.
+- **Talking to the reviewer.** "Note that this is correct because…" is a PR comment; it is
+  noise the moment the PR merges.
+
+Never add AI-attribution markers.
+
+`tests/comments.test.js` enforces the two a machine can judge without guessing: attribution
+markers, and a trailing comment repeated three times in one file. The other two are review's
+job — "used to" and "no longer" have legitimate uses here ("the branch point used to detect
+COMMITTED changes"), so a regex would flag more good comments than bad and end up switched off.
+Do not add one; read the diff instead.
 
 ## Versioning
 
