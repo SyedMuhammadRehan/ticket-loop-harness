@@ -231,10 +231,8 @@ function looksLikeFlake(output, conf) {
 // that ends in "not verified" has to SAY so, or Stage 7 has nothing to disclose and the report
 // reads COMPLETE over work no test touched.
 function verifyTree(tree, conf, verifyTest, runActive) {
-  // No ticket run means no "done" claim to police, so nothing runs — not the git walk, not the
-  // suite. A repo keeps its profile permanently, so ordinary sessions in it end turns with files
-  // dirty; verifying those would make installing the plugin a per-turn tax on unrelated work,
-  // which is the opposite of "a broken install must not break unrelated projects".
+  // No run means no "done" claim, so nothing runs — not even the git walk. A repo keeps its
+  // profile permanently, and ordinary sessions in it end turns with files dirty.
   if (!runActive) return { ok: true, skipped: true };
 
   const { files: changed, rawCount, baseRef, baseIsHead } = changedSourceFiles(tree, conf);
