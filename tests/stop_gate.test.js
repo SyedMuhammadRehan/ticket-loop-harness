@@ -170,6 +170,7 @@ const gate = (cwd, input = {}) => runScript(SCRIPT, [], { cwd, input: JSON.strin
 
 test('verifies the ticket worktree, not just the cwd tree', () => {
   const env = setupRepo();
+  markRunActive(env.main); // verification only happens mid-run
   try {
     fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
     assert.strictEqual(gate(env.main).status, 0);
@@ -187,6 +188,7 @@ test('verifies the ticket worktree, not just the cwd tree', () => {
 // git-status-only check sees a clean tree and exits 0 without running a single test.
 test('COMMITTED slice work is detected — a clean-but-ahead worktree is still verified', () => {
   const env = setupRepo();
+  markRunActive(env.main); // verification only happens mid-run
   try {
     fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 999\n');
     fs.writeFileSync(path.join(env.wt, 'FAIL'), '');
@@ -204,6 +206,7 @@ test('COMMITTED slice work is detected — a clean-but-ahead worktree is still v
 
 test('a worktree on a non-ticket branch is still checked (worktrees defaults to all)', () => {
   const env = setupRepo({ branch: 'feature/T-1' });
+  markRunActive(env.main); // verification only happens mid-run
   try {
     fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
     fs.writeFileSync(path.join(env.wt, 'FAIL'), '');
@@ -215,6 +218,7 @@ test('a worktree on a non-ticket branch is still checked (worktrees defaults to 
 
 test('a detached-HEAD worktree is still checked', () => {
   const env = setupRepo();
+  markRunActive(env.main); // verification only happens mid-run
   try {
     git(env.wt, 'checkout', '-q', '--detach', git(env.wt, 'rev-parse', 'HEAD').trim());
     fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
@@ -260,6 +264,7 @@ test('the timeout floor protects a green suite from a tiny timeoutMs', () => {
 // A tiny timeoutMs must not turn a RED suite green either — belt to the braces above.
 test('a tiny timeoutMs cannot disable the gate (it is floored)', () => {
   const env = setupRepo({ stopGate: { extensions: ['.py'], mode: 'full', baseRef: 'main', timeoutMs: 50 } });
+  markRunActive(env.main); // verification only happens mid-run
   try {
     fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
     fs.writeFileSync(path.join(env.wt, 'FAIL'), '');
@@ -272,6 +277,7 @@ test('a tiny timeoutMs cannot disable the gate (it is floored)', () => {
 
 test('a missing test binary degrades honestly to NOT verified', () => {
   const env = setupRepo();
+  markRunActive(env.main); // verification only happens mid-run
   try {
     fs.writeFileSync(
       path.join(env.main, '.agents', 'ticket-loop.config.json'),
@@ -301,6 +307,7 @@ test('requireMatchingTest blocks source changes that no test covers', () => {
       requireMatchingTest: true,
     },
   });
+  markRunActive(env.main); // verification only happens mid-run
   try {
     fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
     const res = gate(env.main);
@@ -313,6 +320,7 @@ test('requireMatchingTest blocks source changes that no test covers', () => {
 
 test('clean trees pass without running anything; escape valve releases after 3 blocks', () => {
   const env = setupRepo();
+  markRunActive(env.main); // verification only happens mid-run
   try {
     assert.strictEqual(gate(env.main).status, 0);
 
@@ -399,6 +407,40 @@ test('exclude that swallows every changed file is reported too', () => {
     const res = gate(env.main);
     assert.strictEqual(res.status, 0);
     assert.ok(res.stderr.includes('NONE matched'), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+// A repo carries its profile permanently, so this is the common case, not the edge one: any
+// session in a ticket-loop repo ends turns while files are dirty. Running that repo's whole
+// suite each time makes installing the plugin a tax on unrelated work — with `npx next build`
+// as verify.test, minutes of it per turn.
+//
+// The older test below used extensions that match nothing, so it returned before ever reaching
+// the verify path and would have passed with this guard deleted.
+test('outside a run the gate runs nothing, even when changed files match', () => {
+  const env = setupRepo();
+  try {
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
+    fs.writeFileSync(path.join(env.wt, 'FAIL'), ''); // the suite exits 1 if it is run at all
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 0, `no ticket run means no "done" claim to police:\n${res.stderr}`);
+    assert.strictEqual(res.stderr.trim(), '', 'an inert gate is silent');
+  } finally {
+    teardown(env);
+  }
+});
+
+// The same tree, once a run IS active, must still be verified — the fix above must not turn the
+// gate off altogether.
+test('the identical situation mid-run still blocks on a red suite', () => {
+  const env = setupRepo();
+  try {
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
+    fs.writeFileSync(path.join(env.wt, 'FAIL'), '');
+    assert.strictEqual(gate(env.main).status, 2, 'mid-run a red suite must block the "done" claim');
   } finally {
     teardown(env);
   }

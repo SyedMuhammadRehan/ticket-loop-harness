@@ -229,6 +229,11 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
 - **The gates can't be disarmed mid-run** — while a run is active, the profile, the hook
   sources and the hook state are read-only, and the stop gate **blocks** rather than going
   inert if the profile goes missing or unparsable. The profile's hash is sealed at Stage 0.
+- **The gate costs nothing outside a run** — a repo keeps its profile permanently, so the stop
+  gate returns without running anything unless a ticket run is active. Otherwise every ordinary
+  session in that repo would verify its whole suite at each turn-end (with `npx next build` as
+  `verify.test`, minutes per turn) — the opposite of "a broken install must not break unrelated
+  projects".
 - **A "done" claim is checked against the branch point** — `stop_gate.js` compares each tree
   (main repo *and* every worktree, including detached-HEAD and non-`ticket/*` branches) against
   its merge-base, not against `git status`. This is the fix for the gate's worst old bug: the
