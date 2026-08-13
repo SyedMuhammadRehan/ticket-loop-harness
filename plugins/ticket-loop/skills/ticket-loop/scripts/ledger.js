@@ -11,7 +11,7 @@
 //   ledger.js replan <runDir> [reason]             +1 re-plan;  exit 2 at the cap
 //   ledger.js gate <runDir> <stage> [--evidence f] record that a stage completed
 //   ledger.js require <runDir> <stage>             exit 3 unless that stage was recorded
-//   ledger.js check <runDir> <id> <PASS|FAIL> [n]  record a verification result
+//   ledger.js check <runDir> <id> <result> --by <m>  record a result AND how it was reached
 //   ledger.js verdict <runDir> <v> [--inputs f]    record the QA verdict + what it judged
 //   ledger.js close <runDir>                       end the run (needs a report receipt)
 //   ledger.js archive <runDir>                     sanctioned CLEAN-RESTART move
@@ -39,6 +39,14 @@ const MAX_REPLANS = 2;
 const STAGES = ['intake', 'survey', 'design', 'approach', 'validate', 'freeze', 'implement', 'verify', 'qa', 'report'];
 const VERDICTS = ['BLOCK', 'APPROVE_WITH_COMMENTS', 'APPROVE'];
 const CHECK_RESULTS = ['PASS', 'FAIL', 'SKIPPED'];
+
+// How a result was reached, which PASS|FAIL|SKIPPED cannot express. Without it a criterion an
+// agent concluded from reading source records identically to one whose suite ran.
+//   command  — a command ran and its exit code decided it
+//   observed — the running system was exercised and its behaviour seen
+//   human    — a person confirmed it
+//   asserted — neither: concluded from source, or from another agent's summary
+const CHECK_METHODS = ['command', 'observed', 'human', 'asserted'];
 const DISPATCH_OUTCOMES = ['ok', 'died'];
 // Mirrors load_config's dispatchPolicy default, for a run whose profile does not set one.
 const DEFAULT_PROMPT_BUDGET = 32000;
@@ -124,6 +132,17 @@ function dispatchCount(runDir) {
 // count — it only lets the report say how much of the budget bought nothing.
 function diedCount(runDir) {
   return chain.ofKind(runDir, 'outcome').filter((r) => r.payload && r.payload.outcome === 'died').length;
+}
+
+// How the run's results were reached, so a report can say "eight by command, one by a person"
+// rather than nine indistinguishable passes.
+function evidenceStats(runDir) {
+  const out = Object.fromEntries(CHECK_METHODS.map((m) => [m, 0]));
+  for (const r of chain.ofKind(runDir, 'check')) {
+    const by = r.payload && r.payload.by;
+    if (by in out) out[by] += 1;
+  }
+  return out;
 }
 
 function counters(runDir) {
@@ -488,7 +507,24 @@ function cmdRequire(runDir, stage) {
   console.log(`ledger: stage "${stage}" receipt present (seq ${hit.seq}, ${hit.at})`);
 }
 
-function cmdCheck(runDir, id, result, note) {
+// The kind the FROZEN contract gave this criterion, so the rules below key off the contract
+// itself rather than a second list that could disagree with it. Null when nothing is frozen yet.
+function frozenKindOf(runDir, id) {
+  for (const name of ['done.approved.md', 'done.md', 'done-additions.md']) {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(runDir, name), 'utf8');
+    } catch {
+      continue;
+    }
+    const re = new RegExp(`-\\s*\\[[ xX]\\]\\s*${id}\\b[^\\n]*?\\((test|analyzer|runtime|token|manual)\\)`, 'i');
+    const m = text.match(re);
+    if (m) return m[1].toLowerCase();
+  }
+  return null;
+}
+
+function cmdCheck(runDir, id, result, method, note) {
   requireChain(runDir);
   requireOpen(runDir, 'check');
   const normalized = String(result || '').toUpperCase();
@@ -496,7 +532,34 @@ function cmdCheck(runDir, id, result, note) {
     console.error(`ledger check: result must be one of ${CHECK_RESULTS.join(', ')}`);
     process.exit(1);
   }
-  chain.append(runDir, 'check', { id, result: normalized, note: note || null });
+  const by = String(method || '').toLowerCase();
+  if (!CHECK_METHODS.includes(by)) {
+    console.error(
+      `ledger check: name how this was established — --by ${CHECK_METHODS.join('|')}\n` +
+        `  command = a command decided it | observed = the running system was exercised\n` +
+        `  human = a person confirmed it  | asserted = concluded without either`
+    );
+    process.exit(1);
+  }
+  // Concluding that something works, having neither run nor watched anything, is not a pass.
+  // SKIPPED already says "not established" without claiming it holds.
+  if (by === 'asserted' && normalized === 'PASS') {
+    console.error(
+      `ledger check: refusing "${id} PASS --by asserted" — reading the code or trusting a summary ` +
+        `does not establish a pass.\n  Run it (command), drive it (observed), have someone look ` +
+        `(human), or record SKIPPED, which is what "not established" is for.`
+    );
+    process.exit(1);
+  }
+  const kind = frozenKindOf(runDir, id);
+  if (kind === 'manual' && normalized === 'PASS' && by !== 'human') {
+    console.error(
+      `ledger check: ${id} is a (manual) criterion in the frozen contract, so a pass needs ` +
+        `--by human. A command cannot stand in for the person the criterion asks for.`
+    );
+    process.exit(1);
+  }
+  chain.append(runDir, 'check', { id, result: normalized, by, kind, note: note || null });
   const history = chain.ofKind(runDir, 'check').filter((r) => r.payload.id === id).map((r) => r.payload.result);
   console.log(`ledger: check ${id} ${normalized} — history: ${history.join(' → ')}`);
 }
@@ -748,6 +811,7 @@ function cmdCost(runDir, worktree) {
         dispatches,
         dispatchesDied: diedCount(runDir),
         subagentPrompts: promptStats(runDir),
+        evidence: evidenceStats(runDir),
         replans: byKind.replan || 0,
         receiptsByKind: byKind,
         wallClockMs: first != null && last != null ? last - first : null,
@@ -914,6 +978,7 @@ function main() {
   if (restart) argv.splice(argv.indexOf('--restart'), 1);
   const source = takeFlag(argv, '--source')[0];
   const promptChars = takeFlag(argv, '--prompt-chars')[0];
+  const checkMethod = takeFlag(argv, '--by')[0];
   const worktree = takeFlag(argv, '--worktree')[0];
   const evidence = takeFlag(argv, '--evidence');
   const inputs = takeFlag(argv, '--inputs');
@@ -930,7 +995,8 @@ function main() {
     console.error(
       'usage: ledger.js init <runDir> [baseSha] [--restart] | dispatch <runDir> [label] | replan <runDir> [reason]\n' +
         '       ledger.js gate <runDir> <stage> [--evidence <file>]... | require <runDir> <stage>\n' +
-        '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> [note] | verdict <runDir> <verdict> [--inputs <file>]...\n' +
+        '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> --by <command|observed|human|asserted> [note]\n' +
+        '       ledger.js verdict <runDir> <verdict> [--inputs <file>]...\n' +
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>" | outcome <runDir> <dispatchSeq> <ok|died> [note]'
@@ -950,7 +1016,7 @@ function main() {
     case 'require':
       return cmdRequire(runDir, rest[0]);
     case 'check':
-      return cmdCheck(runDir, rest[0], rest[1], rest.slice(2).join(' '));
+      return cmdCheck(runDir, rest[0], rest[1], checkMethod, rest.slice(2).join(' '));
     case 'verdict':
       return cmdVerdict(runDir, rest[0], inputs);
     case 'close':

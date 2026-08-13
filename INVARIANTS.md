@@ -44,6 +44,10 @@ review were interactions between two rows below, which the code alone did not ma
 | 14 | Sealed evidence that changes is TAMPERED | `ledger.js` → `cmdVerify` | `ledger.test.js` :: `evidence sealed by a gate is reported as TAMPERED when it changes afterwards` | A receipt over a file that then changed attests to nothing |
 | 15 | An UNRECORDED edit to a sealed file is still TAMPERED | `ledger.js` → `cmdRevise` | `ledger.test.js` :: `an unrecorded edit to a sealed file is still TAMPERED` | Revisions must not become a general amnesty (see 16) |
 | 16 | The frozen contract can never be revised | `ledger.js` → `UNREVISABLE` | `ledger.test.js` :: `revise refuses frozen artifacts and the enforcement profile` | A contract restatable after the freeze is not a contract |
+| 44 | A result must name how it was established | `ledger.js` → `CHECK_METHODS` | `ledger.test.js` :: `check refuses a result with no method named` | PASS|FAIL|SKIPPED cannot distinguish a suite that ran from source that was read |
+| 45 | Concluding something works is not a pass | `ledger.js` → `cmdCheck` | `ledger.test.js` :: `an asserted PASS is refused; an asserted SKIPPED is accepted` | SKIPPED already says "not established" without claiming it holds |
+| 46 | A manual criterion needs a person | `ledger.js` → `frozenKindOf` | `ledger.test.js` :: `a manual criterion cannot be passed by a command` | Keyed off the FROZEN contract's own kind, not a second list |
+| 47 | The chosen design must name what it reuses | `validate_done.js` → `chosen` | `validate_done.test.js` :: `the chosen option must say what it reuses` | Rung 2 answered while it is a sentence, not a diff |
 | 17 | A verdict must seal the contract it judged | `ledger.js` → `cmdVerdict` | `ledger.test.js` :: `a verdict that seals no contract is refused` | "APPROVE" over nothing cannot show what was judged |
 
 ## End of run

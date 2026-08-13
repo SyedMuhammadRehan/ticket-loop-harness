@@ -177,6 +177,18 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   `check`, `qa` needs a `verdict`. A verdict must seal the frozen contract and follow a dispatch
   recorded after the freeze. Before this, all ten gates plus an `APPROVE` were eleven free
   commands over a run in which nothing happened.
+- **A result records how it was reached** — `ledger.js check` requires `--by
+  command|observed|human|asserted` and seals it with the result, because PASS/FAIL/SKIPPED
+  cannot tell a suite that ran from source that was read. `asserted` is refused for a PASS: if
+  nothing was run, watched, or looked at, the honest record is SKIPPED. A `(manual)` criterion
+  can be passed only `--by human`, checked against the kind in the *frozen contract* rather than
+  a second list that could disagree with it. `ledger.js cost` reports the breakdown, so a report
+  can say "eight by command, one by a person" instead of nine indistinguishable passes.
+- **The chosen design must name what it reuses** — `validate_done.js` requires the `## Chosen`
+  option to carry `| reuses: <existing code>`, or `reuses: none (<what you searched for>)` with a
+  reason substantial enough to be a finding. The implementer's rung 2 — "is it already in this
+  codebase?" — gets answered while it is still a sentence, instead of at review time when a new
+  helper is already written.
 - **An edit to a sealed document costs a receipt** — several artifacts keep growing after their
   gate by design (`ledger.md` gains an attempt per dispatch, `approach.md` gains `## Revisions`),
   so `ledger.js revise <file> --reason "…"` records the change and `verify` reports it as a

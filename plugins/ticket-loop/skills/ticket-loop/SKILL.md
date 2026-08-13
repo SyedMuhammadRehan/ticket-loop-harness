@@ -254,7 +254,12 @@ subagent three failed dispatches from now. Proportional, same rule as the Survey
    (at least one option should be the CHEAPEST thing that could work — reuse what exists,
    extend a helper, or do nothing — so "build it new" has to win on merit, not by default)
    ## Chosen
-   - <A|B>: <why it wins — and why the loser loses; this line is what saves the re-litigation later>
+   - <A|B>: <why it wins — and why the loser loses; this line is what saves the re-litigation later> | reuses: <the existing code this builds on>
+   (`reuses:` is REQUIRED and validated. Answer the implementer's rung 2 — "is it already in
+   this codebase?" — here, where it costs a clause, not at implementation time where it costs
+   the diff. Name the module, widget or helper you found in codebase-map.md. `reuses: none
+   (<what you searched for and why nothing applies>)` is a legitimate answer for a greenfield
+   area; a thin reason is refused, exactly as an out-of-scope failure mode is.)
    ## Failure modes
    - <what can go wrong at runtime — bad input, dependency down, race, empty state> | covered-by: C<n>
    - <a failure mode consciously not handled> | covered-by: out-of-scope (<reason>)
@@ -413,9 +418,23 @@ recorded in report.md and the run dir either way.
 
 ## Stage 5 — VERIFY (full done-list, inside the worktree)
 
-Run in order. Record EVERY check result in the chain as you go:
-`node <SKILL_DIR>/scripts/ledger.js check .agents/ticket-runs/<TICKET> <C-id> PASS|FAIL|SKIPPED "<note>"`
-— and mirror it into the ledger.md Check-history table for readability. The sealed check
+Run in order. Record EVERY check result in the chain as you go, naming HOW it was established:
+`node <SKILL_DIR>/scripts/ledger.js check .agents/ticket-runs/<TICKET> <C-id> PASS|FAIL|SKIPPED --by <method> "<note>"`
+
+`--by` is REQUIRED and the method is sealed with the result:
+- `command` — a command ran and its exit code decided it (the criterion's `run:`)
+- `observed` — the running system was exercised and its behaviour seen (Playwright, a browser,
+  the app in front of you). A test binary that drives the app counts as `command`; reading its
+  source does not.
+- `human` — a person confirmed it. A `(manual)` criterion can be passed ONLY this way.
+- `asserted` — neither: concluded from the source, or from a subagent's summary
+
+**`asserted` cannot back a PASS and the script refuses it.** If you have not run it, watched
+it, or had someone look, the honest record is `SKIPPED --by asserted` with a note — that is
+what SKIPPED is for, and Stage 7 must report it as not verified. Do not reach for `command`
+because a command exists; reach for it when you ran that command and read its exit code.
+
+Mirror each result into the ledger.md Check-history table for readability. The sealed check
 history is what substantiates a FLAKY_VERIFIER call: an alternating pass/fail record has to be
 visible in `ledger.js status`, so that classification is evidence-backed rather than asserted.
 Use the profile's resolved commands (this repo shown in parentheses):
