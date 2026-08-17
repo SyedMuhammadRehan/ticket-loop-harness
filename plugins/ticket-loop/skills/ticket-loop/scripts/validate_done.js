@@ -233,8 +233,31 @@ if (fs.existsSync(approachFile)) {
   if (options.length < 2) {
     errors.push(`approach.md: need >=2 options (a design with no considered alternative is a guess), found ${options.length}`);
   }
-  if (bullets(section('Chosen', aText)).length < 1) {
+  const chosen = bullets(section('Chosen', aText));
+  if (chosen.length < 1) {
     errors.push('approach.md: "## Chosen" is empty — record which option won and why');
+  }
+  // Rung 2 of the implementer's ladder — "is it already in this codebase?" — is otherwise
+  // judged once the new helper is already written and the argument is about a diff. Answering
+  // it here costs a clause; answering it later costs the diff.
+  for (const c of chosen) {
+    const m = c.match(/\|\s*reuses:\s*(none\s*\((.+)\)|.+)$/i);
+    if (!m) {
+      errors.push(
+        `approach.md: the chosen option must name what it builds on — "| reuses: <existing code>", ` +
+          `or "| reuses: none (<why nothing applies>)": ${c}`
+      );
+      continue;
+    }
+    if (/^none\b/i.test(m[1].trim())) {
+      const reason = (m[2] || '').trim();
+      if (reason.replace(/[^a-z0-9]/gi, '').length < MIN_OUT_OF_SCOPE_REASON) {
+        errors.push(
+          `approach.md: "reuses: none (${reason})" is too thin to be a finding — say what you looked ` +
+            `for and why nothing applies: ${c}`
+        );
+      }
+    }
   }
 
   const failureModes = bullets(section('Failure modes', aText));

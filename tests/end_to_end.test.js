@@ -34,7 +34,7 @@ const APPROACH = `# Approach — T-1
 - A: map errors in the repository — UI stays transport-blind
 - B: map errors in the widget — fewer files, but couples UI to the HTTP client
 ## Chosen
-- A: error semantics belong at the data boundary; B leaks transport details upward
+- A: error semantics belong at the data boundary; B leaks transport details upward | reuses: the existing Result type and its error mapping
 ## Failure modes
 - API returns 404 vs 500 and needs distinct messages | covered-by: C1
 - retry storms if the user hammers the button | covered-by: out-of-scope (tracked by the rate-limit ticket)
@@ -89,10 +89,10 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
     for (let i = 0; i < 3; i++) assert.strictEqual(dispatch(root).status, 0);
 
     // Stage 5 — verify, recording each check
-    ok(['check', runDir, 'C1', 'PASS', '5/5']);
-    ok(['check', runDir, 'C2', 'FAIL', 'wrong copy']);
-    ok(['check', runDir, 'C2', 'PASS', 'fixed on attempt 2']);
-    ok(['check', runDir, 'C3', 'PASS']);
+    ok(['check', runDir, 'C1', 'PASS', '--by', 'command', '5/5']);
+    ok(['check', runDir, 'C2', 'FAIL', '--by', 'command', 'wrong copy']);
+    ok(['check', runDir, 'C2', 'PASS', '--by', 'command', 'fixed on attempt 2']);
+    ok(['check', runDir, 'C3', 'PASS', '--by', 'observed']);
     ok(['gate', runDir, 'verify']);
 
     // Stage 5.5 — QA seals its own verdict over the contract it read

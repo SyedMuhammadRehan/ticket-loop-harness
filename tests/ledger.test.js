@@ -24,7 +24,7 @@ function closedRun() {
   write('done.draft.md', DRAFT);
   runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
   runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root });
-  ledger(root, ['check', runDir, 'C1', 'PASS']);
+  ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command']);
   ledger(root, ['gate', runDir, 'verify', '--evidence', brief]);
   ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
   ledger(root, [
@@ -250,11 +250,11 @@ test('evidence sealed by a gate is reported as TAMPERED when it changes afterwar
 test('check records a per-criterion history, which is what a FLAKY claim must cite', () => {
   const { root, runDir } = init();
   try {
-    ledger(root, ['check', runDir, 'C3', 'FAIL', 'token mismatch']);
-    ledger(root, ['check', runDir, 'C3', 'PASS']);
-    const res = ledger(root, ['check', runDir, 'C3', 'FAIL']);
+    ledger(root, ['check', runDir, 'C3', 'FAIL', '--by', 'command', 'token mismatch']);
+    ledger(root, ['check', runDir, 'C3', 'PASS', '--by', 'command']);
+    const res = ledger(root, ['check', runDir, 'C3', 'FAIL', '--by', 'command']);
     assert.ok(res.stdout.includes('FAIL → PASS → FAIL'), res.stdout);
-    assert.strictEqual(ledger(root, ['check', runDir, 'C3', 'MAYBE']).status, 1);
+    assert.strictEqual(ledger(root, ['check', runDir, 'C3', 'MAYBE', '--by', 'command']).status, 1);
   } finally {
     rmDir(root);
   }
@@ -358,7 +358,7 @@ test('receipt-backed stages are bound to the record they claim, not to a file', 
     assert.ok(verify.stderr.includes('no sealed "check" record'), verify.stderr);
 
     // Recording a real check unlocks the verify gate, and nothing else does.
-    assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'PASS']).status, 0);
+    assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command']).status, 0);
     assert.strictEqual(ledger(root, ['gate', runDir, 'verify']).status, 0);
   } finally {
     rmDir(root);
@@ -691,7 +691,7 @@ test('mutating a closed run is refused', () => {
   const { root, runDir } = closedRun();
   try {
     for (const args of [
-      ['check', runDir, 'C9', 'PASS'],
+      ['check', runDir, 'C9', 'PASS', '--by', 'command'],
       ['dispatch', runDir, 'more work'],
       ['gate', runDir, 'implement', '--evidence', path.join(runDir, 'report.md')],
       ['replan', runDir, 'another go'],
@@ -723,6 +723,82 @@ test('an untouched closed run verifies clean', () => {
   try {
     const res = ledger(root, ['verify', runDir]);
     assert.strictEqual(res.status, 0, res.stdout);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- how a result was established ---
+//
+// PASS|FAIL|SKIPPED says what the answer was, never how it was reached, so a criterion an agent
+// concluded from reading source is indistinguishable from one whose suite actually ran. The
+// method is recorded alongside the result, and the combinations that cannot hold are refused
+// against the FROZEN contract's own criterion kinds rather than a second list.
+
+function runWithCriteria(criteria) {
+  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
+  assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
+  fs.writeFileSync(
+    path.join(runDir, `done${'.approved'}.md`),
+    `# Done\n## Criteria\n${criteria}\n## Tokens\n- none\n## Out of scope\n- x\n`
+  );
+  return { root, runDir };
+}
+
+test('check records the method that established the result', () => {
+  const { root, runDir } = runWithCriteria('- [ ] C1 (test): behaviour holds | run: x tests');
+  try {
+    const res = ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.deepStrictEqual(cost.evidence, { command: 1, observed: 0, human: 0, asserted: 0 });
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('check refuses a result with no method named', () => {
+  const { root, runDir } = runWithCriteria('- [ ] C1 (test): behaviour holds | run: x tests');
+  try {
+    const res = ledger(root, ['check', runDir, 'C1', 'PASS']);
+    assert.strictEqual(res.status, 1, res.stdout);
+    assert.match(res.stderr, /--by/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The rule the whole axis exists for: concluding something works, without running or watching
+// anything, cannot be a PASS. It can be a SKIPPED — that is what SKIPPED is for.
+test('an asserted PASS is refused; an asserted SKIPPED is accepted', () => {
+  const { root, runDir } = runWithCriteria('- [ ] C1 (test): behaviour holds | run: x tests');
+  try {
+    const bad = ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'asserted']);
+    assert.strictEqual(bad.status, 1, bad.stdout);
+    assert.match(bad.stderr, /asserted/i);
+    assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'SKIPPED', '--by', 'asserted']).status, 0);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// A (manual) criterion means a person looks. A command cannot stand in for the person.
+test('a manual criterion cannot be passed by a command', () => {
+  const { root, runDir } = runWithCriteria('- [ ] C9 (manual): eyeball the empty state');
+  try {
+    const bad = ledger(root, ['check', runDir, 'C9', 'PASS', '--by', 'command']);
+    assert.strictEqual(bad.status, 1, bad.stdout);
+    assert.match(bad.stderr, /manual/i);
+    assert.strictEqual(ledger(root, ['check', runDir, 'C9', 'PASS', '--by', 'human']).status, 0);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('an unknown method is refused', () => {
+  const { root, runDir } = runWithCriteria('- [ ] C1 (test): behaviour holds | run: x tests');
+  try {
+    assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'vibes']).status, 1);
   } finally {
     rmDir(root);
   }

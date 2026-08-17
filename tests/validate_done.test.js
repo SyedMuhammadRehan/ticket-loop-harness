@@ -126,7 +126,7 @@ const VALID_APPROACH = `# Approach — T-1
 - A: map errors in the repository — keeps UI dumb
 - B: map errors in the widget — fewer files touched, leaks transport details upward
 ## Chosen
-- A: error semantics belong at the data boundary; B couples UI to transport exceptions
+- A: error semantics belong at the data boundary; B couples UI to transport exceptions | reuses: the existing Result type and its error mapping
 ## Failure modes
 - API returns 404/500 | covered-by: C1
 - device offline | covered-by: out-of-scope (tracked by the offline-banner ticket)
@@ -175,7 +175,7 @@ test('a single option is a guess, not a decision — fails', () => {
 
 test('empty Chosen and empty Failure modes both fail', () => {
   const gutted = VALID_APPROACH
-    .replace('- A: error semantics belong at the data boundary; B couples UI to transport exceptions\n', '')
+    .replace('- A: error semantics belong at the data boundary; B couples UI to transport exceptions | reuses: the existing Result type and its error mapping\n', '')
     .replace(/- API returns 404\/500 \| covered-by: C1\n- device offline \| covered-by: out-of-scope \([^)]*\)\n/, '');
   expectApproachInvalid(gutted, 'Chosen');
 });
@@ -326,6 +326,35 @@ test('declaring "none" and then listing tokens is a contradiction', () => {
   );
 });
 
+// --- what the design reuses ---
+//
+// Rung 2 of the implementer's ladder ("is it already in this codebase?") is judged at
+// implementation time, by which point a new helper is already written and the reviewer is
+// arguing about a diff. The chosen option has to answer it while it is still a sentence.
+
+const REUSE_CLAUSE = ' | reuses: the existing Result type and its error mapping';
+
+test('the chosen option must say what it reuses', () => {
+  expectApproachInvalid(VALID_APPROACH.replace(REUSE_CLAUSE, ''), 'reuses');
+});
+
+// "none" is a legitimate answer — greenfield areas exist. It is not a legitimate way to skip
+// the question, so it costs a reason, exactly as an out-of-scope failure mode does.
+test('reuses: none is accepted with a real finding, refused with a thin one', () => {
+  expectApproachInvalid(VALID_APPROACH.replace(REUSE_CLAUSE, ' | reuses: none (n/a)'), 'too thin to be a finding');
+
+  const real = VALID_APPROACH.replace(
+    REUSE_CLAUSE,
+    ' | reuses: none (searched for an existing datacenter repository and found none; this is the first screen in the area)'
+  );
+  const { root, runDir } = withApproach(VALID_DRAFT, real);
+  try {
+    assert.strictEqual(validate(root, runDir).status, 0, validate(root, runDir).stderr);
+  } finally {
+    rmDir(root);
+  }
+});
+
 // --- wrapped bullets ---
 //
 // A `| covered-by:` or `| run:` tag that lands on a continuation line belongs to the bullet
@@ -336,7 +365,7 @@ const WRAPPED_APPROACH = `# Approach
 - O1 — extend the existing screen
 - O2 — a sibling screen
 ## Chosen
-- O2, because the design shows its own nav entry
+- O2, because the design shows its own nav entry | reuses: the product card/row widgets
 ## Failure modes
 - **Pre-existing compile breakage** in the golden test fails the suite at BASE.
   Mitigation: verify commands are scoped to the non-golden dirs.
@@ -392,7 +421,7 @@ test('unindented prose after a bullet list is not folded into the last bullet', 
 - O1 — one way
 - O2 — another
 ## Chosen
-- O2
+- O2 | reuses: the existing filter primitives
 ## Failure modes
 - the mitigation is described below
 

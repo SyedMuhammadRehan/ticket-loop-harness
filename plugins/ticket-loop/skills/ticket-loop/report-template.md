@@ -18,6 +18,7 @@ agrees with the sealed counters.
 {LEDGER_VERIFY_OUTPUT}
 ```
 
+Evidence: {from the Cost section's `evidence` — e.g. "8 by command, 1 observed, 1 by a person, 0 asserted". Any criterion whose result was SKIPPED --by asserted is NOT verified; name it here and in Known gaps}
 Integrity: {INTACT | TAMPERED — list every problem line above and STOP}   ← the HISTORY: can
 the results above be trusted. Separate from Status on purpose: "every criterion passed but the
 receipts are unreliable" and "the receipts are clean but three criteria failed" need different
