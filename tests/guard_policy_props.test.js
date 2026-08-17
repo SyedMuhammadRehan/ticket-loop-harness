@@ -170,7 +170,9 @@ test('C3 quote stability: a read-only command stays read-only when its arguments
   let exercised = 0;
   for (let i = 0; i < DRAWS; i++) {
     const verb = pick(rng, READ_VERBS);
-    const args = Array.from({ length: int(rng, 0, 3) }, () => pick(rng, ARG_TOKENS));
+    // At least one argument, or `quoted` is the bare verb and the assertions below compare a
+    // string with itself — 142 of 600 draws asserted that tautology.
+    const args = Array.from({ length: int(rng, 1, 3) }, () => pick(rng, ARG_TOKENS));
     const bare = [verb, ...args].join(' ');
     const quoted = [verb, ...args.map((a) => `"${a}"`)].join(' ');
 
@@ -185,7 +187,9 @@ test('C3 quote stability: a read-only command stays read-only when its arguments
       const q = policy.commandVerdict(quoted, { runActive }) === null;
       assert.strictEqual(q, b, `quoting changed the verdict (runActive=${runActive}): ${JSON.stringify(quoted)}`);
     }
-    exercised++;
+    // Counted only when quoting actually changed the string, so the floor below cannot be met
+    // by draws that quoted nothing.
+    if (quoted !== bare) exercised++;
   }
   assert.ok(exercised >= 500, `quote stability exercised ${exercised} inputs, need >=500`);
 });
