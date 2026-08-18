@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // PostToolUse hook: format + analyze each edited file using the PER-REPO PROFILE
 // (.agents/ticket-loop.config.json -> hooks.postEdit). Stack-agnostic: with no config
-// (or no hooks.postEdit block) it is inert. Example block (Flutter):
+// (or no hooks.postEdit block) it is inert. Example block (TypeScript):
 //   "hooks": {
 //     "postEdit": {
-//       "extensions": [".dart"],
-//       "exclude": "\\.(g|freezed|tailor|gr|config|gen)\\.dart$",
-//       "format": "dart format {file}",
-//       "analyze": "dart analyze {file}",
+//       "extensions": [".ts", ".tsx"],
+//       "exclude": "\\.(gen|generated|d)\\.ts$",
+//       "format": "npx prettier --write {file}",
+//       "analyze": "npx eslint {file}",
 //       "analyzeErrorRegex": "\\berror\\b\\s*[-•]|^\\s*error\\b"
 //     }
 //   }

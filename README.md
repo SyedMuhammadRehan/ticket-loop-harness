@@ -375,6 +375,11 @@ A small, realistic run against a Flutter app with the `flutter` profile. Ticket 
 "Profile screen shows a friendly error state when the API fails (404 / 500), not a raw
 exception."** The ticket has a Figma link for the error state.
 
+**The stack here is illustrative, not structural.** Flutter plus Figma exercises every stage at
+once: analyzer, test runner, design tokens, runtime checks. Every command below is read from
+`verify.*` in the profile and none is hardcoded in the plugin. This repo runs the loop on itself
+under a `node` profile; Python and Go profiles ship in `config.example.json`.
+
 You run:
 
 ```

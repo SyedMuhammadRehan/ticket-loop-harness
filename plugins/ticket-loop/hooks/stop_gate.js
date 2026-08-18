@@ -7,20 +7,20 @@
 // without running a single test.
 //
 // Driven by the per-repo profile (.agents/ticket-loop.config.json -> hooks.stopGate);
-// with no config (or no stopGate block) it is inert. Example block (Flutter):
+// with no config (or no stopGate block) it is inert. Example block (TypeScript):
 //   "hooks": {
 //     "stopGate": {
-//       "extensions": [".dart"],
-//       "exclude": "\\.(g|freezed|tailor|gr|config|gen)\\.dart$",
+//       "extensions": [".ts", ".tsx"],
+//       "exclude": "\\.(gen|generated|d)\\.ts$",
 //       "mode": "targeted",                          // "targeted" | "full"
 //       "worktrees": "all",                          // "all" | "ticket" | "cwd"
 //       "baseRef": "main",                           // branch point for committed changes
 //       "branchPrefixes": ["refs/heads/ticket/"],    // only used by worktrees:"ticket"
 //       "requireMatchingTest": false,                // targeted: block if a source file has no test
 //       "testDir": "test",                           // targeted mode only
-//       "testSuffix": "_test.dart",                  //   "
-//       "excludeTests": ["test/golden/", "_golden_test.dart"],
-//       "testCommand": "flutter test {targets} --reporter compact",
+//       "testSuffix": ".test.ts",                    //   "
+//       "excludeTests": ["test/snapshots/", ".snap.test.ts"],
+//       "testCommand": "npx vitest run {targets}",
 //       "flakeSignatures": ["PathExistsException", "errno = 183"],
 //       "failureMarkers": ["Some tests failed", "Expected:", "Actual:"],
 //       "timeoutMs": 240000                          // floored at 30s; a timeout BLOCKS

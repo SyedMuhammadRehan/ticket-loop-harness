@@ -37,7 +37,7 @@ function loadConfig(startDir) {
   }
 }
 
-// Expand a command template ("dart analyze {file}") into argv. Placeholders must be
+// Expand a command template ("npx eslint {file}") into argv. Placeholders must be
 // whole whitespace-separated tokens; an array value expands to multiple argv entries.
 // Templates are repo-owned config (trusted); substitutions may be tool input (not).
 function buildArgv(template, subs) {
@@ -54,7 +54,7 @@ function buildArgv(template, subs) {
   return out;
 }
 
-// Spawn argv without a shell. On Windows, .bat/.cmd launchers (flutter, dart) throw
+// Spawn argv without a shell. On Windows, .bat/.cmd launchers (npx, flutter, gradlew) throw
 // EINVAL on shell-less spawns, so retry via shell with pre-quoted args — but ONLY when
 // no arg carries cmd.exe metacharacters (substituted args can be tool input).
 function runArgv(argv, opts = {}) {
