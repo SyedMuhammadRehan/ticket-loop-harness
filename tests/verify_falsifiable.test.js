@@ -232,8 +232,6 @@ test('an inline program is still reported for the interpreters that have one', (
   }
 });
 
-// An env read that happens to sit above an exit(0) is not a guard on it, and this warning
-// states what it found as fact.
 test('an env reference that does not guard the exit is left alone', () => {
   const repo = mkRepoWithSuite('node tests/run.js', {
     entrypoint:
@@ -289,4 +287,85 @@ test('an entrypoint resolving outside the repo is not treated as the entrypoint'
 test('INVARIANTS.md carries a row for this mechanism', () => {
   const table = fs.readFileSync(path.join(REPO_ROOT, 'INVARIANTS.md'), 'utf8');
   assert.ok(/^\|.*`load_config\.js` → `verifyTestWarnings`.*$/m.test(table), 'no INVARIANTS row cites verifyTestWarnings');
+});
+
+// --- filter values are shell tokens, not bare strings -----------------------------------
+
+test('a quoted filter that does match is left alone, in both quoting forms', () => {
+  for (const command of [
+    'node --test --test-name-pattern "adds" tests/',
+    'node --test --test-name-pattern="adds" tests/',
+  ]) {
+    const repo = mkRepoWithSuite(command);
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// -k takes a boolean expression, so matching it against test names would report the parse
+// rather than the suite.
+test('a selection expression is left alone rather than matched as a name', () => {
+  for (const command of [
+    'pytest -q -k "not slow"',
+    'pytest tests -k "smoke and not slow"',
+    "go test ./... -run 'TestAlpha|TestBeta'",
+  ]) {
+    const repo = mkRepoWithSuite(command, { testNames: ['TestAlpha', 'TestBeta', 'smoke path'] });
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// --- an inline program that runs the real suite can still go red ------------------------
+
+test('a shell wrapper around the real suite is left alone', () => {
+  for (const command of [
+    'sh -c "node tests/run.js"',
+    'bash -c "npm test"',
+    'python -c "import pytest; pytest.main()"',
+    'ruby -e "require \'./spec\'"',
+  ]) {
+    const repo = mkRepoWithSuite(command);
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// --- a bound that cut the walk short cannot tell "no match" from "never looked" ----------
+
+test('a filter is not reported when the tree is deeper than the scan bound', () => {
+  const repo = mkFakeRepo({ verify: { test: 'node tests/run.js --test-name-pattern=no-such-test' } });
+  try {
+    const deep = path.join(repo, 'tests', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
+    fs.mkdirSync(deep, { recursive: true });
+    fs.writeFileSync(path.join(repo, 'tests', 'run.js'), 'runSuite();\n');
+    fs.writeFileSync(path.join(deep, 'deep.test.js'), "test('buried case', () => {});");
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('a filter is not reported when the file budget ran out before the tree did', () => {
+  const repo = mkFakeRepo({ verify: { test: 'node tests/run.js --test-name-pattern=no-such-test' } });
+  try {
+    const dir = path.join(repo, 'tests');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'run.js'), 'runSuite();\n');
+    for (let i = 0; i < 205; i++) {
+      fs.writeFileSync(path.join(dir, `case${i}.test.js`), `test('case ${i}', () => {});`);
+    }
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
 });

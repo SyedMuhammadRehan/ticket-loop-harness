@@ -131,6 +131,8 @@ const ENTRYPOINT_READ_LIMIT = 256 * 1024;
 const TEST_FILE_SCAN_LIMIT = 200;
 const MAX_SCAN_DEPTH = 6;
 const FILTER_FLAGS = ['--test-name-pattern', '--grep', '--filter', '--name', '-k', '-run'];
+const SELECTION_EXPRESSION = /\s|\b(?:and|or|not)\b/;
+const CONSTANT_SUCCESS = /^\s*(?:true|:|pass|exit\s+0|(?:process|sys|os)\.exit\s*\(\s*0\s*\)|exit\s*\(\s*0\s*\))\s*;?\s*$/;
 const TEST_NAME_FORMS = [
   /\b(?:test|it)\s*\(\s*['"`]([^'"`]+)/g,
   /^[ \t]*def[ \t]+(test_\w+)/gm,
@@ -150,15 +152,26 @@ function readCapped(file) {
   return fs.readFileSync(file, 'utf8');
 }
 
+// Quote-aware: splitting on whitespace turns `-k "not slow"` into the token `"not`, and a
+// rule that then reports "matches no test" is reporting its own parse.
 function tokenize(cmd) {
-  return cmd.split(/\s+/).filter(Boolean);
+  const tokens = [];
+  const token = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m;
+  while ((m = token.exec(cmd))) {
+    tokens.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+  }
+  return tokens;
+}
+
+function stripQuotes(value) {
+  return value.replace(/^["']|["']$/g, '');
 }
 
 // The first token naming a file that actually exists under the repo: the script whose exit
 // code the command reports.
 function entrypointOf(tokens, root) {
-  for (const tok of tokens.slice(1)) {
-    const bare = tok.replace(/^['"]|['"]$/g, '');
+  for (const bare of tokens.slice(1)) {
     if (!bare || bare.startsWith('-') || !/\.\w+$/.test(bare)) continue;
     const abs = path.resolve(root, bare);
     const inside = path.relative(root, abs);
@@ -174,35 +187,43 @@ function filterOf(tokens) {
     const tok = tokens[i];
     for (const flag of FILTER_FLAGS) {
       if (tok === flag && tokens[i + 1] && !tokens[i + 1].startsWith('-')) {
-        return { flag, value: tokens[i + 1] };
+        return { flag, value: stripQuotes(tokens[i + 1]) };
       }
-      if (tok.startsWith(`${flag}=`)) return { flag, value: tok.slice(flag.length + 1) };
+      if (tok.startsWith(`${flag}=`)) return { flag, value: stripQuotes(tok.slice(flag.length + 1)) };
     }
   }
   return null;
 }
 
-function collectTestNames(dir, names, budget, depth = 0) {
-  let scanned = budget;
-  if (depth > MAX_SCAN_DEPTH) return scanned;
+// Bounded, and it records when a bound cut the walk short: a partial name set cannot tell a
+// filter that matches nothing from one whose test was never reached.
+function collectTestNames(dir, names, scan, depth = 0) {
+  if (depth > MAX_SCAN_DEPTH) {
+    scan.truncated = true;
+    return;
+  }
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return scanned;
+    return;
   }
   for (const entry of entries) {
-    if (scanned <= 0) break;
+    if (scan.budget <= 0) {
+      scan.truncated = true;
+      return;
+    }
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-      // Directories count against the same budget as files: bounding only the files read
-      // still lets a wide tree cost a full walk on every profile load.
-      scanned = collectTestNames(full, names, scanned - 1, depth + 1);
+      // Directories spend the budget too; bounding only the files read still lets a wide
+      // tree cost a full walk on every profile load.
+      scan.budget--;
+      collectTestNames(full, names, scan, depth + 1);
       continue;
     }
     if (!/[._](test|spec)\.\w+$|^test_\w+\.\w+$/i.test(entry.name)) continue;
-    scanned--;
+    scan.budget--;
     let src;
     try {
       src = readCapped(full);
@@ -216,7 +237,6 @@ function collectTestNames(dir, names, budget, depth = 0) {
       while ((m = form.exec(src))) names.add(m[1]);
     }
   }
-  return scanned;
 }
 
 function matchesSomeTest(pattern, names) {
@@ -239,10 +259,7 @@ function unsetGuardOf(src) {
   ZERO_EXIT.lastIndex = 0;
   let exitMatch;
   while ((exitMatch = ZERO_EXIT.exec(src))) {
-    // Only the statement the exit sits in can be its guard. A reference merely NEARBY —
-    // `const level = process.env.LOG_LEVEL || 'info'` a line above an ordinary
-    // `if (failures === 0) exit(0)` — reads as a guard and is not one, and this warning
-    // states what it found as fact.
+    // Only the statement the exit sits in can be its guard.
     const from = Math.max(0, exitMatch.index - GUARD_WINDOW);
     const preceding = src.slice(from, exitMatch.index);
     const window = preceding.slice(Math.max(...[';', '{', '}'].map((c) => preceding.lastIndexOf(c) + 1)));
@@ -294,10 +311,16 @@ function inlineProgram(tokens) {
   const binary = path.basename(tokens[0] || '').replace(/\.exe$/i, '');
   const flags = INLINE_EVAL_FLAGS[binary];
   if (!flags) return null;
-  for (const tok of tokens.slice(1)) {
-    if (flags.includes(tok)) {
-      return `it runs an inline program given with ${tok}, not the repo's tests — nothing in the repo can turn it red`;
-    }
+  for (let i = 1; i < tokens.length; i++) {
+    if (!flags.includes(tokens[i])) continue;
+    const body = stripQuotes(tokens[i + 1] || '');
+    // A shell wrapper around the real suite — `sh -c "node tests/run.js"` — is an inline
+    // program that CAN go red. Only a body with no failure path cannot.
+    if (!CONSTANT_SUCCESS.test(body)) return null;
+    return (
+      `the inline program given with ${tokens[i]} is "${body}", which always succeeds — ` +
+      `the repo's tests never run, so nothing in the repo can turn it red`
+    );
   }
   return null;
 }
@@ -323,11 +346,14 @@ function verifyTestWarnings(cfg, root) {
 
 function emptyFilter(tokens, entrypoint, root) {
   const filter = filterOf(tokens);
-  if (!filter) return null;
+  // `-k "not slow"` is a boolean expression, not a name to look for. Matching it against
+  // test names would report the parse rather than the suite.
+  if (!filter || SELECTION_EXPRESSION.test(filter.value)) return null;
   const names = new Set();
+  const scan = { budget: TEST_FILE_SCAN_LIMIT, truncated: false };
   const searchDir = entrypoint ? path.dirname(entrypoint.abs) : root;
-  collectTestNames(searchDir, names, TEST_FILE_SCAN_LIMIT);
-  if (names.size === 0 || matchesSomeTest(filter.value, names)) return null;
+  collectTestNames(searchDir, names, scan);
+  if (scan.truncated || names.size === 0 || matchesSomeTest(filter.value, names)) return null;
   return (
     `${filter.flag} selects "${filter.value}", which matches no test declared under ` +
     `${path.relative(root, searchDir) || '.'} — the command runs an empty suite and exits 0`
