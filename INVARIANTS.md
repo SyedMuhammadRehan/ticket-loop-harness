@@ -110,6 +110,7 @@ review were interactions between two rows below, which the code alone did not ma
 | # | Invariant | Enforced by | Killed by | Why it exists |
 |---|---|---|---|---|
 | 30 | A missing stopGate block is reported at Stage 0 | `load_config.js` → `stopGateWarnings` | `load_config.test.js` :: `missing hooks.stopGate is a preflight warning naming the wedge` | Mid-run it is unfixable: the gate blocks and the profile is frozen |
+| 48 | A verify.test that cannot report a failure is reported at Stage 0 | `load_config.js` → `verifyTestWarnings` | `verify_falsifiable.test.js` :: `a trailing ; exit 0 is reported as unfalsifiable` | The stop gate's verdict IS this command's exit code, so one that cannot go red certifies every turn-end while proving nothing |
 
 ## Not invariants — judgement, and named as such
 

@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { SCRIPTS_DIR, mkFakeRepo, rmDir, runScript } = require('./helpers.js');
+const { REPO_ROOT, SCRIPTS_DIR, mkFakeRepo, rmDir, runScript } = require('./helpers.js');
 
 const SCRIPT = path.join(SCRIPTS_DIR, 'load_config.js');
 const MARKER = 'cannot report a failure';
@@ -125,5 +125,77 @@ test('a && tail that depends on the suite passing is left alone', () => {
     assert.deepStrictEqual(warningsFor(repo), []);
   } finally {
     rmDir(repo);
+  }
+});
+
+// --- no false positives ----------------------------------------------------------------
+
+// The warning is only worth anything if a reader believes it, so the profiles already in this
+// repo and its own suite have to stay silent.
+test("this repo's own profile is not reported", () => {
+  const res = runScript(SCRIPT, [], { cwd: REPO_ROOT });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const cfg = JSON.parse(res.stdout);
+  assert.strictEqual(cfg.verify.test, 'node tests/run.js');
+  assert.deepStrictEqual(cfg._meta.warnings.filter((w) => w.includes(MARKER)), []);
+});
+
+test('the profiles used by the existing load_config tests are not reported', () => {
+  for (const command of ['pytest -q', 'go test ./...', 'x']) {
+    const repo = mkFakeRepo({ verify: { test: command } });
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// --- advisory, and unable to break preflight -------------------------------------------
+
+test('an unfalsifiable profile still resolves completely and exits 0', () => {
+  for (const command of [
+    'node tests/run.js || true',
+    'node tests/run.js ; exit 0',
+    'node -e "process.exit(0)"',
+    'node tests/run.js --test-name-pattern=no-such-test-exists',
+  ]) {
+    const repo = mkRepoWithSuite(command);
+    try {
+      const res = runScript(SCRIPT, [], { cwd: repo });
+      assert.strictEqual(res.status, 0, res.stderr);
+      const cfg = JSON.parse(res.stdout);
+      assert.strictEqual(cfg.verify.test, command);
+      assert.strictEqual(cfg._meta.configFound, true);
+      assert.ok(Array.isArray(cfg.riskPaths));
+      assert.ok(cfg._meta.warnings.some((w) => w.includes(MARKER)), command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+test('an entrypoint that cannot be read yields no warning and no crash', () => {
+  const cases = {
+    missing: (repo) => fs.mkdirSync(path.join(repo, 'tests'), { recursive: true }),
+    directory: (repo) => fs.mkdirSync(path.join(repo, 'tests', 'run.js'), { recursive: true }),
+    oversized: (repo) => {
+      fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+      fs.writeFileSync(
+        path.join(repo, 'tests', 'run.js'),
+        `if (!process.env.NOT_SET_ANYWHERE) process.exit(0);\n${'a'.repeat(300 * 1024)}`
+      );
+    },
+  };
+  for (const [label, build] of Object.entries(cases)) {
+    const repo = mkFakeRepo({ verify: { test: 'node tests/run.js' } });
+    try {
+      build(repo);
+      const res = runScript(SCRIPT, [], { cwd: repo });
+      assert.strictEqual(res.status, 0, `${label}: ${res.stderr}`);
+      assert.deepStrictEqual(JSON.parse(res.stdout)._meta.warnings.filter((w) => w.includes(MARKER)), [], label);
+    } finally {
+      rmDir(repo);
+    }
   }
 });
