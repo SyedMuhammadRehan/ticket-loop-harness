@@ -42,15 +42,15 @@ receipt for it.
 
 **Profile (stack-agnostic — load FIRST, it is AUTHORITATIVE):** at Stage 0 run
 `node <SKILL_DIR>/scripts/load_config.js` to resolve the repo profile.
-Wherever a later stage names a concrete command (`dart analyze`, `flutter test`,
-`flutter pub get`, `build_runner`), a design source (Figma), or a risk path, USE THE
-RESOLVED CONFIG VALUE INSTEAD — the Flutter/Figma mentions below are this repo's default
-profile, not hardcoded requirements. Specifically: `verify.analyze`/`verify.test`/
+Later stages name config KEYS (`{verify.test}`, `{verify.analyze}`), never concrete
+commands. Substitute the resolved value; the playbook is stack-agnostic and any tool name you
+see is in a config example, not a requirement. Specifically: `verify.analyze`/`verify.test`/
 `verify.pubGet`/`verify.codegen` drive Stage 5 + worktree setup; `designSource`
 (none|figma|openapi) drives Stage 2; `riskPaths` drive GATE A/C; `worktreePrefix` drives
 the worktree dir. If the resolver reports `configFound:false` or a null `verify.test`,
-treat it like a spec§13 degradation: STOP and ask the user for the missing commands / scope
-rather than assuming Flutter.
+treat it like a spec§13 degradation: STOP and ask the user for the missing commands / scope.
+Never infer a stack from the files you see: a guessed verify command that happens to exit 0 is
+indistinguishable from a verified run.
 
 **A `hooks.stopGate` warning in `_meta.warnings` is also a STOP — before the worktree exists.**
 Without a usable block the stop gate refuses every turn-end once the run is active, and
@@ -69,8 +69,8 @@ which is installed, and that a NEW SESSION is the only fix. Do not proceed.
 ## Stage 0 — PREFLIGHT
 
 1. Load the profile (above) with `load_config.js`; record `stack` + resolved verify
-   commands for the report. Then record toolchain (e.g. `flutter --version` for
-   `stack:flutter`; the equivalent for the resolved stack); save first line for the report.
+   commands for the report. Then record the toolchain version for the resolved `stack`
+   (whatever `--version` invocation that stack uses); save its first line for the report.
    **Load cross-run memory** (if `memoryFile` is set):
    `node <SKILL_DIR>/scripts/memory.js read <memoryFile>`. Treat its
    `## Lessons` as high-trust and `## Pending` as hints. Carry known-flaky tests into the
@@ -108,11 +108,9 @@ which is installed, and that a NEW SESSION is the only fix. Do not proceed.
    - `git worktree add ../ticket-<TICKET> -b ticket/<TICKET>`
    - Record the base SHA: `git -C ../ticket-<TICKET> rev-parse HEAD` → `base:` in
      the ledger header below; stage 5.5 diffs against it.
-   - Inside the worktree: run `{verify.pubGet}` then `{verify.codegen}` from the profile
-     (this repo: `flutter pub get`, then `dart run build_runner build
-     --delete-conflicting-outputs` — REQUIRED because it gitignores `*.g.dart`/
-     `*.freezed.dart`, so a fresh worktree does not compile until codegen runs). Skip a
-     step whose config value is null.
+   - Inside the worktree: run `{verify.pubGet}` then `{verify.codegen}` from the profile.
+     Skip a step whose config value is null. Where a stack gitignores generated sources, a
+     fresh worktree does not compile until codegen has run.
    - If any of these fail → STOP (spec §13); never fall back to the user's tree.
      ALL implementation happens inside the worktree. The run dir stays in the MAIN repo
      (it is gitignored).
@@ -172,7 +170,7 @@ which is installed, and that a NEW SESSION is the only fix. Do not proceed.
 2. Write `ticket-brief.md`: AC list (numbered, verbatim), design links, mentioned
    screens/routes, and a RISK SCAN — list any risk-tier areas the ticket text implies.
    Risk-tier paths come from the profile's `riskPaths` (example (from config `riskPaths`): auth `<auth-dirs>`;
-   API DTOs `<api-contract-dirs>`; `pubspec.yaml`), PLUS the always-on rule of
+   API DTOs `<api-contract-dirs>`; the dependency manifest), PLUS the always-on rule of
    deleting/weakening existing tests.
 3. **GATE A (hard stop — ask the human) if any of:**
    - no acceptance criteria AND no Figma link;
@@ -257,7 +255,7 @@ subagent three failed dispatches from now. Proportional, same rule as the Survey
    - <A|B>: <why it wins — and why the loser loses; this line is what saves the re-litigation later> | reuses: <the existing code this builds on>
    (`reuses:` is REQUIRED and validated. Answer the implementer's rung 2 — "is it already in
    this codebase?" — here, where it costs a clause, not at implementation time where it costs
-   the diff. Name the module, widget or helper you found in codebase-map.md. `reuses: none
+   the diff. Name the module, component or helper you found in codebase-map.md. `reuses: none
    (<what you searched for and why nothing applies>)` is a legitimate answer for a greenfield
    area; a thin reason is refused, exactly as an out-of-scope failure mode is.)
    ## Failure modes
@@ -308,8 +306,8 @@ subagent three failed dispatches from now. Proportional, same rule as the Survey
    - <explicit exclusions>
    ```
 
-   Fill `{verify.test}`/`{verify.analyze}` with the profile's resolved commands (this repo:
-   `flutter test --exclude-tags golden`, `dart analyze`). Drop the token/runtime criteria when `designSource ==
+   Fill `{verify.test}`/`{verify.analyze}` with the profile's resolved commands. Drop the
+   token/runtime criteria when `designSource ==
    none` (no visual contract to check). Criterion kinds: test | analyzer | runtime | token
    | manual. Every criterion must be checkable by the named command. Token values come from
    design-spec.md only.
@@ -368,7 +366,7 @@ Judgement call, and `ledger.js cost` reports lines-per-dispatch afterwards so a 
 tiny dispatches is visible.
 
 **Fill the prompt templates with EXCERPTS, never whole files.** `{CODEBASE_MAP}`,
-`{APPROACH}` and `{DESIGN_EXCERPT}` mean the lines that bear on THIS slice — the widgets it
+`{APPROACH}` and `{DESIGN_EXCERPT}` mean the lines that bear on THIS slice — the components it
 reuses, the chosen shape, the tokens it binds. Pasting the whole survey re-buys it on every
 dispatch. The templates are ordered so their stable text caches and your fills come last:
 fill the sections where they are, do not reorder them, and do not prepend a preamble of your
@@ -397,7 +395,7 @@ the repo config's decision — never downgrade (or upgrade) a dispatch on your o
 
 **GATE C — continuous path-guard:** if any planned or in-progress edit touches a
 risk-tier path (the profile's `riskPaths` — example (from config `riskPaths`): auth `<auth-dirs>`; API DTOs
-`<api-contract-dirs>`; `pubspec.yaml` — PLUS the always-on rule of deleting/weakening
+`<api-contract-dirs>`; the dependency manifest — PLUS the always-on rule of deleting/weakening
 an existing test) that was NOT cleared at GATE A → STOP the run and ask the human before
 that edit happens.
 For `riskPaths` the hook enforces this: an uncleared edit is denied and the subagent gets
@@ -437,13 +435,15 @@ because a command exists; reach for it when you ran that command and read its ex
 Mirror each result into the ledger.md Check-history table for readability. The sealed check
 history is what substantiates a FLAKY_VERIFIER call: an alternating pass/fail record has to be
 visible in `ledger.js status`, so that classification is evidence-backed rather than asserted.
-Use the profile's resolved commands (this repo shown in parentheses):
-1. `{verify.analyze}` (`dart analyze`) → zero errors required (new warnings vs the branch
-   point: note for QA).
-2. `{verify.test}` (`flutter test --exclude-tags golden`) → full suite green. STACK NOTE
-   (flutter only): golden tests NEVER run here (baselines are not in git; spec §11) — the
-   `--exclude-tags golden` in the config handles this, and the report marks goldens
-   `SKIPPED (local-only convention)`. Stacks with no golden concept: ignore this note.
+Use the profile's resolved commands:
+1. `{verify.analyze}` → zero errors required (new warnings vs the branch point: note for QA).
+   Skip when the profile sets it null: a stack with no separate analyzer has nothing to run.
+2. `{verify.test}` → full suite green.
+   **Snapshot/baseline tests** (goldens, screenshot diffs, approval tests): where a stack has
+   them and the repo keeps their baselines out of git, `verify.test` is configured to exclude
+   them, and the report marks them `SKIPPED (local-only convention)`. Excluded means NOT
+   verified: it belongs under "what was not verified", never inside COMPLETE. Stacks with no
+   such concept: nothing to do here.
 3. Token criteria (only when `designSource != none`): run their named test files.
 4. Runtime criteria (skip if LOGIC-ONLY or Playwright down → SKIPPED-with-reason):
    launch the app per the repo /run conventions, then per criterion: navigate to the
@@ -462,7 +462,7 @@ On ANY failed check, classify and route:
 
 | class | trigger | route |
 |---|---|---|
-| BUILD | analyzer errors / compile fail | dispatch the profile's `buildResolverAgent` (this repo: `dart-build-resolver`; if null, use a general-purpose build-fix agent) with the full error output |
+| BUILD | analyzer errors / compile fail | dispatch the profile's `buildResolverAgent`; if null, use a general-purpose build-fix agent with the full error output |
 | TEST | test assertion failures | dispatch implementer with full failure output + ledger |
 | TOKEN | token test mismatch | dispatch fixer with `prompts/fixer_ui.md` (expected vs actual) |
 | RUNTIME | console errors / overflow / missing element | retry ONCE first (flake rule); then systematic-debugging via implementer prompt + evidence |
@@ -495,7 +495,7 @@ Ledger entry after every attempt (append under `## Attempts`):
   `node <SKILL_DIR>/scripts/ledger.js replan .agents/ticket-runs/<TICKET>` — exit 2 is
   the CIRCUIT BREAKER (re-plan budget exhausted): do NOT re-plan; go to Stage 7 with
   status INCOMPLETE. Otherwise write a materially different approach for that slice
-  (different widget structure / different state placement / different data flow — not a
+  (different code structure / different state placement / different data flow — not a
   parameter tweak) and continue. If approach.md exists, record the change there under
   `## Revisions` (`- R<n>: <what changed> — because <what reality proved wrong>`), then
   `ledger.js revise <runDir> <runDir>/approach.md --reason "re-plan R<n>: <what changed>"`
