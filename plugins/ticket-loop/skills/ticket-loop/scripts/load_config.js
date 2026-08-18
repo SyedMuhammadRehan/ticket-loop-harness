@@ -120,6 +120,174 @@ function stopGateWarnings(cfg) {
   return warnings;
 }
 
+// --- verify.test falsifiability -------------------------------------------------------
+
+// The stop gate's verdict is exactly this command's exit code, so a command that cannot exit
+// non-zero certifies every turn-end while proving nothing. Detection inspects; it never runs
+// the configured command, because that would make every profile load execute repo-supplied
+// shell. Inspection is therefore a heuristic, and every rule here stays silent when it cannot
+// tell — a warning nobody believes is worse than no warning.
+const ENTRYPOINT_READ_LIMIT = 256 * 1024;
+const TEST_FILE_SCAN_LIMIT = 200;
+const FILTER_FLAGS = ['--test-name-pattern', '--grep', '--filter', '--name', '-k', '-run'];
+const TEST_NAME_FORMS = [
+  /\b(?:test|it)\s*\(\s*['"`]([^'"`]+)/g,
+  /^[ \t]*def[ \t]+(test_\w+)/gm,
+  /^[ \t]*func[ \t]+(Test\w+)/gm,
+];
+const ENV_REF_FORMS = [
+  /process\.env(?:\.(\w+)|\[\s*['"](\w+)['"]\s*\])/g,
+  /os\.environ(?:\.get\(\s*['"](\w+)['"]|\[\s*['"](\w+)['"]\s*\])/g,
+];
+const ZERO_EXIT = /(?:process|sys|os)\.exit\s*\(\s*0\s*\)/g;
+// How far back from an exit(0) an env reference still plausibly guards it.
+const GUARD_WINDOW = 200;
+
+function readCapped(file) {
+  const stat = fs.statSync(file);
+  if (!stat.isFile() || stat.size > ENTRYPOINT_READ_LIMIT) return null;
+  return fs.readFileSync(file, 'utf8');
+}
+
+function tokenize(cmd) {
+  return cmd.split(/\s+/).filter(Boolean);
+}
+
+// The first token naming a file that actually exists under the repo: the script whose exit
+// code the command reports.
+function entrypointOf(tokens, root) {
+  for (const tok of tokens.slice(1)) {
+    const bare = tok.replace(/^['"]|['"]$/g, '');
+    if (!bare || bare.startsWith('-') || !/\.\w+$/.test(bare)) continue;
+    const abs = path.resolve(root, bare);
+    if (abs.startsWith(root) && fs.existsSync(abs)) return { rel: bare, abs };
+  }
+  return null;
+}
+
+function filterOf(tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    for (const flag of FILTER_FLAGS) {
+      if (tok === flag && tokens[i + 1] && !tokens[i + 1].startsWith('-')) {
+        return { flag, value: tokens[i + 1] };
+      }
+      if (tok.startsWith(`${flag}=`)) return { flag, value: tok.slice(flag.length + 1) };
+    }
+  }
+  return null;
+}
+
+function collectTestNames(dir, names, budget) {
+  let scanned = budget;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return scanned;
+  }
+  for (const entry of entries) {
+    if (scanned <= 0) break;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      scanned = collectTestNames(full, names, scanned);
+      continue;
+    }
+    if (!/[._](test|spec)\.\w+$|^test_\w+\.\w+$/i.test(entry.name)) continue;
+    scanned--;
+    let src;
+    try {
+      src = readCapped(full);
+    } catch {
+      continue;
+    }
+    if (!src) continue;
+    for (const form of TEST_NAME_FORMS) {
+      form.lastIndex = 0;
+      let m;
+      while ((m = form.exec(src))) names.add(m[1]);
+    }
+  }
+  return scanned;
+}
+
+function matchesSomeTest(pattern, names) {
+  let re = null;
+  try {
+    re = new RegExp(pattern);
+  } catch {
+    // An unparsable pattern is still a literal the runner may match on.
+  }
+  for (const name of names) {
+    if (name.includes(pattern) || (re && re.test(name))) return true;
+  }
+  return false;
+}
+
+// An env var read just before an exit(0) is the classic self-disabling suite: green in CI
+// where it is set, green-and-empty everywhere else. Only the environment preflight can
+// actually observe decides it.
+function unsetGuardOf(src) {
+  ZERO_EXIT.lastIndex = 0;
+  let exitMatch;
+  while ((exitMatch = ZERO_EXIT.exec(src))) {
+    const window = src.slice(Math.max(0, exitMatch.index - GUARD_WINDOW), exitMatch.index);
+    let nearest = null;
+    for (const form of ENV_REF_FORMS) {
+      form.lastIndex = 0;
+      let m;
+      while ((m = form.exec(window))) nearest = m[1] || m[2];
+    }
+    if (nearest && process.env[nearest] === undefined) return nearest;
+  }
+  return null;
+}
+
+function verifyTestWarnings(cfg, root) {
+  const cmd = cfg.verify && cfg.verify.test;
+  if (typeof cmd !== 'string' || !cmd.trim()) return [];
+  const unfalsifiable = (why) => `verify.test "${cmd}" cannot report a failure — ${why}`;
+  const warnings = [];
+  try {
+    const tokens = tokenize(cmd);
+    const entrypoint = entrypointOf(tokens, root);
+
+    const filter = filterOf(tokens);
+    if (filter) {
+      const names = new Set();
+      const searchDir = entrypoint ? path.dirname(entrypoint.abs) : root;
+      collectTestNames(searchDir, names, TEST_FILE_SCAN_LIMIT);
+      if (names.size > 0 && !matchesSomeTest(filter.value, names)) {
+        warnings.push(
+          unfalsifiable(
+            `${filter.flag} selects "${filter.value}", which matches no test declared under ` +
+              `${path.relative(root, searchDir) || '.'} — the command runs an empty suite and exits 0`
+          )
+        );
+      }
+    }
+
+    if (entrypoint) {
+      const src = readCapped(entrypoint.abs);
+      const guard = src && unsetGuardOf(src);
+      if (guard) {
+        warnings.push(
+          unfalsifiable(
+            `${entrypoint.rel} exits 0 early when $${guard} is unset, and $${guard} is unset ` +
+              `now — the command reports success without running the suite`
+          )
+        );
+      }
+    }
+  } catch {
+    // Preflight resolves the profile for every hook; a detector that throws would take all of
+    // them down over an advisory warning.
+    return warnings;
+  }
+  return warnings;
+}
+
 function findRepoRoot(start) {
   let dir = start;
   for (let i = 0; i < 8; i++) {
@@ -202,6 +370,7 @@ function resolve() {
     }
   }
   warnings.push(...stopGateWarnings(cfg));
+  warnings.push(...verifyTestWarnings(cfg, root));
   const skew = pluginVersionSkew();
   if (skew && skew.newest) {
     warnings.push(
