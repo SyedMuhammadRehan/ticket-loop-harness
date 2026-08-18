@@ -286,7 +286,10 @@ test('an entrypoint resolving outside the repo is not treated as the entrypoint'
 // invariants.test.js stays green without it.
 test('INVARIANTS.md carries a row for this mechanism', () => {
   const table = fs.readFileSync(path.join(REPO_ROOT, 'INVARIANTS.md'), 'utf8');
-  assert.ok(/^\|.*`load_config\.js` → `verifyTestWarnings`.*$/m.test(table), 'no INVARIANTS row cites verifyTestWarnings');
+  assert.ok(
+    /^\|.*`verify_falsifiable\.js` → `verifyTestWarnings`.*$/m.test(table),
+    'no INVARIANTS row cites verifyTestWarnings'
+  );
 });
 
 // --- filter values are shell tokens, not bare strings -----------------------------------
@@ -364,6 +367,111 @@ test('a filter is not reported when the file budget ran out before the tree did'
     for (let i = 0; i < 205; i++) {
       fs.writeFileSync(path.join(dir, `case${i}.test.js`), `test('case ${i}', () => {});`);
     }
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// --- AC 2e, written the ways people actually write it -----------------------------------
+
+test('an env-guarded exit(0) is reported however the guard is spelled', () => {
+  const spellings = {
+    braceless: 'if (!process.env.RUN_TESTS) process.exit(0);\nrunSuite();\n',
+    'braced one-line': 'if (!process.env.RUN_TESTS) { process.exit(0); }\nrunSuite();\n',
+    'braced block': 'if (!process.env.RUN_TESTS) {\n  process.exit(0);\n}\nrunSuite();\n',
+    'guard variable': 'const enabled = process.env.RUN_TESTS;\nif (!enabled) {\n  process.exit(0);\n}\nrunSuite();\n',
+    'no semicolons': 'if (!process.env.RUN_TESTS)\n  process.exit(0)\n\nrunSuite()\n',
+  };
+  for (const [label, entrypoint] of Object.entries(spellings)) {
+    const repo = mkRepoWithSuite('node tests/run.js', { entrypoint });
+    try {
+      const found = warningsFor(repo);
+      assert.strictEqual(found.length, 1, `${label}: ${JSON.stringify(found)}`);
+      assert.ok(found[0].includes('RUN_TESTS'), `${label}: ${found[0]}`);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// One path that can end non-zero is enough to make the file falsifiable, whatever its
+// environment reads look like.
+test('an entrypoint with any non-zero exit path is left alone', () => {
+  const entrypoints = {
+    'python summary line':
+      'import os, sys\n' +
+      'res = run()\n' +
+      'if res.failed:\n    sys.exit(1)\n' +
+      'print(os.environ.get("SUMMARY_PATH", "-"))\n' +
+      'sys.exit(0)\n',
+    'semicolon-free js':
+      'const level = process.env.LOG_LEVEL || "info"\n' +
+      'const res = runSuite(level)\n' +
+      'if (res.failures) process.exit(1)\n' +
+      'process.exit(0)\n',
+    throws: 'if (!process.env.RUN_TESTS) process.exit(0);\nif (failed) throw new Error("red");\n',
+    'exit code assigned': 'if (!process.env.RUN_TESTS) process.exit(0);\nprocess.exitCode = failures;\n',
+  };
+  for (const [label, entrypoint] of Object.entries(entrypoints)) {
+    const repo = mkRepoWithSuite('node tests/run.js', { entrypoint });
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], label);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// An env read that merely sits near an exit(0) is not a guard on it.
+test('an env read outside the exit conditional is left alone', () => {
+  const repo = mkRepoWithSuite('node tests/run.js', {
+    entrypoint:
+      'const level = process.env.LOG_LEVEL || "info";\n' +
+      'const res = runSuite(level);\n' +
+      'if (res.failures === 0) process.exit(0);\n',
+  });
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// --- the filter rule only speaks about the runner whose surface it can reconstruct -------
+
+test('a pattern matching a describe block is left alone', () => {
+  const repo = mkFakeRepo({ verify: { test: 'node --test --test-name-pattern=Widget tests/' } });
+  try {
+    fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'tests', 'ui.test.js'), "describe('Widget', () => { it('renders', () => {}); });");
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('filters belonging to runners whose match surface is not reconstructable are left alone', () => {
+  for (const command of [
+    'pytest -k TestLogin',
+    'pytest -k test_login',
+    'go test ./... -run TestAlpha/sub_case',
+    'mocha --grep nothing-matches-this',
+  ]) {
+    const repo = mkRepoWithSuite(command);
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// Without the per-binary map, -e would match here and the constant-success body would carry
+// the rule the whole way — so this is what makes the map load-bearing.
+test('an eval flag on a binary that has no inline mode is left alone', () => {
+  const repo = mkRepoWithSuite('bundle exec rspec -e pass');
+  try {
     assert.deepStrictEqual(warningsFor(repo), []);
   } finally {
     rmDir(repo);
