@@ -199,3 +199,94 @@ test('an entrypoint that cannot be read yields no warning and no crash', () => {
     }
   }
 });
+
+// --- the near-misses that decide whether silence is trustworthy ------------------------
+
+// -e and -p mean unrelated things to other tools: pytest's plugin flag, Go's parallelism
+// flag, Maven's error flag, RSpec's example filter. Every one of these runs a real suite.
+test('an eval-shaped flag belonging to another tool is left alone', () => {
+  for (const command of [
+    'pytest -p no:cacheprovider',
+    'pytest -q -p no:randomly',
+    'go test ./... -p 4',
+    'mvn -e test',
+    'bundle exec rspec -e login',
+  ]) {
+    const repo = mkRepoWithSuite(command);
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+test('an inline program is still reported for the interpreters that have one', () => {
+  for (const command of ['node -e "process.exit(0)"', 'python -c "pass"', 'bash -c "true"']) {
+    const repo = mkRepoWithSuite(command);
+    try {
+      assert.strictEqual(warningsFor(repo).length, 1, command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// An env read that happens to sit above an exit(0) is not a guard on it, and this warning
+// states what it found as fact.
+test('an env reference that does not guard the exit is left alone', () => {
+  const repo = mkRepoWithSuite('node tests/run.js', {
+    entrypoint:
+      "const level = process.env.LOG_LEVEL || 'info';\n" +
+      'const res = runSuite(level);\n' +
+      'if (res.failures === 0) process.exit(0);\n' +
+      'process.exit(1);\n',
+  });
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('a && exit 0 tail is left alone, because a failing suite never reaches it', () => {
+  const repo = mkRepoWithSuite('node tests/run.js && exit 0');
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// Silence when no test names could be collected is a decision, so it needs a test that fails
+// if the clause is removed.
+test('a filter is not reported when the repo declares no test names at all', () => {
+  const repo = mkFakeRepo({ verify: { test: 'node tests/run.js --test-name-pattern=anything' } });
+  try {
+    fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'tests', 'run.js'), 'runSuite();\n');
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('an entrypoint resolving outside the repo is not treated as the entrypoint', () => {
+  const repo = mkFakeRepo({ verify: { test: 'node ../outside/run.js' } });
+  const outside = path.join(repo, '..', 'outside');
+  try {
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'run.js'), 'if (!process.env.RUN_TESTS) process.exit(0);\n');
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(outside);
+    rmDir(repo);
+  }
+});
+
+// C6 otherwise cannot see row 48 disappear: load_config.js is already cited by row 30, so
+// invariants.test.js stays green without it.
+test('INVARIANTS.md carries a row for this mechanism', () => {
+  const table = fs.readFileSync(path.join(REPO_ROOT, 'INVARIANTS.md'), 'utf8');
+  assert.ok(/^\|.*`load_config\.js` → `verifyTestWarnings`.*$/m.test(table), 'no INVARIANTS row cites verifyTestWarnings');
+});

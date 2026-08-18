@@ -129,6 +129,7 @@ function stopGateWarnings(cfg) {
 // tell — a warning nobody believes is worse than no warning.
 const ENTRYPOINT_READ_LIMIT = 256 * 1024;
 const TEST_FILE_SCAN_LIMIT = 200;
+const MAX_SCAN_DEPTH = 6;
 const FILTER_FLAGS = ['--test-name-pattern', '--grep', '--filter', '--name', '-k', '-run'];
 const TEST_NAME_FORMS = [
   /\b(?:test|it)\s*\(\s*['"`]([^'"`]+)/g,
@@ -160,7 +161,10 @@ function entrypointOf(tokens, root) {
     const bare = tok.replace(/^['"]|['"]$/g, '');
     if (!bare || bare.startsWith('-') || !/\.\w+$/.test(bare)) continue;
     const abs = path.resolve(root, bare);
-    if (abs.startsWith(root) && fs.existsSync(abs)) return { rel: bare, abs };
+    const inside = path.relative(root, abs);
+    if (inside && !inside.startsWith('..') && !path.isAbsolute(inside) && fs.existsSync(abs)) {
+      return { rel: bare, abs };
+    }
   }
   return null;
 }
@@ -178,8 +182,9 @@ function filterOf(tokens) {
   return null;
 }
 
-function collectTestNames(dir, names, budget) {
+function collectTestNames(dir, names, budget, depth = 0) {
   let scanned = budget;
+  if (depth > MAX_SCAN_DEPTH) return scanned;
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -191,7 +196,9 @@ function collectTestNames(dir, names, budget) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-      scanned = collectTestNames(full, names, scanned);
+      // Directories count against the same budget as files: bounding only the files read
+      // still lets a wide tree cost a full walk on every profile load.
+      scanned = collectTestNames(full, names, scanned - 1, depth + 1);
       continue;
     }
     if (!/[._](test|spec)\.\w+$|^test_\w+\.\w+$/i.test(entry.name)) continue;
@@ -232,7 +239,13 @@ function unsetGuardOf(src) {
   ZERO_EXIT.lastIndex = 0;
   let exitMatch;
   while ((exitMatch = ZERO_EXIT.exec(src))) {
-    const window = src.slice(Math.max(0, exitMatch.index - GUARD_WINDOW), exitMatch.index);
+    // Only the statement the exit sits in can be its guard. A reference merely NEARBY —
+    // `const level = process.env.LOG_LEVEL || 'info'` a line above an ordinary
+    // `if (failures === 0) exit(0)` — reads as a guard and is not one, and this warning
+    // states what it found as fact.
+    const from = Math.max(0, exitMatch.index - GUARD_WINDOW);
+    const preceding = src.slice(from, exitMatch.index);
+    const window = preceding.slice(Math.max(...[';', '{', '}'].map((c) => preceding.lastIndexOf(c) + 1)));
     let nearest = null;
     for (const form of ENV_REF_FORMS) {
       form.lastIndex = 0;
@@ -246,8 +259,18 @@ function unsetGuardOf(src) {
 
 // A right-hand side that succeeds no matter what the left-hand side did.
 const ALWAYS_TRUE = /^(?:true|:|exit\s+0|echo\b[^;&|]*)$/;
-const INLINE_EVAL_FLAGS = new Set(['-e', '--eval', '-p', '--print']);
-const INLINE_SHELL_BINARIES = new Set(['sh', 'bash', 'zsh', 'python', 'python3']);
+// Per binary, because the same letters mean unrelated things elsewhere: -p is pytest's
+// plugin flag and Go's parallelism flag, -e is Maven's error flag and RSpec's example filter.
+const INLINE_EVAL_FLAGS = {
+  node: ['-e', '--eval', '-p', '--print'],
+  ruby: ['-e'],
+  perl: ['-e'],
+  python: ['-c'],
+  python3: ['-c'],
+  sh: ['-c'],
+  bash: ['-c'],
+  zsh: ['-c'],
+};
 
 // The exit code the shell finally reports is not the suite's.
 function discardedExitCode(cmd) {
@@ -258,7 +281,8 @@ function discardedExitCode(cmd) {
       return `the "|| ${tail}" tail succeeds whatever the suite did, so the command exits 0 either way`;
     }
   }
-  const last = cmd.split(/[;&]+/).map((s) => s.trim()).filter(Boolean).pop();
+  // `&&` is not a separator here: the suite failing stops the tail from running at all.
+  const last = cmd.split(/;|(?<!&)&(?!&)/).map((s) => s.trim()).filter(Boolean).pop();
   if (last && /^exit\s+0$/.test(last)) {
     return `it ends in an unconditional "${last}", which replaces the suite's exit code with 0`;
   }
@@ -268,8 +292,10 @@ function discardedExitCode(cmd) {
 // A one-liner supplied on the command line is not the repo's suite, whatever it returns.
 function inlineProgram(tokens) {
   const binary = path.basename(tokens[0] || '').replace(/\.exe$/i, '');
+  const flags = INLINE_EVAL_FLAGS[binary];
+  if (!flags) return null;
   for (const tok of tokens.slice(1)) {
-    if (INLINE_EVAL_FLAGS.has(tok) || (tok === '-c' && INLINE_SHELL_BINARIES.has(binary))) {
+    if (flags.includes(tok)) {
       return `it runs an inline program given with ${tok}, not the repo's tests — nothing in the repo can turn it red`;
     }
   }
