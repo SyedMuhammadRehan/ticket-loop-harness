@@ -80,3 +80,50 @@ test('the same entrypoint is not reported when the env var is set at preflight',
     rmDir(repo);
   }
 });
+
+// --- the exit code never reaches the caller -------------------------------------------
+
+test('a || true tail is reported as unfalsifiable', () => {
+  const repo = mkRepoWithSuite('node tests/run.js || true');
+  try {
+    const found = warningsFor(repo);
+    assert.strictEqual(found.length, 1, JSON.stringify(found));
+    assert.ok(found[0].includes('node tests/run.js || true'), found[0]);
+    assert.ok(found[0].includes('|| true'), found[0]);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('a trailing ; exit 0 is reported as unfalsifiable', () => {
+  const repo = mkRepoWithSuite('node tests/run.js ; exit 0');
+  try {
+    const found = warningsFor(repo);
+    assert.strictEqual(found.length, 1, JSON.stringify(found));
+    assert.ok(found[0].includes('node tests/run.js ; exit 0'), found[0]);
+    assert.ok(found[0].includes('exit 0'), found[0]);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('an inline -e program is reported as unfalsifiable', () => {
+  const repo = mkRepoWithSuite('node -e "process.exit(0)"');
+  try {
+    const found = warningsFor(repo);
+    assert.strictEqual(found.length, 1, JSON.stringify(found));
+    assert.ok(found[0].includes('node -e "process.exit(0)"'), found[0]);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// A conditional the suite can still fail out of is not the same as a discarded exit code.
+test('a && tail that depends on the suite passing is left alone', () => {
+  const repo = mkRepoWithSuite('node tests/run.js && echo ok');
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});

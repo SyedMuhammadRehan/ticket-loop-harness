@@ -244,48 +244,79 @@ function unsetGuardOf(src) {
   return null;
 }
 
+// A right-hand side that succeeds no matter what the left-hand side did.
+const ALWAYS_TRUE = /^(?:true|:|exit\s+0|echo\b[^;&|]*)$/;
+const INLINE_EVAL_FLAGS = new Set(['-e', '--eval', '-p', '--print']);
+const INLINE_SHELL_BINARIES = new Set(['sh', 'bash', 'zsh', 'python', 'python3']);
+
+// The exit code the shell finally reports is not the suite's.
+function discardedExitCode(cmd) {
+  const alternatives = cmd.split(/\|\|/).slice(1);
+  for (const alt of alternatives) {
+    const tail = alt.trim().replace(/;+$/, '');
+    if (ALWAYS_TRUE.test(tail)) {
+      return `the "|| ${tail}" tail succeeds whatever the suite did, so the command exits 0 either way`;
+    }
+  }
+  const last = cmd.split(/[;&]+/).map((s) => s.trim()).filter(Boolean).pop();
+  if (last && /^exit\s+0$/.test(last)) {
+    return `it ends in an unconditional "${last}", which replaces the suite's exit code with 0`;
+  }
+  return null;
+}
+
+// A one-liner supplied on the command line is not the repo's suite, whatever it returns.
+function inlineProgram(tokens) {
+  const binary = path.basename(tokens[0] || '').replace(/\.exe$/i, '');
+  for (const tok of tokens.slice(1)) {
+    if (INLINE_EVAL_FLAGS.has(tok) || (tok === '-c' && INLINE_SHELL_BINARIES.has(binary))) {
+      return `it runs an inline program given with ${tok}, not the repo's tests — nothing in the repo can turn it red`;
+    }
+  }
+  return null;
+}
+
 function verifyTestWarnings(cfg, root) {
   const cmd = cfg.verify && cfg.verify.test;
   if (typeof cmd !== 'string' || !cmd.trim()) return [];
-  const unfalsifiable = (why) => `verify.test "${cmd}" cannot report a failure — ${why}`;
-  const warnings = [];
   try {
     const tokens = tokenize(cmd);
     const entrypoint = entrypointOf(tokens, root);
-
-    const filter = filterOf(tokens);
-    if (filter) {
-      const names = new Set();
-      const searchDir = entrypoint ? path.dirname(entrypoint.abs) : root;
-      collectTestNames(searchDir, names, TEST_FILE_SCAN_LIMIT);
-      if (names.size > 0 && !matchesSomeTest(filter.value, names)) {
-        warnings.push(
-          unfalsifiable(
-            `${filter.flag} selects "${filter.value}", which matches no test declared under ` +
-              `${path.relative(root, searchDir) || '.'} — the command runs an empty suite and exits 0`
-          )
-        );
-      }
-    }
-
-    if (entrypoint) {
-      const src = readCapped(entrypoint.abs);
-      const guard = src && unsetGuardOf(src);
-      if (guard) {
-        warnings.push(
-          unfalsifiable(
-            `${entrypoint.rel} exits 0 early when $${guard} is unset, and $${guard} is unset ` +
-              `now — the command reports success without running the suite`
-          )
-        );
-      }
-    }
+    const reason =
+      discardedExitCode(cmd) ||
+      inlineProgram(tokens) ||
+      emptyFilter(tokens, entrypoint, root) ||
+      selfDisablingEntrypoint(entrypoint);
+    return reason ? [`verify.test "${cmd}" cannot report a failure — ${reason}`] : [];
   } catch {
     // Preflight resolves the profile for every hook; a detector that throws would take all of
     // them down over an advisory warning.
-    return warnings;
+    return [];
   }
-  return warnings;
+}
+
+function emptyFilter(tokens, entrypoint, root) {
+  const filter = filterOf(tokens);
+  if (!filter) return null;
+  const names = new Set();
+  const searchDir = entrypoint ? path.dirname(entrypoint.abs) : root;
+  collectTestNames(searchDir, names, TEST_FILE_SCAN_LIMIT);
+  if (names.size === 0 || matchesSomeTest(filter.value, names)) return null;
+  return (
+    `${filter.flag} selects "${filter.value}", which matches no test declared under ` +
+    `${path.relative(root, searchDir) || '.'} — the command runs an empty suite and exits 0`
+  );
+}
+
+function selfDisablingEntrypoint(entrypoint) {
+  if (!entrypoint) return null;
+  const src = readCapped(entrypoint.abs);
+  const guard = src && unsetGuardOf(src);
+  if (!guard) return null;
+  return (
+    `${entrypoint.rel} exits 0 early when $${guard} is unset, and $${guard} is unset now — ` +
+    `the command reports success without running the suite`
+  );
 }
 
 function findRepoRoot(start) {
