@@ -293,13 +293,13 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
 - **Whether `verify.test` can actually fail.** Preflight warns about the shapes decidable from
   the command string: a tail that discards the exit code (`|| true`, a terminal `; exit 0`) and
   an inline one-liner standing in for the suite (`node -e "process.exit(0)"`). It says nothing
-  about the two shapes that need the repo read — a filter matching no test, and an entrypoint
-  that exits 0 early under an environment variable — because deciding either means
-  reconstructing the runner's discovery and naming, or evaluating a guard and ruling out every
-  failing path. Six adversarial rounds each found one more spelling past whatever rule bounded
-  those two; the honest answer needs the command run, which a profile resolver must not do. So
-  a silent preflight means "no *recognised* shape", not "your suite can fail" — that one is
-  still yours to know.
+  about the two shapes that need the repo read: a filter matching no test, and an entrypoint
+  that exits 0 early under an environment variable. Deciding either means reconstructing the
+  runner's discovery and naming, or evaluating a guard and ruling out every failing path. Six
+  adversarial rounds each found one more spelling past whatever rule bounded those two; the
+  honest answer needs the command run, which a profile resolver must not do. So a silent
+  preflight means "no *recognised* shape", not "your suite can fail". That one is still yours
+  to know.
 - **Dispatching only what is worth dispatching.** A subagent costs its whole prompt before it
   works, so `dispatchPolicy.minSliceLines` says do small and test-only slices inline. Nothing
   can enforce it: at dispatch time no one knows how large the change will turn out. The prompt

@@ -11,7 +11,7 @@
 //   - an entrypoint that exits 0 early under an environment variable, which needs a guard
 //     condition evaluated and every failing path in the file ruled out.
 //
-// Six adversarial rounds each found one more spelling past whatever rule bounded those two —
+// Six adversarial rounds each found one more spelling past whatever rule bounded those two:
 // braces, directory depth, string concatenation, comparison operators, discovery globs. They
 // are not decidable by inspection; answering them soundly means running the command, which a
 // profile resolver must not do.
@@ -78,8 +78,8 @@ function inlineProgram(tokens, cmd) {
     // with no failure path cannot.
     if (!CONSTANT_SUCCESS.test(body)) return null;
     return (
-      `the inline program given with ${tokens[i]} is "${body}", which always succeeds — ` +
-      `the repo's tests never run, so nothing in the repo can turn it red`
+      `the inline program given with ${tokens[i]} is "${body}", which always succeeds. ` +
+      `The repo's tests never run, so nothing in the repo can turn it red`
     );
   }
   return null;
@@ -90,7 +90,7 @@ function verifyTestWarnings(cfg) {
   if (typeof cmd !== 'string' || !cmd.trim()) return [];
   try {
     const reason = discardedExitCode(cmd) || inlineProgram(tokenize(cmd), cmd);
-    return reason ? [`verify.test "${cmd}" cannot report a failure — ${reason}`] : [];
+    return reason ? [`verify.test "${cmd}" cannot report a failure: ${reason}`] : [];
   } catch {
     // Preflight resolves the profile for every hook; a detector that throws would take all of
     // them down over an advisory warning.
