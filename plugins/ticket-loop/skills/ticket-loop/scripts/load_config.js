@@ -203,7 +203,7 @@ function resolve() {
     }
   }
   warnings.push(...stopGateWarnings(cfg));
-  warnings.push(...verifyTestWarnings(cfg, root));
+  warnings.push(...verifyTestWarnings(cfg));
   const skew = pluginVersionSkew();
   if (skew && skew.newest) {
     warnings.push(
