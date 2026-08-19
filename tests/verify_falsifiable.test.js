@@ -395,9 +395,9 @@ test('an env-guarded exit(0) is reported however the guard is spelled', () => {
   }
 });
 
-// One path that can end non-zero is enough to make the file falsifiable, whatever its
-// environment reads look like.
-test('an entrypoint with any non-zero exit path is left alone', () => {
+// An exit(0) whose condition is not about the environment says nothing about whether the
+// command can fail, so the rule does not speak.
+test('an exit(0) under a non-environment condition is left alone', () => {
   const entrypoints = {
     'python summary line':
       'import os, sys\n' +
@@ -410,13 +410,29 @@ test('an entrypoint with any non-zero exit path is left alone', () => {
       'const res = runSuite(level)\n' +
       'if (res.failures) process.exit(1)\n' +
       'process.exit(0)\n',
+  };
+  for (const [label, entrypoint] of Object.entries(entrypoints)) {
+    const repo = mkRepoWithSuite('node tests/run.js', { entrypoint });
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], label);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// A failing path the guard jumps over is not a path the command can take.
+test('a red path after a guard that fires does not make the command falsifiable', () => {
+  const entrypoints = {
     throws: 'if (!process.env.RUN_TESTS) process.exit(0);\nif (failed) throw new Error("red");\n',
     'exit code assigned': 'if (!process.env.RUN_TESTS) process.exit(0);\nprocess.exitCode = failures;\n',
   };
   for (const [label, entrypoint] of Object.entries(entrypoints)) {
     const repo = mkRepoWithSuite('node tests/run.js', { entrypoint });
     try {
-      assert.deepStrictEqual(warningsFor(repo), [], label);
+      const found = warningsFor(repo);
+      assert.strictEqual(found.length, 1, `${label}: ${JSON.stringify(found)}`);
+      assert.ok(found[0].includes('RUN_TESTS'), `${label}: ${found[0]}`);
     } finally {
       rmDir(repo);
     }
@@ -576,6 +592,77 @@ test('a preloaded module is not mistaken for the entrypoint', () => {
     fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
     fs.writeFileSync(path.join(repo, 'setup.js'), 'if (!process.env.NOT_SET_ANYWHERE) process.exit(0);\n');
     fs.writeFileSync(path.join(repo, 'tests', 'run.js'), 'const r = runSuite();\nprocess.exit(r.status);\n');
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// --- the guard is evaluated, not pattern-matched ----------------------------------------
+
+test('a value-comparison guard that does not hold is left alone', () => {
+  const repo = mkRepoWithSuite('node tests/run.js', {
+    entrypoint: "if (process.env.NODE_ENV === 'production') process.exit(0);\nrunSuite();\n",
+  });
+  try {
+    assert.deepStrictEqual(warningsFor(repo, { env: { NODE_ENV: 'development' } }), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('a value-comparison guard that does hold is reported, and quotes the value', () => {
+  const repo = mkRepoWithSuite('node tests/run.js', {
+    entrypoint: "if (process.env.NODE_ENV === 'production') process.exit(0);\nrunSuite();\n",
+  });
+  try {
+    const found = warningsFor(repo, { env: { NODE_ENV: 'production' } });
+    assert.strictEqual(found.length, 1, JSON.stringify(found));
+    assert.ok(found[0].includes('"production"'), found[0]);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('a condition outside the supported grammar is left alone', () => {
+  for (const condition of [
+    "process.env.A === process.env.B",
+    "process.env.MODE.startsWith('ci')",
+    "process.env.RUN_TESTS && shouldSkip()",
+  ]) {
+    const repo = mkRepoWithSuite('node tests/run.js', {
+      entrypoint: `if (${condition}) process.exit(0);\nrunSuite();\n`,
+    });
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], condition);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// --- a name is read only when it is exactly a literal -----------------------------------
+
+test('a concatenated test name marks the name set incomplete', () => {
+  const repo = mkRepoWithSuite('node tests/run.js --test-name-pattern=renders-dark', {
+    sample: "for (const v of ['light','dark']) test('renders-' + v, () => {});",
+  });
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// The runner discovers more than *.test.js, and names missed there are names the filter
+// would have matched.
+test('test files the runner would load are scanned too', () => {
+  const repo = mkFakeRepo({ verify: { test: 'node tests/run.js --test-name-pattern=creates' } });
+  try {
+    fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'tests', 'run.js'), 'runSuite();\n');
+    fs.writeFileSync(path.join(repo, 'tests', 'sample.test.js'), "test('adds two numbers', () => {});");
+    fs.writeFileSync(path.join(repo, 'tests', 'test-api.js'), "test('creates user', () => {});");
     assert.deepStrictEqual(warningsFor(repo), []);
   } finally {
     rmDir(repo);

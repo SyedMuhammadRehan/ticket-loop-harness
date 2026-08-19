@@ -21,10 +21,17 @@ const GUARD_WINDOW = 200;
 // go's -run also select on classes, modules and subtest paths, so any verdict about them
 // would be a guess about another runner's semantics.
 const FILTER_FLAGS = ['--test-name-pattern'];
-const TEST_NAME_FORMS = [/\b(?:test|it|describe)(?:\.\w+)*\s*\(\s*['"`]([^'"`]+)/g];
-// Every declaration, so a name the forms above cannot read is visible as a gap rather than
-// silently absent from the set.
 const NAME_DECL = /\b(?:test|it|describe)(?:\.\w+)*\s*\(\s*/g;
+// The files Node's own runner loads. Collecting names from a narrower set than the runner
+// discovers is how a partially-scanned repo confidently reports "matches nothing".
+const TEST_FILE_NAME = /(?:[._-](test|spec)\.[cm]?js$|^test[-.].*\.[cm]?js$|^test\.[cm]?js$)/i;
+const TEST_DIR = /^tests?$/i;
+const SOURCE_FILE = /\.[cm]?js$/i;
+
+function isTestFile(name, dir) {
+  if (TEST_FILE_NAME.test(name)) return true;
+  return TEST_DIR.test(path.basename(dir)) && SOURCE_FILE.test(name);
+}
 
 const INLINE_EVAL_FLAGS = {
   node: ['-e', '--eval', '-p', '--print'],
@@ -45,21 +52,12 @@ const CONSTANT_SUCCESS =
   /^\s*(?:true|:|pass|exit\s+0|(?:process|sys|os)\.exit\s*\(\s*0\s*\)|exit\s*\(\s*0\s*\))\s*;?\s*$/;
 
 const ZERO_EXIT = /(?:process|sys|os)\.exit\s*\(\s*0\s*\)/g;
-// Any one of these means the file can end non-zero, and then nothing about it is
-// unfalsifiable however its environment reads look.
-const RED_PATHS = [
-  /(?:process|sys|os)\.exit\s*\(\s*(?!0\s*\))/,
-  /\bthrow\b/,
-  /\braise\b/,
-  /process\.exitCode\s*=/,
-];
 const ENV_REF_FORMS = [
   /process\.env(?:\.(\w+)|\[\s*['"](\w+)['"]\s*\])/g,
   /os\.environ(?:\.get\(\s*['"](\w+)['"]|\[\s*['"](\w+)['"]\s*\])/g,
 ];
 const ENV_BINDING = /(?:const|let|var)\s+(\w+)\s*=\s*(?:process\.env\.(\w+)|os\.environ\.get\(\s*['"](\w+)['"])/g;
 const CONDITIONAL = /\b(?:if|elif|unless)\b/g;
-const NEGATED_CONDITION = /!|\bnot\b|===?\s*undefined|===?\s*null/;
 
 function readCapped(file) {
   const stat = fs.statSync(file);
@@ -143,41 +141,51 @@ function collectTestNames(dir, names, scan, depth = 0) {
       collectTestNames(full, names, scan, depth + 1);
       continue;
     }
-    if (!/[._](test|spec)\.\w+$/i.test(entry.name)) continue;
+    if (!isTestFile(entry.name, dir)) continue;
     scan.budget--;
     let src;
     try {
       src = readCapped(full);
     } catch {
-      // A file that cannot be read contributes no names, same as one that holds none.
+      // A file the runner would load but this cannot read leaves a hole in the name set.
+      scan.truncated = true;
       continue;
     }
-    if (!src) continue;
-    scan.bytes -= src.length;
-    for (const form of TEST_NAME_FORMS) {
-      form.lastIndex = 0;
-      let m;
-      while ((m = form.exec(src))) names.add(m[1]);
+    if (!src) {
+      scan.truncated = true;
+      continue;
     }
-    if (hasUnreadableName(src)) scan.truncated = true;
+    scan.bytes -= src.length;
+    if (!readNames(src, names)) scan.truncated = true;
   }
 }
 
-// A name declared from a template with a substitution, or from a variable, cannot be read
-// out of the source at all — and a name set with a hole in it cannot say "matches nothing".
-function hasUnreadableName(src) {
+// A name is READ only when the argument is exactly a quoted literal followed by `,`.
+// Concatenation, template substitution and variables fail that by construction rather than by
+// enumeration — and a name set with a hole in it cannot say "matches nothing".
+function readNames(src, names) {
   NAME_DECL.lastIndex = 0;
+  let complete = true;
   let m;
   while ((m = NAME_DECL.exec(src))) {
     const rest = src.slice(m.index + m[0].length);
     const quote = rest[0];
-    if (quote !== "'" && quote !== '"' && quote !== '`') return true;
-    if (quote === '`') {
-      const end = rest.indexOf('`', 1);
-      if (end === -1 || rest.slice(1, end).includes('${')) return true;
+    if (quote !== "'" && quote !== '"' && quote !== '`') {
+      complete = false;
+      continue;
     }
+    const end = rest.indexOf(quote, 1);
+    if (end === -1 || (quote === '`' && rest.slice(1, end).includes('${'))) {
+      complete = false;
+      continue;
+    }
+    if (rest.slice(end + 1).trimStart()[0] !== ',') {
+      complete = false;
+      continue;
+    }
+    names.add(rest.slice(1, end));
   }
-  return false;
+  return complete;
 }
 
 function matchesSomeTest(pattern, names) {
@@ -252,20 +260,51 @@ function guardOfExit(src, exitIndex) {
 
   const direct = envNamesIn(condition);
   let name = direct.length ? direct[direct.length - 1] : null;
+  let expression = condition;
   if (!name) {
     // `const enabled = process.env.RUN_TESTS; if (!enabled) exit(0)` — one level of naming.
     ENV_BINDING.lastIndex = 0;
     let binding;
     while ((binding = ENV_BINDING.exec(preceding))) {
       const [, alias, envA, envB] = binding;
-      if (new RegExp(`\\b${alias}\\b`).test(condition)) name = envA || envB;
+      if (new RegExp(`\\b${alias}\\b`).test(condition)) {
+        name = envA || envB;
+        expression = condition.replace(new RegExp(`\\b${alias}\\b`), 'process.env.PLACEHOLDER');
+      }
     }
   }
   if (!name) return null;
+  const taken = evaluateGuard(expression, process.env[name]);
+  return taken === null || !taken.holds ? null : { name, describes: taken.describes };
+}
 
-  const negated = NEGATED_CONDITION.test(condition);
-  const present = process.env[name] !== undefined && process.env[name] !== '';
-  return (negated ? !present : present) ? { name, negated } : null;
+// A closed grammar over one environment variable. Anything outside it is not read, because a
+// condition half-understood is how "$X is set" gets asserted about `$X === 'production'`.
+function evaluateGuard(condition, value) {
+  const present = value !== undefined && value !== '';
+  const stripped = condition.replace(/\s+/g, ' ').trim();
+  const ref = /(?:process\.env(?:\.\w+|\[\s*['"]\w+['"]\s*\])|os\.environ(?:\.get\(\s*['"]\w+['"]\s*\)|\[\s*['"]\w+['"]\s*\]))/;
+
+  const compared = stripped.match(
+    new RegExp(`^\\(*\\s*${ref.source}\\s*(===|!==|==|!=)\\s*(['"])(.*?)\\2\\s*\\)*$`)
+  );
+  if (compared) {
+    const [, op, , literal] = compared;
+    const equal = value === literal;
+    const holds = op === '===' || op === '==' ? equal : !equal;
+    return { holds, describes: `is ${op.startsWith('!') ? 'not ' : ''}"${literal}"` };
+  }
+
+  const nullish = stripped.match(new RegExp(`^\\(*\\s*${ref.source}\\s*(===|==)\\s*(undefined|null)\\s*\\)*$`));
+  if (nullish) return { holds: !present, describes: 'is unset' };
+
+  const negated = stripped.match(new RegExp(`^\\(*\\s*(?:!|not\\s+)\\s*${ref.source}\\s*\\)*$`));
+  if (negated) return { holds: !present, describes: 'is unset' };
+
+  const bare = stripped.match(new RegExp(`^\\(*\\s*${ref.source}\\s*\\)*$`));
+  if (bare) return { holds: present, describes: 'is set' };
+
+  return null;
 }
 
 function discardedExitCode(cmd) {
@@ -318,23 +357,20 @@ function emptyFilter(tokens, entrypoint, root) {
   );
 }
 
+// An early exit whose guard evaluates true right now ends the process before the suite runs,
+// so what the rest of the file could have returned does not arise.
 function selfDisablingEntrypoint(entrypoint) {
   if (!entrypoint) return null;
   const src = readCapped(entrypoint.abs);
   if (!src) return null;
-  // Containment first: one path that can end non-zero is enough to make the file falsifiable,
-  // whatever else it does.
-  if (RED_PATHS.some((re) => re.test(src))) return null;
   ZERO_EXIT.lastIndex = 0;
   let exitMatch;
   while ((exitMatch = ZERO_EXIT.exec(src))) {
     const guard = guardOfExit(src, exitMatch.index);
     if (guard) {
-      const state = guard.negated ? 'unset' : 'set';
       return (
-        `${entrypoint.rel} exits 0 when $${guard.name} is ${state}, $${guard.name} is ${state} ` +
-        `now, and the file has no path that ends non-zero — the command reports success ` +
-        `without running the suite`
+        `${entrypoint.rel} exits 0 when $${guard.name} ${guard.describes}, and it ` +
+        `${guard.describes} now — the command reports success without running the suite`
       );
     }
   }
