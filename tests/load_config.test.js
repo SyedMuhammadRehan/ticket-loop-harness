@@ -168,7 +168,11 @@ function fakeInstall(runningVersion, otherVersions) {
     fs.writeFileSync(path.join(root, v, 'plugin.json'), JSON.stringify({ name: 'ticket-loop', version: v }));
   }
   const script = path.join(root, runningVersion, scriptRel, 'load_config.js');
-  fs.copyFileSync(path.join(SCRIPTS_DIR, 'load_config.js'), script);
+  // The resolver's siblings come with it: an install missing one is a broken install, not
+  // the version skew these cases are about.
+  for (const file of ['load_config.js', 'verify_falsifiable.js']) {
+    fs.copyFileSync(path.join(SCRIPTS_DIR, file), path.join(root, runningVersion, scriptRel, file));
+  }
   const repo = mkFakeRepo({ verify: { test: 'x' } });
   return { root, script, repo };
 }

@@ -4,6 +4,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { verifyTestWarnings } = require('./verify_falsifiable.js');
 
 const DEFAULTS = {
   stack: 'unknown',
@@ -202,6 +203,7 @@ function resolve() {
     }
   }
   warnings.push(...stopGateWarnings(cfg));
+  warnings.push(...verifyTestWarnings(cfg));
   const skew = pluginVersionSkew();
   if (skew && skew.newest) {
     warnings.push(
