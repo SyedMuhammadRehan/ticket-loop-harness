@@ -3,10 +3,8 @@
 // exactly that command's exit code, so one that cannot exit non-zero certifies every
 // turn-end while proving nothing.
 //
-// Every rule here asks "can I prove no red path exists?" and stays silent otherwise. The
-// complementary question — "can I find evidence this cannot fail?" — reads the same and is
-// not: its false-positive surface is unbounded, and an advisory warning is worth nothing to a
-// reader who has learned to ignore it. A miss costs that reader nothing.
+// Every rule here asks "can I prove no red path exists?" and stays silent otherwise, including
+// when what it reconstructed may be incomplete.
 //
 // Inspection only. Running the configured command to find out would make every profile load
 // execute repo-supplied shell.
@@ -23,8 +21,10 @@ const GUARD_WINDOW = 200;
 // go's -run also select on classes, modules and subtest paths, so any verdict about them
 // would be a guess about another runner's semantics.
 const FILTER_FLAGS = ['--test-name-pattern'];
-const TEST_NAME_FORMS = [/\b(?:test|it|describe)\s*\(\s*['"`]([^'"`]+)/g];
-const SELECTION_EXPRESSION = /\s|\b(?:and|or|not)\b/;
+const TEST_NAME_FORMS = [/\b(?:test|it|describe)(?:\.\w+)*\s*\(\s*['"`]([^'"`]+)/g];
+// Every declaration, so a name the forms above cannot read is visible as a gap rather than
+// silently absent from the set.
+const NAME_DECL = /\b(?:test|it|describe)(?:\.\w+)*\s*\(\s*/g;
 
 const INLINE_EVAL_FLAGS = {
   node: ['-e', '--eval', '-p', '--print'],
@@ -36,6 +36,10 @@ const INLINE_EVAL_FLAGS = {
   bash: ['-c'],
   zsh: ['-c'],
 };
+const PRELOAD_FLAGS = new Set([
+  '--require', '-r', '--import', '--loader', '--experimental-loader', '--env-file', '--test-reporter',
+]);
+const SHELL_OPERATOR = /[;&|]/;
 const ALWAYS_TRUE = /^(?:true|:|exit\s+0|echo\b[^;&|]*)$/;
 const CONSTANT_SUCCESS =
   /^\s*(?:true|:|pass|exit\s+0|(?:process|sys|os)\.exit\s*\(\s*0\s*\)|exit\s*\(\s*0\s*\))\s*;?\s*$/;
@@ -55,6 +59,7 @@ const ENV_REF_FORMS = [
 ];
 const ENV_BINDING = /(?:const|let|var)\s+(\w+)\s*=\s*(?:process\.env\.(\w+)|os\.environ\.get\(\s*['"](\w+)['"])/g;
 const CONDITIONAL = /\b(?:if|elif|unless)\b/g;
+const NEGATED_CONDITION = /!|\bnot\b|===?\s*undefined|===?\s*null/;
 
 function readCapped(file) {
   const stat = fs.statSync(file);
@@ -78,18 +83,22 @@ function stripQuotes(value) {
   return value.replace(/^["']|["']$/g, '');
 }
 
-// The first token naming a file that exists inside the repo: the script whose exit code the
-// command reports.
+// The script whose exit code the command reports — which is not merely the first filename on
+// the line. A preload is loaded before the entrypoint and decides nothing about it, and two
+// remaining candidates mean the entrypoint cannot be told apart from an argument.
 function entrypointOf(tokens, root) {
-  for (const bare of tokens.slice(1)) {
+  const candidates = [];
+  for (let i = 1; i < tokens.length; i++) {
+    const bare = tokens[i];
+    if (PRELOAD_FLAGS.has(tokens[i - 1])) continue;
     if (!bare || bare.startsWith('-') || !/\.\w+$/.test(bare)) continue;
     const abs = path.resolve(root, bare);
     const inside = path.relative(root, abs);
     if (inside && !inside.startsWith('..') && !path.isAbsolute(inside) && fs.existsSync(abs)) {
-      return { rel: bare, abs };
+      candidates.push({ rel: bare, abs });
     }
   }
-  return null;
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 function filterOf(tokens) {
@@ -150,18 +159,39 @@ function collectTestNames(dir, names, scan, depth = 0) {
       let m;
       while ((m = form.exec(src))) names.add(m[1]);
     }
+    if (hasUnreadableName(src)) scan.truncated = true;
   }
 }
 
+// A name declared from a template with a substitution, or from a variable, cannot be read
+// out of the source at all — and a name set with a hole in it cannot say "matches nothing".
+function hasUnreadableName(src) {
+  NAME_DECL.lastIndex = 0;
+  let m;
+  while ((m = NAME_DECL.exec(src))) {
+    const rest = src.slice(m.index + m[0].length);
+    const quote = rest[0];
+    if (quote !== "'" && quote !== '"' && quote !== '`') return true;
+    if (quote === '`') {
+      const end = rest.indexOf('`', 1);
+      if (end === -1 || rest.slice(1, end).includes('${')) return true;
+    }
+  }
+  return false;
+}
+
 function matchesSomeTest(pattern, names) {
+  // Node documents the regex-literal spelling, `--test-name-pattern=/adds/i`.
+  const literal = pattern.match(/^\/(.*)\/(\w*)$/);
+  const source = literal ? literal[1] : pattern;
   let re = null;
   try {
-    re = new RegExp(pattern);
+    re = new RegExp(source, literal ? literal[2] : '');
   } catch {
     // An unparsable pattern is still a literal the runner may match on.
   }
   for (const name of names) {
-    if (name.includes(pattern) || (re && re.test(name))) return true;
+    if (name.includes(source) || (re && re.test(name))) return true;
   }
   return false;
 }
@@ -176,9 +206,39 @@ function envNamesIn(text) {
   return found;
 }
 
-// The environment variable the exit is conditional on, resolved from the enclosing
-// conditional rather than from proximity: an env read that merely sits nearby is not a guard,
-// and this warning states what it found as fact.
+// Split `if (cond) body` / `if cond: body` into its two halves.
+function splitConditional(clause) {
+  const open = clause.indexOf('(');
+  const colon = clause.indexOf(':');
+  if (open !== -1 && (colon === -1 || open < colon)) {
+    let depth = 0;
+    for (let i = open; i < clause.length; i++) {
+      if (clause[i] === '(') depth++;
+      else if (clause[i] === ')' && --depth === 0) {
+        return { condition: clause.slice(open + 1, i), body: clause.slice(i + 1) };
+      }
+    }
+    return { condition: null, body: '' };
+  }
+  if (colon !== -1) return { condition: clause.slice(0, colon), body: clause.slice(colon + 1) };
+  return { condition: null, body: '' };
+}
+
+// True while the conditional's body is still open. A `;` at depth 0 has ended it, so an exit
+// after that point is an unrelated statement the conditional does not guard.
+function bodyStillOpen(body) {
+  let depth = 0;
+  for (const ch of body) {
+    if (ch === '{' || ch === '(') depth++;
+    else if (ch === '}' || ch === ')') depth--;
+    else if (ch === ';' && depth <= 0) return false;
+  }
+  return true;
+}
+
+// The environment variable the exit is conditional on, and whether the condition holds right
+// now. Polarity decides that: `if (!env.X) exit(0)` is opt-in and fires when X is absent,
+// `if (env.X) exit(0)` is opt-out and fires when X is present.
 function guardOfExit(src, exitIndex) {
   const from = Math.max(0, exitIndex - GUARD_WINDOW);
   const preceding = src.slice(from, exitIndex);
@@ -187,19 +247,25 @@ function guardOfExit(src, exitIndex) {
   let m;
   while ((m = CONDITIONAL.exec(preceding))) conditionalAt = m.index;
   if (conditionalAt === -1) return null;
-  const region = preceding.slice(conditionalAt);
+  const { condition, body } = splitConditional(preceding.slice(conditionalAt));
+  if (condition === null || !bodyStillOpen(body)) return null;
 
-  const direct = envNamesIn(region);
-  if (direct.length) return direct[direct.length - 1];
-
-  // `const enabled = process.env.RUN_TESTS; if (!enabled) exit(0)` — one level of naming.
-  ENV_BINDING.lastIndex = 0;
-  let binding;
-  while ((binding = ENV_BINDING.exec(preceding))) {
-    const [, alias, envA, envB] = binding;
-    if (new RegExp(`\\b${alias}\\b`).test(region)) return envA || envB;
+  const direct = envNamesIn(condition);
+  let name = direct.length ? direct[direct.length - 1] : null;
+  if (!name) {
+    // `const enabled = process.env.RUN_TESTS; if (!enabled) exit(0)` — one level of naming.
+    ENV_BINDING.lastIndex = 0;
+    let binding;
+    while ((binding = ENV_BINDING.exec(preceding))) {
+      const [, alias, envA, envB] = binding;
+      if (new RegExp(`\\b${alias}\\b`).test(condition)) name = envA || envB;
+    }
   }
-  return null;
+  if (!name) return null;
+
+  const negated = NEGATED_CONDITION.test(condition);
+  const present = process.env[name] !== undefined && process.env[name] !== '';
+  return (negated ? !present : present) ? { name, negated } : null;
 }
 
 function discardedExitCode(cmd) {
@@ -217,7 +283,10 @@ function discardedExitCode(cmd) {
   return null;
 }
 
-function inlineProgram(tokens) {
+function inlineProgram(tokens, cmd) {
+  // Only when the inline program IS the command. `sh -c "true" && node tests/run.js` runs the
+  // real suite afterwards, so what the inline body returns settles nothing.
+  if (SHELL_OPERATOR.test(cmd)) return null;
   const binary = path.basename(tokens[0] || '').replace(/\.exe$/i, '');
   const flags = INLINE_EVAL_FLAGS[binary];
   if (!flags) return null;
@@ -237,9 +306,7 @@ function inlineProgram(tokens) {
 
 function emptyFilter(tokens, entrypoint, root) {
   const filter = filterOf(tokens);
-  // A selection expression is not a name to look for; matching it against test names would
-  // report the parse rather than the suite.
-  if (!filter || SELECTION_EXPRESSION.test(filter.value)) return null;
+  if (!filter) return null;
   const names = new Set();
   const scan = { budget: TEST_FILE_SCAN_LIMIT, bytes: TOTAL_READ_LIMIT, truncated: false };
   const searchDir = entrypoint ? path.dirname(entrypoint.abs) : root;
@@ -262,10 +329,12 @@ function selfDisablingEntrypoint(entrypoint) {
   let exitMatch;
   while ((exitMatch = ZERO_EXIT.exec(src))) {
     const guard = guardOfExit(src, exitMatch.index);
-    if (guard && process.env[guard] === undefined) {
+    if (guard) {
+      const state = guard.negated ? 'unset' : 'set';
       return (
-        `${entrypoint.rel} exits 0 when $${guard} is unset, $${guard} is unset now, and the ` +
-        `file has no path that ends non-zero — the command reports success without running the suite`
+        `${entrypoint.rel} exits 0 when $${guard.name} is ${state}, $${guard.name} is ${state} ` +
+        `now, and the file has no path that ends non-zero — the command reports success ` +
+        `without running the suite`
       );
     }
   }
@@ -280,7 +349,7 @@ function verifyTestWarnings(cfg, root) {
     const entrypoint = entrypointOf(tokens, root);
     const reason =
       discardedExitCode(cmd) ||
-      inlineProgram(tokens) ||
+      inlineProgram(tokens, cmd) ||
       emptyFilter(tokens, entrypoint, root) ||
       selfDisablingEntrypoint(entrypoint);
     return reason ? [`verify.test "${cmd}" cannot report a failure — ${reason}`] : [];

@@ -27,7 +27,7 @@ function mkRepoWithSuite(verifyTest, opts = {}) {
   );
   fs.writeFileSync(
     path.join(repo, 'tests', 'sample.test.js'),
-    (opts.testNames || ['adds two numbers']).map((n) => `test('${n}', () => {});`).join('\n')
+    opts.sample || (opts.testNames || ['adds two numbers']).map((n) => `test('${n}', () => {});`).join('\n')
   );
   return repo;
 }
@@ -308,8 +308,8 @@ test('a quoted filter that does match is left alone, in both quoting forms', () 
   }
 });
 
-// -k takes a boolean expression, so matching it against test names would report the parse
-// rather than the suite.
+// -k takes a boolean expression and -run a regex over a surface that includes subtests, so
+// neither is a name this can look up.
 test('a selection expression is left alone rather than matched as a name', () => {
   for (const command of [
     'pytest -q -k "not slow"',
@@ -472,6 +472,110 @@ test('filters belonging to runners whose match surface is not reconstructable ar
 test('an eval flag on a binary that has no inline mode is left alone', () => {
   const repo = mkRepoWithSuite('bundle exec rspec -e pass');
   try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// --- which way the guard points decides whether the exit is taken -----------------------
+
+// The opt-out idiom exits 0 when the variable IS set, so with it unset the suite runs and the
+// command can go red.
+test('an opt-out guard is left alone while its variable is unset', () => {
+  const repo = mkRepoWithSuite('node tests/run.js', {
+    entrypoint: 'if (process.env.SKIP_TESTS) process.exit(0);\nrunSuite();\n',
+  });
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('an opt-out guard is reported when its variable is set, and says so', () => {
+  const repo = mkRepoWithSuite('node tests/run.js', {
+    entrypoint: 'if (process.env.SKIP_TESTS) process.exit(0);\nrunSuite();\n',
+  });
+  try {
+    const found = warningsFor(repo, { env: { SKIP_TESTS: '1' } });
+    assert.strictEqual(found.length, 1, JSON.stringify(found));
+    assert.ok(found[0].includes('$SKIP_TESTS is set'), found[0]);
+    assert.ok(!found[0].includes('is unset'), found[0]);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test('an env read in a conditional that does not contain the exit is left alone', () => {
+  const repo = mkRepoWithSuite('node tests/run.js', {
+    entrypoint: "if (process.env.VERBOSE) console.log('loud');\nprocess.exit(0);\n",
+  });
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// --- a name set with a hole in it cannot say "matches nothing" --------------------------
+
+test('a filter is not reported when some test name cannot be read from source', () => {
+  const samples = {
+    'template substitution': 'for (const i of [1, 2, 3]) test(`case-${i}`, () => {});',
+    'name from a variable': "const c = { name: 'case-3' };\ntest(c.name, () => {});",
+    'table driven': "test.each([1, 2])('case-%i', () => {});",
+  };
+  for (const [label, sample] of Object.entries(samples)) {
+    const repo = mkRepoWithSuite('node tests/run.js --test-name-pattern=case-3', { sample });
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], label);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+test('a name declared through a modifier is collected, not treated as missing', () => {
+  const repo = mkRepoWithSuite('node tests/run.js --test-name-pattern=only-case', {
+    sample: "test.only('only-case', () => {});\ntest('other', () => {});",
+  });
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+test("Node's regex-literal pattern spelling is matched as a regex", () => {
+  const repo = mkRepoWithSuite('node tests/run.js --test-name-pattern=/adds/');
+  try {
+    assert.deepStrictEqual(warningsFor(repo), []);
+  } finally {
+    rmDir(repo);
+  }
+});
+
+// --- an inline program only settles the verdict when it IS the command ------------------
+
+test('a constant-success inline program followed by the real suite is left alone', () => {
+  for (const command of ['sh -c "true" && node tests/run.js', 'bash -c "pass" ; node tests/run.js']) {
+    const repo = mkRepoWithSuite(command);
+    try {
+      assert.deepStrictEqual(warningsFor(repo), [], command);
+    } finally {
+      rmDir(repo);
+    }
+  }
+});
+
+// A preload runs before the entrypoint and decides nothing about the entrypoint's exit code.
+test('a preloaded module is not mistaken for the entrypoint', () => {
+  const repo = mkFakeRepo({ verify: { test: 'node --require ./setup.js tests/run.js' } });
+  try {
+    fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'setup.js'), 'if (!process.env.NOT_SET_ANYWHERE) process.exit(0);\n');
+    fs.writeFileSync(path.join(repo, 'tests', 'run.js'), 'const r = runSuite();\nprocess.exit(r.status);\n');
     assert.deepStrictEqual(warningsFor(repo), []);
   } finally {
     rmDir(repo);
