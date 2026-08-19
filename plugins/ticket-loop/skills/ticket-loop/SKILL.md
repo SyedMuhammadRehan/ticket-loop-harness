@@ -142,6 +142,11 @@ which is installed, and that a NEW SESSION is the only fix. Do not proceed.
    covers the content it named, so the NEXT edit needs its own. `done.md`, `*.approved.md` and
    the profile are refused outright: the frozen contract does not get revised, it gets added to
    via `done-additions.md`.
+   **`done-additions.md` is itself sealed by every QA verdict**, because the judge hashes the
+   contract it read. So adding a criterion after a judge has run — the normal answer to a
+   findings round — needs its own `revise` over that file, exactly like `ledger.md`. Skip it and
+   Stage 7 reports TAMPERED for an edit that was additive and legitimate, which spends the
+   report's credibility on bookkeeping.
 
    Cheaper still: prefer sealing what is finished. `--evidence` on the implement gate wants the
    diff or the touched files, not `ledger.md`.
