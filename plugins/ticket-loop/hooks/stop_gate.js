@@ -32,6 +32,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const lib = require('./hook_lib.js');
+const hygiene = require('./hygiene.js');
 
 const STATE_FILE = path.join('.claude', 'hooks', 'state', 'stop-state.json');
 const MAX_CONSECUTIVE_BLOCKS = 3;
@@ -41,6 +42,7 @@ const DEFAULT_TEST_TIMEOUT_MS = 240000;
 const MIN_TEST_TIMEOUT_MS = 30000;
 const DEFAULT_BRANCH_PREFIXES = ['refs/heads/ticket/'];
 const BASE_REF_CANDIDATES = ['origin/HEAD', 'origin/main', 'main', 'origin/master', 'master'];
+const MAX_SCANNED_FILE_BYTES = 256 * 1024;
 const MISSING_COMMAND = /command not found|not recognized as an internal or external|is not recognized as|No such file or directory/i;
 
 function git(cwd, args, timeout = 15000) {
@@ -177,6 +179,40 @@ function changedSourceFiles(tree, conf) {
   return { files: [...new Set(applyFilters(rawList, conf))], rawCount: rawList.length, baseRef, baseIsHead };
 }
 
+// The same span changedSourceFiles counts, as a unified diff: uncommitted work plus whatever
+// this branch committed since its branch point. Failures contribute an empty diff, which the
+// scanner reads as "nothing added" rather than as a clean bill of health.
+function addedDiff(tree, conf) {
+  const parts = [];
+  const uncommitted = git(tree, ['diff', 'HEAD'], 30000);
+  if (uncommitted.status === 0) parts.push(uncommitted.stdout || '');
+  // An untracked file is entirely added, so its diff is synthesised rather than asked for:
+  // `git diff --no-index` against /dev/null is not portable to Windows, and every line of a
+  // new file is added by definition.
+  const untracked = git(tree, ['ls-files', '--others', '--exclude-standard'], 30000);
+  if (untracked.status === 0) {
+    for (const file of (untracked.stdout || '').split('\n').filter(Boolean)) {
+      try {
+        const abs = path.join(tree, file);
+        if (fs.statSync(abs).size > MAX_SCANNED_FILE_BYTES) continue;
+        const lines = fs.readFileSync(abs, 'utf8').split(/\r?\n/);
+        parts.push(`+++ b/${file}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join('\n')}`);
+      } catch {
+        // Unreadable or vanished between listing and reading: contributes no added lines.
+      }
+    }
+  }
+  const baseRef = resolveBaseRef(tree, conf);
+  if (baseRef) {
+    const mb = git(tree, ['merge-base', 'HEAD', baseRef]);
+    if (mb.status === 0 && mb.stdout.trim()) {
+      const committed = git(tree, ['diff', `${mb.stdout.trim()}..HEAD`], 30000);
+      if (committed.status === 0) parts.push(committed.stdout || '');
+    }
+  }
+  return parts.join('\n');
+}
+
 function walkTests(dir, suffix, acc) {
   let entries;
   try {
@@ -280,10 +316,27 @@ function verifyTree(tree, conf, verifyTest, runActive) {
     );
   }
 
+  // A green suite says nothing about a stray console.log or a committed credential, so the
+  // added lines are read as well as the exit code. Off only if the profile turns it off.
+  const hygieneFindings =
+    conf.hygiene === false ? [] : hygiene.scanDiff(addedDiff(tree, conf), { extensions: conf.extensions });
+  const hygieneTail = hygieneFindings.length
+    ? `stop_gate: ${tree}: this change adds work that should not ship.\n${hygiene.describe(hygieneFindings)}`
+    : null;
+
   // Every exit from here carries the notes collected above, so a tree that could only be
-  // partially inspected never reports as a clean pass.
-  const finish = (result) =>
-    notes.length ? { ...result, note: [notes.join('\n'), result.note].filter(Boolean).join('\n') } : result;
+  // partially inspected never reports as a clean pass — and carries the hygiene findings, so a
+  // path that skips the suite cannot skip them too.
+  const finish = (result) => {
+    const noted = notes.length
+      ? { ...result, note: [notes.join('\n'), result.note].filter(Boolean).join('\n') }
+      : result;
+    if (!hygieneTail) return noted;
+    if (noted.ok === false) {
+      return { ...noted, tail: [noted.tail, hygieneTail].filter(Boolean).join('\n\n') };
+    }
+    return { ...noted, ok: false, skipped: false, tail: [hygieneTail, noted.note].filter(Boolean).join('\n\n') };
+  };
 
   const timeoutMs = Math.max(conf.timeoutMs || DEFAULT_TEST_TIMEOUT_MS, MIN_TEST_TIMEOUT_MS);
   let run;
