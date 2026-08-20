@@ -82,7 +82,10 @@ Do not add one; read the diff instead.
 
 `package.json`, `plugins/ticket-loop/.claude-plugin/plugin.json`, and
 `.claude-plugin/marketplace.json` must agree. The marketplace version governs installs, so a
-mismatch there ships the wrong thing silently.
+mismatch there ships the wrong thing silently. `tests/versions.test.js` enforces the agreement;
+it cannot tell you that a *behaviour* change needs a bump, and that is the failure that actually
+happens — `plugin update` compares version numbers, so shipping twice under one version reaches
+no install at all.
 
 ## Git
 

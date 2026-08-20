@@ -104,6 +104,9 @@ review were interactions between two rows below, which the code alone did not ma
 | 35 | Filters that match nothing say so | `stop_gate.js` → `applyFilters` | `stop_gate.test.js` :: `a profile whose filters match nothing says so instead of passing quietly` | Silently verifying zero files reads identically to a green run |
 | 36 | Outside a run the gate runs nothing at all | `stop_gate.js` → `verifyTree` | `stop_gate.test.js` :: `outside a run the gate runs nothing, even when changed files match` | A repo keeps its profile permanently; verifying every turn-end would tax unrelated sessions |
 | 43 | Mid-run the same tree still blocks on red | `stop_gate.js` → `verifyTree` | `stop_gate.test.js` :: `the identical situation mid-run still blocks on a red suite` | Row 36 must not turn the gate off altogether |
+| 49 | A debug artefact the change added blocks a "done" claim | `hygiene.js` → `DEBUG_ARTEFACTS` | `stop_gate.test.js` :: `a green suite still blocks when the change adds a debug artefact` | A stray console.log passes every test that exists |
+| 50 | An apparent secret blocks, and its value is never echoed back | `hygiene.js` → `SECRET_ASSIGNMENT` | `hygiene.test.js` :: `a credential-shaped assignment is reported, without echoing the value` | The gate's output is fed to the session, so printing the value would spread it |
+| 51 | Only lines the change ADDED are judged | `hygiene.js` → `addedLines` | `hygiene.test.js` :: `pre-existing logging on an untouched line is not reported` | A gate that fires on code the change did not touch is one people learn to route around |
 
 ## Preflight
 

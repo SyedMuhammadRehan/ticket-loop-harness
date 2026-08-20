@@ -254,6 +254,14 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   HEAD *is* the base because the session is committing straight to the default branch — it runs
   the full verification instead of passing on an empty diff, and every path that ends in "not
   verified" says so on stderr so Stage 7 has something to disclose.
+- **A green suite is not the whole check** — the same gate reads the lines the change ADDED and
+  refuses a "done" claim that ships a debug artefact (`console.log`, `debugger`) or an apparent
+  secret (a credential-shaped name assigned a literal of any length worth hiding). Tests pass
+  over both. Added lines only, so reformatting a file that already had logging does not blame
+  the change that reformatted it; test and e2e paths are exempt from the secret rule because
+  fixtures need credential-shaped strings; and the value itself is redacted in the message,
+  since that message is fed back into the session. Set `hooks.stopGate.hygiene: false` to turn
+  it off.
 - **Approach contract isn't opt-out** — if the survey produced a `codebase-map.md`, the change
   was judged feature-sized and `approach.md` becomes *mandatory*; deleting it to skip the
   failure-mode contract no longer works. Every failure mode must map to a criterion or an

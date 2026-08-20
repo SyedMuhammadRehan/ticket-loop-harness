@@ -451,3 +451,60 @@ test('outside a run the gate stays quiet and cheap', () => {
     teardown(env);
   }
 });
+
+// A green suite says nothing about a stray console.log or a committed credential. The gate reads
+// the added lines too, so neither reaches a "done" claim on the strength of an exit code.
+test('a green suite still blocks when the change adds a debug artefact', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.js'], mode: 'full', baseRef: 'main' } });
+  try {
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.js'), 'const a = 1;\nconsole.log("left behind");\n');
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 2, 'a debug artefact must block even with the suite green');
+    assert.ok(/console\.log/.test(res.stderr), res.stderr);
+    assert.ok(/src\/app\.js/.test(res.stderr), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+test('a green suite still blocks when the change adds an apparent secret, without echoing it', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.js'], mode: 'full', baseRef: 'main' } });
+  try {
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.js'), 'const apiKey = "sk-live-9f2a7c41b8";\n');
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 2, 'an apparent secret must block even with the suite green');
+    assert.ok(/redacted/.test(res.stderr), res.stderr);
+    assert.ok(!/sk-live-9f2a7c41b8/.test(res.stderr), 'the gate echoed the secret back into the session');
+  } finally {
+    teardown(env);
+  }
+});
+
+test('the hygiene scan can be turned off by the profile', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.js'], mode: 'full', baseRef: 'main', hygiene: false } });
+  try {
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.js'), 'console.log("allowed here");\n');
+    assert.strictEqual(gate(env.main).status, 0, 'hygiene:false must leave the gate deciding on the suite alone');
+  } finally {
+    teardown(env);
+  }
+});
+
+// The change that reformats a file is not the change that added the logging in it.
+test('logging that was already there does not block a later change', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.js'], mode: 'full', baseRef: 'main' } });
+  try {
+    fs.writeFileSync(path.join(env.main, 'src', 'app.js'), 'console.log("pre-existing");\nconst a = 1\n');
+    git(env.main, 'add', '-A');
+    git(env.main, 'commit', '-q', '-m', 'pre-existing logging');
+    git(env.wt, 'merge', '-q', 'main');
+    markRunActive(env.main);
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.js'), 'console.log("pre-existing");\nconst a = 1;\n');
+    assert.strictEqual(gate(env.main).status, 0, 'only the semicolon was added; the logging predates this change');
+  } finally {
+    teardown(env);
+  }
+});

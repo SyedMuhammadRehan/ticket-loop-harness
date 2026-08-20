@@ -194,6 +194,35 @@ which is installed, and that a NEW SESSION is the only fix. Do not proceed.
 4. Record the gate:
    `node <SKILL_DIR>/scripts/ledger.js gate .agents/ticket-runs/<TICKET> intake --evidence .agents/ticket-runs/<TICKET>/ticket-brief.md`
 
+## Stage 1.4 — FAST-TRACK CHECK (is the full loop worth it?)
+
+The loop's ceremony is priced for work where being wrong is expensive. On a genuinely small
+change it costs more than the change: a field run spent six QA rounds and both re-plans on a
+~360-line diff. Decide here, once, in the open.
+
+**FAST-TRACK applies only when ALL FOUR hold:**
+1. the change is describable in one sentence, without an "and";
+2. it touches roughly one module or is a mechanical edit repeated across several;
+3. it adds no dependency, no API or contract surface, no route, no auth or permissions
+   behaviour, and no `riskPaths` file;
+4. no reviewer would ask "why was it built this way?" — there is one obvious way.
+
+Anything else, including any doubt about (3), takes the full loop. A ticket that fails one
+condition fails the check; they are not weighed against each other.
+
+**On fast-track the loop still keeps its spine**: the worktree, the receipt chain, a
+done-list (validated and frozen), real verification, ONE QA dispatch, the report, and
+`ledger.js close`. What it skips is the survey, the approach record, and slice-by-slice
+dispatching — you implement inline. Record the decision and the reason in the ledger:
+`node <SKILL_DIR>/scripts/ledger.js gate <runDir> intake --evidence <runDir>/ticket-brief.md`
+after writing `fast-track: <the one-sentence description> — <why all four conditions hold>`
+into `ticket-brief.md`.
+
+**Escalating mid-way is expected, not a failure.** The moment a fourth condition turns out to
+be false — a second module, an unexpected contract, a reviewer question you cannot answer —
+stop, write the approach record, and continue on the full path. Say so in the report. What is
+forbidden is finishing on fast-track after noticing it no longer applies.
+
 ## Stage 1.5 — SURVEY (understand the existing code, PROPORTIONALLY)
 
 Learn the slice of the codebase the ticket touches so the loop builds WITH the grain of
@@ -316,6 +345,11 @@ subagent three failed dispatches from now. Proportional, same rule as the Survey
    none` (no visual contract to check). Criterion kinds: test | analyzer | runtime | token
    | manual. Every criterion must be checkable by the named command. Token values come from
    design-spec.md only.
+   **Write the behaviour as a trigger and a response**, the EARS shape: "when `<trigger>`, the
+   system shall `<observable response>`". A criterion in that form names the input that makes
+   it fail, so it is testable one case at a time; "the export works" names nothing and passes
+   whenever the author feels it does. This is guidance, not validated: the validator can see
+   that a `run:` command exists, not that the sentence beside it says anything.
    **A repo with a pre-existing baseline is the trap here.** "No new analyzer problems vs the
    branch point" cannot be settled by the bare analyzer: it exits non-zero at any non-empty
    baseline, so the criterion is red whether or not this change added anything. Either name a
@@ -519,7 +553,11 @@ Ledger entry after every attempt (append under `## Attempts`):
 ## Stage 5.5 — ADVERSARIAL QA
 
 Dispatch a FRESH-context QA subagent (counts against the dispatch budget — run
-`ledger.js dispatch` first) with `prompts/qa_agent.md`.
+`ledger.js dispatch` first) with `prompts/qa_agent.md`, using **`subagent_type: ticket-loop-qa`**.
+That agent ships with this plugin and is granted no Write, Edit or NotebookEdit: a reviewer able
+to fix what it was asked to judge would seal a verdict over a tree that has since moved. Do not
+substitute a general-purpose agent to save a step; the narrowed tool list is the reason the
+verdict means anything.
 
 **The judge reads the contract itself.** Fill `{RUN_DIR}` with `.agents/ticket-runs/<TICKET>`
 and `{SCRIPTS_DIR}` with `<SKILL_DIR>/scripts`, and let it open done.approved.md,

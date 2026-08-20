@@ -1,6 +1,24 @@
 {
   "//": "Merge this 'hooks' block into your .claude/settings.json (or settings.local.json). Do NOT copy this whole file over an existing settings file — merge only the hooks key. post_edit and stop_gate read .agents/ticket-loop.config.json and are inert without it; freeze_guard and dispatch_guard protect the run's frozen artifacts and dispatch budget and work with or without a profile.",
   "//security": "These hooks EXECUTE command strings from .agents/ticket-loop.config.json (verify.test, hooks.postEdit.format/analyze, hooks.stopGate.testCommand). Hooks run without a permission prompt. Only install these in repos whose config you trust — see the Security section in INSTALL.md.",
+  "//permissions": "OPTIONAL and independent of the hooks. The guard hooks refuse destructive and publishing commands only while a ticket run is ACTIVE, because outside one this is just your repo. These deny entries apply always. Merge them if you want the same floor in ordinary sessions; drop any that fight your workflow.",
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Write(./.env)",
+      "Write(./.env.*)",
+      "Write(./secrets/**)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Edit(./secrets/**)",
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
