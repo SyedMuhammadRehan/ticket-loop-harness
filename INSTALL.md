@@ -108,6 +108,14 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
    missing (`--restart` is the sanctioned way out, and it records that the history was lost).
 3. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
    browser tools (Jira/Figma/Playwright) are optional and degrade gracefully.
+4. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
+   block. It is not part of the harness and nothing here depends on it. It exists because the
+   guard hooks refuse destructive and publishing commands **only while a ticket run is
+   active** — outside one this is just your repo, and the harness deliberately gets out of the
+   way. If you want the same floor in ordinary sessions, merge the block; it denies reads and
+   writes of `.env*` and `secrets/**`, plus `rm -rf`, `git push --force` and `git reset
+   --hard`. Drop any entry that fights how you work: a rule you disable in irritation protects
+   nothing, and a deny list you have stopped reading is worse than none.
 
 ## Test it first (do not skip)
 
