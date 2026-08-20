@@ -62,6 +62,9 @@ plugins/ticket-loop/
     freeze_guard.js                  #   PreToolUse: default-deny writes to frozen + control-plane files
     dispatch_guard.js                #   PreToolUse(Task): the dispatch budget, enforced at the tool call
     stop_gate.js                     #   Stop: verify main repo + every worktree, vs the BRANCH POINT
+    hygiene.js                       #   what the stop gate reads in the ADDED lines: debug artefacts, secrets
+  agents/
+    ticket-loop-qa.md                # the adversarial QA judge — granted no Write or Edit
   skills/ticket-loop/
     SKILL.md                         # the orchestration playbook (stages 0–7) — STACK-AGNOSTIC
     report-template.md               # the evidence report's schema
@@ -74,7 +77,7 @@ plugins/ticket-loop/
       ledger.js                      # budget, stage receipts, check history, integrity report
       memory.js                      # cross-run lessons store
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
-settings.example.json                # manual hook registration (non-plugin installs)
+settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
 ```
 
@@ -224,7 +227,10 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
 - **The work stays yours to publish** — while a run is active the guard refuses `git push`,
   `git merge`, `git rebase` and `gh pr create|merge`. The loop commits each green slice inside
   its own worktree and stops there; nothing reaches a remote or your default branch. Once the
-  run is closed the fence lifts, because then it is just your repo again.
+  run is closed the fence lifts, because then it is just your repo again. If you want a floor
+  that does not lift, `settings.example.json` carries an optional `permissions.deny` block
+  (`.env*`, `secrets/**`, `rm -rf`, force-push, `git reset --hard`); it is independent of the
+  harness and nothing here depends on it. See INSTALL.md step 4.
 - **Frozen done-list** — `freeze_guard.js` is **default-deny** over the protected namespace: a
   command that references `done.md` / `*.approved.md` / the chain is refused unless it is
   read-only or an exact sanctioned harness invocation. That covers the routes a verb blocklist
