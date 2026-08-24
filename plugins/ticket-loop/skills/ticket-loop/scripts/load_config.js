@@ -35,6 +35,14 @@ const DEFAULTS = {
   qaScope: {
     smallDiffLines: 60,
   },
+  // Where installed dependencies live, so a fresh worktree can reuse the main repo's copy
+  // instead of installing again. Reuse happens only when `lockfile` is byte-identical in both,
+  // so the verified tree is the one this branch actually resolves to. Both null = always
+  // install (`node_modules`/`package-lock.json`, `.venv`/`requirements.txt`).
+  deps: {
+    dir: null,
+    lockfile: null,
+  },
   // A dispatch costs its whole prompt before it does any work, so small jobs are cheaper
   // done inline. Both are advisory to the orchestrator and reported afterwards, not enforced
   // at the dispatch — nothing at that moment can know how large the change will turn out.

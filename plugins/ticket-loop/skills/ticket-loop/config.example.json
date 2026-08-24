@@ -25,6 +25,8 @@
       "qa": "inherit"
     },
     "qaScope": { "smallDiffLines": 60 },
+    "//deps": "Where installed dependencies live, so a fresh worktree reuses the main repo's copy instead of installing again — the largest fixed cost in a run. Reuse happens ONLY when lockfile is byte-identical in both trees, so what gets verified is what this branch resolves to; any difference falls back to verify.pubGet. Both null = always install. node: node_modules/package-lock.json. python: .venv/requirements.txt. dart: .dart_tool/pubspec.lock.",
+    "deps": { "dir": null, "lockfile": null },
     "//dispatchPolicy": "A subagent costs its whole prompt before it works, so small slices are cheaper inline. minSliceLines: below this many expected changed lines, do the slice inline rather than dispatching (test-only slices always inline). promptBudgetChars: prompts above this are reported as over-budget by 'ledger.js cost'. Both are advisory and reported afterwards — nothing at dispatch time can know how large a change will turn out.",
     "dispatchPolicy": { "minSliceLines": 50, "promptBudgetChars": 32000 },
     "attribution": {
