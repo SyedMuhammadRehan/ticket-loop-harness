@@ -107,6 +107,9 @@ review were interactions between two rows below, which the code alone did not ma
 | 49 | A debug artefact the change added blocks a "done" claim | `hygiene.js` → `DEBUG_ARTEFACTS` | `stop_gate.test.js` :: `a green suite still blocks when the change adds a debug artefact` | A stray console.log passes every test that exists |
 | 50 | An apparent secret blocks, and its value is never echoed back | `hygiene.js` → `SECRET_ASSIGNMENT` | `hygiene.test.js` :: `a credential-shaped assignment is reported, without echoing the value` | The gate's output is fed to the session, so printing the value would spread it |
 | 51 | Only lines the change ADDED are judged | `hygiene.js` → `addedLines` | `hygiene.test.js` :: `pre-existing logging on an untouched line is not reported` | A gate that fires on code the change did not touch is one people learn to route around |
+| 52 | QA reading scope is computed, not eyeballed, and sized by insertions | `ledger.js` → `cmdQaScope` | `qascope.test.js` :: `a large deletion is FOCUSED — nothing was added to review` | Summing insertions and deletions bought a full-codebase sweep for changes that added nothing |
+| 53 | A risk-path touch is FULL scope at any size | `ledger.js` → `cmdQaScope` | `qascope.test.js` :: `a one-line change in a risk path is FULL regardless of size` | Where the blast radius is the point, "how much" is the wrong question |
+| 54 | Dependencies are reused only when the lockfile is identical | `worktree_deps.js` → `sameFile` | `worktree_deps.test.js` :: `a different lockfile installs instead of reusing` | Verifying against a dependency tree the branch does not resolve to makes every downstream check a lie |
 
 ## Preflight
 

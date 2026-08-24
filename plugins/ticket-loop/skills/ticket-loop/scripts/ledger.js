@@ -17,6 +17,7 @@
 //   ledger.js archive <runDir>                     sanctioned CLEAN-RESTART move
 //   ledger.js status <runDir>                      counters as JSON
 //   ledger.js cost <runDir> [--worktree <path>]    what the run spent (proxies, not tokens)
+//   ledger.js qascope <runDir> [--worktree <path>] how widely the QA judge should read
 //   ledger.js clear <runDir> <glob> <reason>       record a human's GATE A/C risk clearance
 //   ledger.js revise <runDir> <file> --reason ".."  account for an edit to a sealed document
 //   ledger.js outcome <runDir> <seq> <ok|died>     what a dispatch actually produced
@@ -50,6 +51,29 @@ const CHECK_METHODS = ['command', 'observed', 'human', 'asserted'];
 const DISPATCH_OUTCOMES = ['ok', 'died'];
 // Mirrors load_config's dispatchPolicy default, for a run whose profile does not set one.
 const DEFAULT_PROMPT_BUDGET = 32000;
+const DEFAULT_SMALL_DIFF_LINES = 60;
+
+// The riskPaths globs, matched the way the guard matches them. Kept here rather than imported
+// from the hooks: scripts and hooks install to different places, and a require across that
+// boundary breaks the by-hand install.
+function globToRegExp(glob) {
+  const g = String(glob).replace(/\\/g, '/');
+  let out = '';
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === '*') {
+      if (g[i + 1] === '*') {
+        out += '.*';
+        i++;
+        if (g[i + 1] === '/') i++; // `**/` also matches zero directories
+      } else {
+        out += '[^/]*';
+      }
+    } else if (c === '?') out += '[^/]';
+    else out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`);
+}
 const MIN_REVISION_REASON = 8;
 
 // Files a revision receipt may never cover: the frozen contract, and control-plane state whose
@@ -708,6 +732,68 @@ function cmdClear(runDir, glob, reason) {
   console.log(`ledger: cleared "${glob}" — recorded in the chain and mirrored for the hooks`);
 }
 
+// What the QA judge should READ, decided here rather than eyeballed. Two rules, and the second
+// is the one prose got wrong: a diff is sized by what it ADDED. Deleting a 68-line component is
+// not 68 lines of new surface to review, but a line count that sums insertions and deletions
+// says it is, so every removal bought a full-codebase sweep it did not need. A risk path still
+// forces FULL at any size, because there the question is never "how much".
+function cmdQaScope(runDir, worktree) {
+  requireChain(runDir);
+  const cfg = readConfig();
+  const limit = Number((cfg.qaScope || {}).smallDiffLines);
+  const threshold = Number.isInteger(limit) && limit >= 0 ? limit : DEFAULT_SMALL_DIFF_LINES;
+  const { baseSha } = caps(runDir);
+  const tree = worktree || '.';
+
+  const numstat = (args) => spawnSync('git', ['-C', tree, 'diff', '--numstat', ...args], { encoding: 'utf8', timeout: 30000 });
+  const ranges = [];
+  if (baseSha) ranges.push(numstat([`${baseSha}..HEAD`]));
+  ranges.push(numstat(['HEAD']));
+
+  let added = 0;
+  let removed = 0;
+  const files = new Set();
+  let readable = false;
+  for (const res of ranges) {
+    if (res.status !== 0) continue;
+    readable = true;
+    for (const line of (res.stdout || '').split('\n').filter((l) => l.trim())) {
+      const [a, r, file] = line.split('\t');
+      if (a !== '-') added += Number(a) || 0;
+      if (r !== '-') removed += Number(r) || 0;
+      if (file) files.add(file.replace(/\\/g, '/'));
+    }
+  }
+
+  const riskPaths = riskPathsFromConfig();
+  const touchedRiskPaths = [...files].filter((f) => riskPaths.some((g) => globToRegExp(g).test(f)));
+
+  // An unreadable diff is not a small one. Nothing about the change is known, so the judge
+  // reads widely rather than narrowly.
+  const reasons = [];
+  if (!readable) reasons.push('the diff could not be read, so its size is unknown');
+  if (touchedRiskPaths.length) reasons.push(`risk paths touched: ${touchedRiskPaths.join(', ')}`);
+  if (added > threshold) reasons.push(`${added} inserted line(s) exceeds qaScope.smallDiffLines (${threshold})`);
+  const scope = reasons.length ? 'FULL' : 'FOCUSED';
+
+  process.stdout.write(
+    JSON.stringify(
+      {
+        scope,
+        why: reasons.length ? reasons : [`${added} inserted line(s) is within qaScope.smallDiffLines (${threshold}), no risk path touched`],
+        insertions: added,
+        deletions: removed,
+        filesChanged: files.size,
+        threshold,
+        touchedRiskPaths,
+        label: `qa: contract [${scope.toLowerCase()}]`,
+      },
+      null,
+      2
+    ) + '\n'
+  );
+}
+
 function readConfig() {
   try {
     return JSON.parse(fs.readFileSync(path.join('.agents', 'ticket-loop.config.json'), 'utf8'));
@@ -1027,6 +1113,8 @@ function main() {
       return cmdStatus(runDir);
     case 'cost':
       return cmdCost(runDir, worktree);
+    case 'qascope':
+      return cmdQaScope(runDir, worktree);
     case 'clear':
       return cmdClear(runDir, rest[0], rest.slice(1).join(' '));
     case 'revise':

@@ -1,5 +1,16 @@
 # Ticket Loop Report — {TICKET}
 
+> **Size the report to the run.** A FAST-TRACK run writes the SHORT FORM: the header, Integrity,
+> Criteria evidence, QA verdict, Known gaps and Manual actions, and nothing else. The omitted
+> sections are the ones that carry no information on a fast-track run — there was no approach
+> record to summarise, no attempt history, and one verification pass makes a check-history table
+> a list of one. Give Cost a single line rather than the full block.
+>
+> This is a limit on WORDS, never on evidence. Every criterion still appears with its result and
+> how it was reached, the `verify` output still goes in verbatim, and everything not verified is
+> still named. A hundred lines nobody reads is not more evidence than fifteen lines someone does.
+> Any run that is not fast-track writes the full report below.
+
 Status: {COMPLETE | INCOMPLETE — <why>}   ← the WORK: did every criterion pass
 Branch: {BRANCH} (worktree {WORKTREE}) — merge/push are manual
 Duration: {WALL_CLOCK} | Dispatches: {N}/{MAX} ({N} died, {N} over prompt budget — see Cost) | Re-plans: {N}/{MAX}

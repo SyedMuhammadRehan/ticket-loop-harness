@@ -108,9 +108,15 @@ which is installed, and that a NEW SESSION is the only fix. Do not proceed.
    - `git worktree add ../ticket-<TICKET> -b ticket/<TICKET>`
    - Record the base SHA: `git -C ../ticket-<TICKET> rev-parse HEAD` → `base:` in
      the ledger header below; stage 5.5 diffs against it.
-   - Inside the worktree: run `{verify.pubGet}` then `{verify.codegen}` from the profile.
-     Skip a step whose config value is null. Where a stack gitignores generated sources, a
-     fresh worktree does not compile until codegen has run.
+   - Dependencies: first
+     `node <SKILL_DIR>/scripts/worktree_deps.js ../ticket-<TICKET>`. It reuses the main repo's
+     installed directory when the profile's `deps.lockfile` is byte-identical in both, which is
+     the largest fixed cost in a run and buys nothing when the dependencies have not changed.
+     It prints `linked` / `present` / `install`. **Only when it prints `install`** do you run
+     `{verify.pubGet}` — it says `install` for every case where the reuse cannot be shown safe,
+     and that fallback is not a failure. Then run `{verify.codegen}`. Skip a step whose config
+     value is null. Where a stack gitignores generated sources, a fresh worktree does not
+     compile until codegen has run.
    - If any of these fail → STOP (spec §13); never fall back to the user's tree.
      ALL implementation happens inside the worktree. The run dir stays in the MAIN repo
      (it is gitignored).
@@ -571,16 +577,21 @@ Fill `{CONVENTIONS}` with the conventions recorded in codebase-map.md plus the p
 `stack`; if the survey was skipped, fill it with "the conventions evident in the surrounding
 code — no stack-specific assumptions".
 
-**Scope the judge to the diff (profile `qaScope`):** total the changed lines — committed
-(`git -C ../ticket-<TICKET> diff --shortstat <base>..HEAD`, insertions plus deletions) and
-uncommitted (`diff --shortstat HEAD`). If that total is at most `qaScope.smallDiffLines`
-AND no changed file matches the profile's `riskPaths`, fill `{QA_SCOPE}` with:
-"FOCUSED — read the changed files, every file that imports or consumes them, and the
-contract artifacts; skip the wider codebase sweep." Otherwise fill it with:
-"FULL — sweep as widely as the contract and diff warrant." A risk-path touch always gets
-FULL regardless of size, and the scope goes into the ledger label (`"qa: contract
-[focused]"`) so a focused review can never pass itself off as a full one. The scope changes
-what the judge reads, never what it may conclude — verdict authority is identical.
+**Scope the judge to the diff — the script decides, not your arithmetic:**
+`node <SKILL_DIR>/scripts/ledger.js qascope .agents/ticket-runs/<TICKET> --worktree ../ticket-<TICKET>`
+It counts both spans (committed and uncommitted), sizes the change by INSERTIONS, checks the
+changed files against the profile's `riskPaths`, and prints `scope`, `why` and the ledger
+`label` to use. Fill `{QA_SCOPE}` from it:
+- `FOCUSED` → "FOCUSED — read the changed files, every file that imports or consumes them, and
+  the contract artifacts; skip the wider codebase sweep."
+- `FULL` → "FULL — sweep as widely as the contract and diff warrant."
+
+Use the printed `label` verbatim on the `ledger.js dispatch` call, so a focused review can
+never pass itself off as a full one. Deletions are reported but do not enlarge the scope: a
+removed file is not new surface to review, and counting it bought full sweeps for changes that
+added nothing. A risk-path touch is FULL at any size, and an unreadable diff is FULL too,
+because an unknown size is not a small one. The scope changes what the judge READS, never what
+it may conclude — verdict authority is identical.
 
 Fill `{DIFF}` with BOTH committed and uncommitted work, or the judge approves something
 different from what the human receives:
