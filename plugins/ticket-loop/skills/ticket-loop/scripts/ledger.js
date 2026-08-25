@@ -18,6 +18,7 @@
 //   ledger.js status <runDir>                      counters as JSON
 //   ledger.js cost <runDir> [--worktree <path>]    what the run spent (proxies, not tokens)
 //   ledger.js qascope <runDir> [--worktree <path>] how widely the QA judge should read
+//   ledger.js qascope --base <ref> [--worktree <path>]  same, with no run behind it
 //   ledger.js clear <runDir> <glob> <reason>       record a human's GATE A/C risk clearance
 //   ledger.js revise <runDir> <file> --reason ".."  account for an edit to a sealed document
 //   ledger.js outcome <runDir> <seq> <ok|died>     what a dispatch actually produced
@@ -737,12 +738,15 @@ function cmdClear(runDir, glob, reason) {
 // not 68 lines of new surface to review, but a line count that sums insertions and deletions
 // says it is, so every removal bought a full-codebase sweep it did not need. A risk path still
 // forces FULL at any size, because there the question is never "how much".
-function cmdQaScope(runDir, worktree) {
-  requireChain(runDir);
+// `--base <ref>` judges a diff with no run behind it, for the standalone review. Everything
+// else is identical, deliberately: a review outside a run should size and fence a change the
+// same way one inside it does.
+function cmdQaScope(runDir, worktree, baseRef) {
+  if (!baseRef) requireChain(runDir);
   const cfg = readConfig();
   const limit = Number((cfg.qaScope || {}).smallDiffLines);
   const threshold = Number.isInteger(limit) && limit >= 0 ? limit : DEFAULT_SMALL_DIFF_LINES;
-  const { baseSha } = caps(runDir);
+  const baseSha = baseRef || caps(runDir).baseSha;
   const tree = worktree || '.';
 
   const numstat = (args) => spawnSync('git', ['-C', tree, 'diff', '--numstat', ...args], { encoding: 'utf8', timeout: 30000 });
@@ -1066,6 +1070,7 @@ function main() {
   const promptChars = takeFlag(argv, '--prompt-chars')[0];
   const checkMethod = takeFlag(argv, '--by')[0];
   const worktree = takeFlag(argv, '--worktree')[0];
+  const baseRef = takeFlag(argv, '--base')[0];
   const evidence = takeFlag(argv, '--evidence');
   const inputs = takeFlag(argv, '--inputs');
   const revisionReason = takeFlag(argv, '--reason')[0];
@@ -1077,9 +1082,11 @@ function main() {
     return;
   }
 
-  if (!cmd || !runDir) {
+  // `qascope --base <ref>` reviews a diff with no run behind it, so it takes no runDir.
+  if (!cmd || (!runDir && !(cmd === 'qascope' && baseRef))) {
     console.error(
       'usage: ledger.js init <runDir> [baseSha] [--restart] | dispatch <runDir> [label] | replan <runDir> [reason]\n' +
+        '       ledger.js qascope <runDir> | qascope --base <ref> [--worktree <path>]\n' +
         '       ledger.js gate <runDir> <stage> [--evidence <file>]... | require <runDir> <stage>\n' +
         '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> --by <command|observed|human|asserted> [note]\n' +
         '       ledger.js verdict <runDir> <verdict> [--inputs <file>]...\n' +
@@ -1114,7 +1121,7 @@ function main() {
     case 'cost':
       return cmdCost(runDir, worktree);
     case 'qascope':
-      return cmdQaScope(runDir, worktree);
+      return cmdQaScope(runDir, worktree, baseRef);
     case 'clear':
       return cmdClear(runDir, rest[0], rest.slice(1).join(' '));
     case 'revise':

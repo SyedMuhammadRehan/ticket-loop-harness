@@ -65,6 +65,9 @@ plugins/ticket-loop/
     hygiene.js                       #   what the stop gate reads in the ADDED lines: debug artefacts, secrets
   agents/
     ticket-loop-qa.md                # the adversarial QA judge — granted no Write or Edit
+  skills/qa-check/
+    SKILL.md                         # /qa-check: one adversarial pass over the current diff
+    prompts/qa_check.md              #   judged against a description, not a contract
   skills/ticket-loop/
     SKILL.md                         # the orchestration playbook (stages 0–7) — STACK-AGNOSTIC
     report-template.md               # the evidence report's schema
@@ -159,6 +162,25 @@ two tiers:
 
 This is the difference between an agent that repeats the same mistakes and one that gets better
 with every ticket. Managed by `scripts/memory.js` (zero-dep).
+
+## `/qa-check` — the review without the loop
+
+Most changes do not need a frozen contract and an hour. `/qa-check <what this was meant to do>`
+dispatches the same read-only judge over your current diff, once, and prints what it found. It
+writes nothing and records nothing.
+
+It is weaker than the loop's QA stage, and the difference is the point rather than a caveat.
+Stage 5.5 judges against a done-list written *before* the code, validated, frozen and sealed; it
+sees the sealed record of how every criterion was established; its verdict is a receipt the run
+cannot close without; and a BLOCK routes back into implementation until the work converges.
+`/qa-check` has none of that. It reads a description written after the fact, by the person whose
+work is under review, and it cannot tell what was actually run.
+
+So it says so. Its output opens by naming what it could not establish, and it reports
+`SHIP IT` / `FIX FIRST` / `THINK AGAIN` rather than the loop's verdict words, so a standalone
+result cannot be pasted somewhere and read as a sealed one.
+
+Use it for everyday work. Use the loop when being wrong is expensive.
 
 ## How the loop stays honest
 
@@ -304,6 +326,13 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   conversation is visible after the fact rather than invisible.
 - **GATE B (design conflict).** Judgement — no code can tell you a Figma node contradicts the
   ticket text.
+- **That `/qa-check` records nothing.** The standalone review is told, in its skill and its
+  prompt, never to touch a run's receipt chain, because a review with no contract behind it
+  sealed into a run would launder an unconstrained opinion into that run's evidence. Nothing
+  enforces it: the judge has Bash, so a determined or confused agent could still call
+  `ledger.js`. What you get is that the two are separated by design — the standalone never
+  receives a run dir, and its output banner says what it lacked — not that the boundary is a
+  fence. If you care, `ledger.js verify` still shows every receipt a run collected.
 - **Whether `verify.test` can actually fail.** Preflight warns about the shapes decidable from
   the command string: a tail that discards the exit code (`|| true`, a terminal `; exit 0`) and
   an inline one-liner standing in for the suite (`node -e "process.exit(0)"`). It says nothing
