@@ -8,7 +8,7 @@ description: Adversarial review of the working tree's changes against a descript
 An adversarial second opinion on what has changed, judged against a description you supply.
 One pass. It writes nothing, changes nothing, and records nothing.
 
-**Be honest about what this is.** The ticket loop's Stage 5.5 judge is stronger than this, and
+**Be honest about what this is.** The ticket loop's Stage 9 judge is stronger than this, and
 the difference is not small. There, the judge reads a done-list that was written before the
 code, validated, frozen and sealed, and it sees the sealed record of how each criterion was
 established. Its verdict is a receipt the run cannot close without, and a BLOCK routes back

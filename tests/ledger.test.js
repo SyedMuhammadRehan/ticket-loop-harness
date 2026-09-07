@@ -58,6 +58,8 @@ test('init writes the mirror, a ledger.md skeleton, and a chain OUTSIDE the run 
     assert.ok(ledgerMd.includes('# Ledger — T-1'));
     assert.ok(ledgerMd.includes('base: deadbeef'));
     assert.ok(ledgerMd.includes('## Attempts'));
+    // The write guard refuses a plain mkdir under the run dir, so init has to make this.
+    assert.ok(fs.statSync(path.join(runDir, 'screenshots')).isDirectory(), 'init did not create screenshots/');
     // The chain must not live where the loop is allowed to write.
     assert.ok(fs.existsSync(path.join(chainDirFor(root), 'chain.jsonl')));
     assert.ok(fs.existsSync(path.join(chainDirFor(root), 'key')));

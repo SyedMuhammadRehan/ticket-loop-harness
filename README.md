@@ -69,7 +69,7 @@ plugins/ticket-loop/
     SKILL.md                         # /qa-check: one adversarial pass over the current diff
     prompts/qa_check.md              #   judged against a description, not a contract
   skills/ticket-loop/
-    SKILL.md                         # the orchestration playbook (stages 0–7) — STACK-AGNOSTIC
+    SKILL.md                         # the orchestration playbook (stages 0–11) — STACK-AGNOSTIC
     report-template.md               # the evidence report's schema
     prompts/                         # implementer / fixer / adversarial-QA subagent prompts
     scripts/
@@ -170,7 +170,7 @@ dispatches the same read-only judge over your current diff, once, and prints wha
 writes nothing and records nothing.
 
 It is weaker than the loop's QA stage, and the difference is the point rather than a caveat.
-Stage 5.5 judges against a done-list written *before* the code, validated, frozen and sealed; it
+Stage 9 judges against a done-list written *before* the code, validated, frozen and sealed; it
 sees the sealed record of how every criterion was established; its verdict is a receipt the run
 cannot close without; and a BLOCK routes back into implementation until the work converges.
 `/qa-check` has none of that. It reads a description written after the fact, by the person whose
@@ -281,7 +281,7 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   without running a single test. When there is no branch point to diff against — no base ref, or
   HEAD *is* the base because the session is committing straight to the default branch — it runs
   the full verification instead of passing on an empty diff, and every path that ends in "not
-  verified" says so on stderr so Stage 7 has something to disclose.
+  verified" says so on stderr so Stage 11 has something to disclose.
 - **A green suite is not the whole check** — the same gate reads the lines the change ADDED and
   refuses a "done" claim that ships a debug artefact (`console.log`, `debugger`) or an apparent
   secret (a credential-shaped name assigned a literal of any length worth hiding). Tests pass
@@ -417,7 +417,7 @@ Named limits, so they are not mistaken for guarantees:
   or break the chain — it fails loudly (exit 4) rather than miscounting silently, but a run that
   dispatches subagents in parallel can end up unreportable.
 
-The whole enforcement layer is covered by a test suite (`node tests/run.js`, 150+ tests), which
+The whole enforcement layer is covered by a test suite (`node tests/run.js`), which
 includes the full corpus of bypasses found while attacking it, as regression cases — including a
 known-answer test for the seal, because the suite once passed in full with the HMAC replaced by
 an unkeyed hash.
@@ -453,7 +453,7 @@ Proceed? Acceptance criteria found (3), Figma link found. Clear this path? [y/n]
 You clear it. (If there had been *no* acceptance criteria and *no* design link, it would have
 stopped and asked for scope instead of guessing — that refusal is the point.)
 
-**Stage 2–3 (design + approach + frozen done-list).** It pulls the Figma node's exact
+**Stage 4–6 (design + approach + frozen done-list).** It pulls the Figma node's exact
 values into `design-spec.md`. The ticket is feature-sized (repository + screen), so it
 records the design decision in `approach.md` before writing the contract:
 
@@ -489,7 +489,7 @@ mode above is covered), then **freezes** it:
 
 `--dry-run` would stop here — brief, design-spec, frozen done-list, no code.
 
-**Stage 4–6 (implement + verify + loop).** One implementer slice per criterion, TDD. C3
+**Stage 7–10 (implement + verify + loop).** One implementer slice per criterion, TDD. C3
 fails the first time — the widget used the wrong token. The ledger records it and the fixer is
 dispatched with the exact mismatch:
 
@@ -501,12 +501,12 @@ dispatched with the exact mismatch:
 - forbidden-now: relying on theme.error for the error title
 ```
 
-Second attempt passes. Each green slice commits inside the worktree. Stage 5 then runs the
+Second attempt passes. Each green slice commits inside the worktree. Stage 8 then runs the
 full done-list: `dart analyze` clean, `flutter test --exclude-tags golden` green, token test
 green, and a runtime check (Playwright) confirms the error state renders with no overflow at
 1440px and 768px.
 
-**Stage 5.5–7 (adversarial QA + report).** A fresh-context judge — which sees the contract and
+**Stage 9–11 (adversarial QA + report).** A fresh-context judge — which sees the contract and
 the diff but *not* the implementer's reasoning — returns:
 
 ```

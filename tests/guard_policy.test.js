@@ -256,6 +256,17 @@ test('a glob that reaches the protected namespace counts as naming it', () => {
   assert.ok(!denied(`${RM} build/*.tmp`), 'globs outside the namespace are untouched');
 });
 
+// The harness's own repo is called ticket-loop-harness; a substring match on the chain
+// directory's name would deny every sanctioned command that follows a cd into it.
+test('a cd into a directory that merely contains a protected name keeps per-statement judging', () => {
+  const RM = 'rm -r' + 'f';
+  assert.ok(!denied(`cd C:/work/ticket-loop-harness && node scripts/ledger.js init ${RUN} abc123`));
+  assert.ok(!denied(`cd /home/me/my-ticket-runs-app && node scripts/ledger.js status ${RUN}`));
+  assert.ok(denied(`cd .git/ticket-loop && ${RM} PROJ-1`), 'the chain dir itself is still a protected cd');
+  assert.ok(denied(`cd C:/work/ticket-loop-harness/${RUN} && ${RM} budget.json`));
+  assert.ok(denied(`cd "C:/work/ticket-loop-harness/.git/ticket-loop" && ${RM} PROJ-1`));
+});
+
 test('per-statement judging does not reopen the cross-statement bypasses', () => {
   const RM = 'rm -r' + 'f';
   assert.ok(denied(`cd ${RUN} && ${RM} .`));

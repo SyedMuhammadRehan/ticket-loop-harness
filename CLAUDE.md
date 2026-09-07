@@ -20,7 +20,10 @@ enforcement layer), five scripts (the mechanical checks), and three subagent pro
 - **Hooks must never wedge a session on malformed input** (exit 0), but **must** block real
   violations (exit 2). Both halves are tested.
 - **Fail closed only where a run is active.** Outside a ticket run every hook returns
-  immediately — a broken install must not break unrelated projects.
+  immediately — a broken install must not break unrelated projects. The one permanent rule is
+  the write guard's default-deny over `.agents/ticket-runs/` and the chain: a closed run's
+  record stays protected, so a command that names that namespace is refused even with no run
+  active unless it is read-only or a sanctioned harness invocation.
 
 ## The rule that matters most
 
