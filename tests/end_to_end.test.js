@@ -71,31 +71,31 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
       return res;
     };
 
-    // Stage 1.5 — survey (feature-sized, so an approach becomes mandatory)
+    // Stage 3 — survey (feature-sized, so an approach becomes mandatory)
     fs.writeFileSync(path.join(runDir, 'codebase-map.md'), '# map\n- data/profile_repository.py\n');
     ok(['gate', runDir, 'survey', '--evidence', path.join(runDir, 'codebase-map.md')]);
 
-    // Stage 2.5 — approach
+    // Stage 5 — approach
     fs.writeFileSync(path.join(runDir, 'approach.md'), APPROACH);
     ok(['gate', runDir, 'approach', '--evidence', path.join(runDir, 'approach.md')]);
 
-    // Stage 3 — define done, validate, freeze
+    // Stage 6 — define done, validate, freeze
     fs.writeFileSync(path.join(runDir, 'done.draft.md'), DRAFT);
     assert.strictEqual(runScript(VALIDATE, [runDir], { cwd: root }).status, 0);
     assert.strictEqual(runScript(FREEZE, [runDir], { cwd: root }).status, 0);
     ok(['gate', runDir, 'validate']);
 
-    // Stage 4 — implement (dispatches counted by the hook)
+    // Stage 7 — implement (dispatches counted by the hook)
     for (let i = 0; i < 3; i++) assert.strictEqual(dispatch(root).status, 0);
 
-    // Stage 5 — verify, recording each check
+    // Stage 8 — verify, recording each check
     ok(['check', runDir, 'C1', 'PASS', '--by', 'command', '5/5']);
     ok(['check', runDir, 'C2', 'FAIL', '--by', 'command', 'wrong copy']);
     ok(['check', runDir, 'C2', 'PASS', '--by', 'command', 'fixed on attempt 2']);
     ok(['check', runDir, 'C3', 'PASS', '--by', 'observed']);
     ok(['gate', runDir, 'verify']);
 
-    // Stage 5.5 — QA seals its own verdict over the contract it read
+    // Stage 9 — QA seals its own verdict over the contract it read
     assert.strictEqual(dispatch(root).status, 0);
     assert.strictEqual(
       ledger(root, [
@@ -107,7 +107,7 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
     );
     ok(['gate', runDir, 'qa']);
 
-    // Stage 7 — report, then CLOSE. The run stays active until it is closed.
+    // Stage 11 — report, then CLOSE. The run stays active until it is closed.
     fs.writeFileSync(path.join(runDir, 'report.md'), '# Report — T-1\nStatus: COMPLETE\n');
     ok(['gate', runDir, 'report', '--evidence', path.join(runDir, 'report.md')]);
 

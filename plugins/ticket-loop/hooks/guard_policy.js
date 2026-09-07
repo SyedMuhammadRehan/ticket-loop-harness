@@ -125,7 +125,10 @@ function statements(cmd) {
 }
 
 // After this, later statements operate in the namespace while naming nothing.
-const CD_INTO_PROTECTED = /\b(cd|pushd|chdir|set-location|sl)\b[^\n;|&]*?(ticket-runs|ticket-loop|\.ticket-loop-chain)/;
+// Whole path segments only: a repo that merely lives under `ticket-loop-harness/` is not the
+// chain directory, and a cd into it must not void the per-statement judging below.
+const CD_INTO_PROTECTED =
+  /\b(cd|pushd|chdir|set-location|sl)\b[^\n;|&]*?[\\\/\s'"=](ticket-runs|ticket-loop|\.ticket-loop-chain)(?=$|[\\\/\s'";|&)])/;
 
 // Opaque execution — no legitimate use inside a ticket run, and the whole point is that
 // the guard cannot see what it does.

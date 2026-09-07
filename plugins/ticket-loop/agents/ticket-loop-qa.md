@@ -1,6 +1,6 @@
 ---
 name: ticket-loop-qa
-description: Adversarial QA judge for a ticket-loop run. Reads the frozen contract and the diff from disk, judges the work against them, and seals its verdict in the run's receipt chain. Use for Stage 5.5 of the ticket loop.
+description: Adversarial QA judge for a ticket-loop run. Reads the frozen contract and the diff from disk, judges the work against them, and seals its verdict in the run's receipt chain. Use for Stage 9 of the ticket loop.
 tools: Read, Glob, Grep, Bash
 ---
 

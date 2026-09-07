@@ -242,7 +242,9 @@ function requireOpen(runDir, what) {
 }
 
 function cmdInit(runDir, baseSha, opts) {
-  fs.mkdirSync(runDir, { recursive: true });
+  // The run dir is a protected namespace: the write guard refuses a plain mkdir under it, so
+  // the subdirectories the playbook expects have to come from a sanctioned invocation.
+  fs.mkdirSync(path.join(runDir, 'screenshots'), { recursive: true });
 
   // A chain that is GONE is not the same as a run that never started: without this check,
   // `rm -rf` on the chain dir followed by `init` zeroes every counter and receipt and still

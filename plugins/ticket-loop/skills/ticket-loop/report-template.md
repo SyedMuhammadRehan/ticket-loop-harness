@@ -95,7 +95,7 @@ Echoed verbatim from assumptions.md (do not paraphrase):
 ## Design decisions
 
 {From approach.md: the chosen option and why the alternative lost. "n/a — trivial ticket" if
-Stage 2.5 was skipped. Include any `## Revisions` entries — a re-plan is a design change and
+Stage 5 was skipped. Include any `## Revisions` entries — a re-plan is a design change and
 belongs in the record.}
 
 ## Known gaps / follow-ups

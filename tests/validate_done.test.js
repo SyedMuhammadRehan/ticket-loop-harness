@@ -115,7 +115,7 @@ test('runtime criteria may use a non-command runner', () => {
   }
 });
 
-// --- approach.md contract (Stage 2.5) ---
+// --- approach.md contract (Stage 5) ---
 
 const VALID_APPROACH = `# Approach — T-1
 ## Data

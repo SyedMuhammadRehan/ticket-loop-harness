@@ -44,7 +44,7 @@ test('the QA agent is granted no tool that can edit the tree', () => {
   assert.ok(granted.includes('Bash'), 'the judge must be able to run the diff and seal its verdict');
 });
 
-test('the playbook dispatches Stage 5.5 to that agent by name', () => {
+test('the playbook dispatches Stage 9 to that agent by name', () => {
   const skill = fs.readFileSync(
     path.join(REPO_ROOT, 'plugins', 'ticket-loop', 'skills', 'ticket-loop', 'SKILL.md'),
     'utf8'
