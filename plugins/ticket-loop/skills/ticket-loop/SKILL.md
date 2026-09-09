@@ -207,7 +207,7 @@ reality proved wrong>`, then `ledger.js revise`; the QA judge BLOCKs an unrecord
    edited since. It records the `freeze` gate; then
    `node <SKILL_DIR>/scripts/ledger.js gate <runDir> validate`.
    From here `done.md` and `done.approved.md` are read-only; new criteria go to
-   `<runDir>/done-additions.md`, additive only.
+   `<runDir>/done-additions.md`, which the freeze creates with a header only, additive only.
 4. **`--dry-run` ends here:** print the paths of the brief, design-spec, approach (if any) and
    frozen done-list with a three-line summary of each, and stop. Say that the run stays active
    (the guard keeps protecting the run dir) until a later `/ticket-loop <TICKET>` RESUMEs it
