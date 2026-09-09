@@ -261,7 +261,8 @@ Record every result as you go, naming how it was established:
 `node <SKILL_DIR>/scripts/ledger.js check <runDir> <C-id> PASS|FAIL|SKIPPED --by <method> "<note>"`
 Methods: `command` (a command ran and its exit code decided), `observed` (the running system
 was exercised and seen), `human` (a person confirmed; the only way a `(manual)` criterion
-passes), `asserted` (concluded from source or a summary; can back only SKIPPED). Mirror each
+passes), `asserted` (concluded from source or a summary; can back only SKIPPED). Read the
+command's own exit code, never a pipe's: redirect output to a file if it is long. Mirror each
 result into `ledger.md`'s check-history table.
 
 1. `{verify.analyze}` → zero errors (skip when null).
@@ -287,7 +288,8 @@ result into `ledger.md`'s check-history table.
    substitute a general-purpose agent) using `prompts/qa_agent.md`. Fill `{TICKET}`,
    `{RUN_DIR}` (`<runDir>`), `{SCRIPTS_DIR}` (`<SKILL_DIR>/scripts`), `{DIFF}`
    (`git -C <wt> diff <base>..HEAD`, `git -C <wt> status --porcelain`, `git -C <wt> diff HEAD`;
-   say when status is non-empty), `{CHECK_RESULTS}` (from `ledger.js status`),
+   say when status is non-empty; past `dispatchPolicy.promptBudgetChars`, give the `--stat`
+   plus those commands for the judge to run itself), `{CHECK_RESULTS}` (from `ledger.js status`),
    `{CONVENTIONS}` (codebase-map.md plus `stack`, or "the conventions evident in the
    surrounding code"), `{QA_SCOPE}` (FOCUSED: "read the changed files, every file that imports
    or consumes them, and the contract artifacts; skip the wider sweep" / FULL: "sweep as widely

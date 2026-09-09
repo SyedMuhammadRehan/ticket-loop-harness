@@ -28,11 +28,11 @@ function report(action, reason, extra = {}) {
   return action;
 }
 
+// Line endings are the checkout's, not the lockfile's: git autocrlf rewrites them per tree.
 function sameFile(a, b) {
   try {
-    const left = fs.readFileSync(a);
-    const right = fs.readFileSync(b);
-    return left.length === right.length && left.equals(right);
+    const normalise = (file) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    return normalise(a) === normalise(b);
   } catch {
     return false;
   }

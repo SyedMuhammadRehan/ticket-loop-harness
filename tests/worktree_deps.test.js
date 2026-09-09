@@ -120,3 +120,23 @@ test('it never exits non-zero, whatever it decides', () => {
     rmDir(env.base);
   }
 });
+
+// git autocrlf rewrites a checkout's line endings while npm writes the main repo's lockfile with
+// LF, so byte equality at the same commit fails on Windows and buys a full install for nothing.
+test('a lockfile that differs only in line endings is the same lockfile', () => {
+  const env = mkPair({ lockMain: '{\n  "v": 1\n}\n', lockTree: '{\r\n  "v": 1\r\n}\r\n' });
+  try {
+    assert.strictEqual(run(env.root, env.tree).action, 'linked');
+  } finally {
+    rmDir(env.base);
+  }
+});
+
+test('a lockfile that differs in content, not only line endings, still installs', () => {
+  const env = mkPair({ lockMain: '{\n  "v": 1\n}\n', lockTree: '{\r\n  "v": 2\r\n}\r\n' });
+  try {
+    assert.strictEqual(run(env.root, env.tree).action, 'install');
+  } finally {
+    rmDir(env.base);
+  }
+});
