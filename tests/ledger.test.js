@@ -922,3 +922,40 @@ test('outcome refuses a token count or duration that is not a whole number', () 
     rmDir(root);
   }
 });
+
+// A dispatch reaches the chain twice: the playbook's labelled call and the hook's count. They
+// are one dispatch, so cost must pair them rather than list the hook's row as unmeasured.
+test('a dispatch recorded by both the playbook call and the hook is one row in the cost table', () => {
+  const { root, runDir } = init();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'general-purpose', '--source', 'hook', '--prompt-chars', '9000']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: contract [full]']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'ticket-loop-qa', '--source', 'hook', '--prompt-chars', '12000']).status, 0);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '2', 'ok', '--tokens', '100', '--ms', '10']).status, 0);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '4', 'ok', '--tokens', '200', '--ms', '20']).status, 0);
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.strictEqual(cost.dispatches, 2);
+    assert.deepStrictEqual(Object.keys(cost.tokens.byRole).sort(), ['implementer', 'qa']);
+    assert.strictEqual(cost.tokens.measured, 2);
+    assert.strictEqual(cost.tokens.unmeasured, 0);
+    assert.strictEqual(cost.tokens.total, 300);
+    assert.strictEqual(cost.subagentPrompts.measured, 2, 'the hook-side prompt size belongs to the paired dispatch');
+    assert.strictEqual(cost.subagentPrompts.unmeasured, 0);
+    assert.strictEqual(cost.subagentPrompts.total, 21000);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a hook-only dispatch, with no playbook call before it, stays its own unmeasured row', () => {
+  const { root, runDir } = init();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'Explore', '--source', 'hook']).status, 0);
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.deepStrictEqual(cost.tokens.byRole, { explore: { dispatches: 1, measured: 0, tokens: 0, ms: 0 } });
+    assert.strictEqual(cost.tokens.unmeasured, 1);
+  } finally {
+    rmDir(root);
+  }
+});

@@ -538,8 +538,33 @@ function cmdOutcome(runDir, seqArg, outcome, note, opts) {
 }
 
 function roleOf(label) {
-  const m = /^\s*([a-z][\w-]*)\s*:/i.exec(String(label || ''));
+  const m = /^\s*([a-z][\w-]*)\s*(?::|$)/i.exec(String(label || ''));
   return m ? m[1].toLowerCase() : 'unlabelled';
+}
+
+// One subagent call reaches the chain twice: the playbook's labelled `dispatch` before the
+// call, then the hook's record at the tool call. A hook record pairs with the nearest earlier
+// unpaired script record; the label comes from the script side, the prompt size from the hook.
+function dispatchPairs(runDir) {
+  const pairs = [];
+  const unpairedScripts = [];
+  for (const r of chain.ofKind(runDir, 'dispatch')) {
+    const p = r.payload || {};
+    if (p.source === 'hook') {
+      const mate = unpairedScripts.pop();
+      if (mate) {
+        mate.seqs.push(r.seq);
+        if (Number.isFinite(p.promptChars) && mate.promptChars == null) mate.promptChars = p.promptChars;
+      } else {
+        pairs.push({ seqs: [r.seq], label: p.label, promptChars: Number.isFinite(p.promptChars) ? p.promptChars : null });
+      }
+    } else {
+      const entry = { seqs: [r.seq], label: p.label, promptChars: Number.isFinite(p.promptChars) ? p.promptChars : null };
+      pairs.push(entry);
+      unpairedScripts.push(entry);
+    }
+  }
+  return pairs;
 }
 
 function tokenStats(runDir) {
@@ -547,13 +572,13 @@ function tokenStats(runDir) {
   const byRole = {};
   let measured = 0;
   let total = 0;
-  const dispatches = chain.ofKind(runDir, 'dispatch');
-  for (const d of dispatches) {
-    const role = roleOf(d.payload && d.payload.label);
+  const pairs = dispatchPairs(runDir);
+  for (const d of pairs) {
+    const role = roleOf(d.label);
     const entry = byRole[role] || (byRole[role] = { dispatches: 0, measured: 0, tokens: 0, ms: 0 });
     entry.dispatches++;
-    const o = outcomes.get(d.seq);
-    if (o && Number.isInteger(o.tokens)) {
+    const o = d.seqs.map((s) => outcomes.get(s)).find((x) => x && Number.isInteger(x.tokens));
+    if (o) {
       entry.measured++;
       entry.tokens += o.tokens;
       if (Number.isInteger(o.ms)) entry.ms += o.ms;
@@ -561,7 +586,7 @@ function tokenStats(runDir) {
       total += o.tokens;
     }
   }
-  return { measured, unmeasured: dispatches.length - measured, total: measured ? total : null, byRole };
+  return { measured, unmeasured: pairs.length - measured, total: measured ? total : null, byRole };
 }
 
 function cmdRequire(runDir, stage) {
@@ -959,15 +984,13 @@ function riskPathsFromConfig() {
 // recorded size are counted separately rather than folded in as zero.
 function promptStats(runDir) {
   const budget = Number((readConfig().dispatchPolicy || {}).promptBudgetChars) || DEFAULT_PROMPT_BUDGET;
-  const sizes = chain
-    .ofKind(runDir, 'dispatch')
-    .map((r) => r.payload && r.payload.promptChars)
-    .filter((n) => Number.isFinite(n));
-  if (sizes.length === 0) return { measured: 0, unmeasured: chain.ofKind(runDir, 'dispatch').length, total: null, max: null, avg: null, overBudget: 0, budget };
+  const pairs = dispatchPairs(runDir);
+  const sizes = pairs.map((d) => d.promptChars).filter((n) => Number.isFinite(n));
+  if (sizes.length === 0) return { measured: 0, unmeasured: pairs.length, total: null, max: null, avg: null, overBudget: 0, budget };
   const total = sizes.reduce((a, b) => a + b, 0);
   return {
     measured: sizes.length,
-    unmeasured: chain.ofKind(runDir, 'dispatch').length - sizes.length,
+    unmeasured: pairs.length - sizes.length,
     total,
     max: Math.max(...sizes),
     avg: Math.round(total / sizes.length),
