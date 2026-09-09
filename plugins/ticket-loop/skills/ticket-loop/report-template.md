@@ -41,8 +41,10 @@ Restarts: {none | retired chain.N.jsonl at <seal> — say why the run was restar
 ## Cost
 
 Paste the output of `node <SKILL_DIR>/scripts/ledger.js cost <runDir> --worktree {WORKTREE}`.
-These are PROXIES from the sealed chain and git, not token counts — nothing outside the model
-can observe tokens, so a figure here would only be this loop's own word.
+Its `tokens` block is the subagent totals the Agent tool reported, sealed on each dispatch
+outcome, grouped by role; it is a floor, because the orchestrator's own turns are not
+observable. Everything else is a proxy from the sealed chain and git. Never add a figure of
+your own.
 
 ```
 {LEDGER_COST_OUTPUT}
@@ -82,6 +84,10 @@ Judged inputs: {the files sealed in the verdict receipt — this shows WHICH con
 and that it was the frozen one rather than a summary of it. It does not show which process
 recorded the verdict: if `ledger.js verify` reported the judge's independence as unverified,
 say so here in those words.}
+
+Rounds: {one line per verdict: seq, scope (FOCUSED | FULL | DELTA since <sha>), verdict}
+Changed outside every declared slice scope: {none | not declared | the files, with the
+criterion that justified each or the judge's finding}
 
 Findings:
 - [{COMMENT|BLOCK}] {file:line or AC#} — {finding, verbatim from the judge}

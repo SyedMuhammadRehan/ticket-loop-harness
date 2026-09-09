@@ -69,7 +69,11 @@ contract you cannot certify.
 
 The scope bounds what you READ, never what you may conclude: a FOCUSED scope still carries
 full verdict authority, and if what you read points at something outside it, follow the
-pointer — the scope is a budget, not a blindfold.
+pointer — the scope is a budget, not a blindfold. A DELTA scope means a judge already ruled
+on this tree and the diff above is the change since, with that judge's findings: confirm each
+finding is resolved and nothing regressed, and read anything the delta points at. A file
+listed as changed outside every declared slice scope needs a criterion that justifies it, or
+it is a [BLOCK] scope finding.
 
 ## Record your verdict — this is part of the job, not paperwork
 

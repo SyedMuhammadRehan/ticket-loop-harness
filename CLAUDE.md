@@ -7,8 +7,8 @@ obvious version.
 
 ## What this repo is
 
-`plugins/ticket-loop/` is the shipped plugin: a skill (the stage playbook), four hooks (the
-enforcement layer), five scripts (the mechanical checks), and three subagent prompts.
+`plugins/ticket-loop/` is the shipped plugin: two skills (the stage playbook and `/qa-check`),
+the hooks (the enforcement layer), the scripts (the mechanical checks), and the subagent prompts.
 `tests/` covers the scripts and hooks. Everything else is docs.
 
 ## Hard constraints

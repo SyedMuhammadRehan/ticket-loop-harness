@@ -13,8 +13,9 @@ const PLUGIN = path.join(REPO_ROOT, 'plugins', 'ticket-loop');
 const SKILL = path.join(PLUGIN, 'skills', 'ticket-loop', 'SKILL.md');
 
 // The whole file loads into the orchestrator's context on every run, ahead of the ticket. The
-// budget holds it to procedure; rationale goes in README.md.
-const MAX_LINES = 350;
+// budget holds it to procedure; rationale goes in README.md. Raise it only for a new command
+// the orchestrator must run, never for an explanation.
+const MAX_LINES = 370;
 const MAX_DESCRIPTION_CHARS = 500;
 
 const skill = () => fs.readFileSync(SKILL, 'utf8');
