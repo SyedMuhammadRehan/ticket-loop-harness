@@ -77,8 +77,11 @@ plugins/ticket-loop/
       chain.js                       # HMAC-sealed receipt chain (lives OUTSIDE the run dir)
       validate_done.js               # done-list + approach contract validator → validation receipt
       freeze_done.js                 # draft → frozen done.md + done.approved.md (receipt-gated)
-      ledger.js                      # budget, stage receipts, check history, integrity report
+      ledger.js                      # budget, stage receipts, check history, QA scope, cost, integrity report
       memory.js                      # cross-run lessons store
+      verify_falsifiable.js          # preflight: can verify.test actually fail?
+      worktree_deps.js               # reuse the main repo's dependencies when the lockfile is identical
+      outline.js                     # declarations with line numbers, stamped with HEAD, for range reads
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -317,7 +320,39 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   judge has to read, and the judge now flags it. Long artifacts live in the run dir, not in
   a subagent's reply — anything repeated in chat is paid for on every later turn.
 
+- **Cost is measured where it can be** — the Agent tool reports each subagent's token total
+  and duration when it finishes, and `ledger.js outcome --tokens --ms` seals that figure on the
+  dispatch it belongs to. `ledger.js cost` sums them by role and says how many dispatches went
+  unmeasured. A figure that fails to parse is refused rather than stored as null, so "not
+  measured" and "mistyped" never read the same. It is a floor: the orchestrator's own turns are
+  not observable from inside the run.
+- **A re-review reads the delta** — every `qascope` seals the tree and file set it scoped, so
+  after a verdict the next `qascope` can tell whether the fix stayed inside what that judge
+  read. When it did, and changed no risk path since that judge read it, the scope is `DELTA`:
+  the judge gets the prior findings and the change since, with the same authority to conclude
+  anything. The moment a fix reaches a file the judge never read, or changes a risk path, the
+  scope escalates on its own.
+- **A slice declares its files** — `ledger.js slice <id> --files <globs>` records, before the
+  work, the files a slice is expected to touch across every layer it crosses. `qascope` lists
+  every changed file outside all declared scopes and the judge is handed that list. Nothing is
+  blocked: an undeclared file is allowed, recorded, and needs a criterion that justifies it.
+- **An outline instead of a file read** — `outline.js` prints a tree's top-level declarations
+  with line numbers, stamped with the commit it read, so implementers start a read at the line
+  they need. Regex per stack, no parser, no index: a miss costs one wider read, which is what
+  every read cost before.
+
 ### Yours to uphold — and visible in the report if you don't
+
+- **That the token figure is the one the tool showed.** `outcome --tokens` seals whatever the
+  orchestrator types; the chain proves it was recorded once and never changed, not that it
+  matches the Agent tool's completion notice. Read it against the notice when it matters.
+- **That a slice's declared files are honest.** Declare too widely and the fence says nothing;
+  too narrowly and every slice lists noise until it is ignored. A legitimate undeclared file is
+  a survey miss worth writing down, because that is how the next survey gets better.
+- **What the outline misses.** It is a regex over declarations, not a parser: nested exports,
+  re-exports, signatures wrapped over several lines, Dart constructors, and a declaration
+  inside a template literal can be absent or misplaced. The implementer still reads the range
+  it names, so a miss is a wider read, never a wrong edit.
 
 - **Whether a human was really asked.** `riskPaths` *are* now a fence — see below — but the
   clearance that opens one is recorded by the loop, so nothing proves a human was consulted

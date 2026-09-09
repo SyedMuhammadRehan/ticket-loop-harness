@@ -56,8 +56,9 @@ implementation is new, reused, or one line.
    the same note beside every call in a series, and do not describe what the code did before
    your change — that is a commit message, and it rots where you put it.
 7. Read narrowly. Open the files the slice names and follow real references out of them;
-   do not re-read a file already quoted below, and use offset/limit on anything large.
-   A file read twice is paid for twice.
+   do not re-read a file already quoted below, and use offset/limit on anything large. The
+   codebase context below carries an outline (`path:line  kind  name`): start a read at the
+   line it gives rather than at the top of the file. A file read twice is paid for twice.
 8. Return format (your final message) — bounded, no file contents, no restated plan:
    `STATUS: green|red|GATE_C`, files changed (list), `rung: <n> — <what you reused, or why
    new code was needed>`, the test command run + the TAIL of its output only, and a

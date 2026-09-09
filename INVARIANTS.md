@@ -110,6 +110,10 @@ review were interactions between two rows below, which the code alone did not ma
 | 52 | QA reading scope is computed, not eyeballed, and sized by insertions | `ledger.js` → `cmdQaScope` | `qascope.test.js` :: `a large deletion is FOCUSED — nothing was added to review` | Summing insertions and deletions bought a full-codebase sweep for changes that added nothing |
 | 53 | A risk-path touch is FULL scope at any size | `ledger.js` → `cmdQaScope` | `qascope.test.js` :: `a one-line change in a risk path is FULL regardless of size` | Where the blast radius is the point, "how much" is the wrong question |
 | 54 | Dependencies are reused only when the lockfile is identical | `worktree_deps.js` → `sameFile` | `worktree_deps.test.js` :: `a different lockfile installs instead of reusing` | Verifying against a dependency tree the branch does not resolve to makes every downstream check a lie |
+| 55 | A dispatch's token figure is the one the tool reported, sealed on its outcome, or nothing | `ledger.js` → `wholeNumberFlag` | `ledger.test.js` :: `outcome refuses a token count or duration that is not a whole number` | A typo stored as null would read as "not measured"; an estimate would read as a measurement |
+| 56 | A re-review reads only the delta when the fix stayed inside the files the prior judge read | `ledger.js` → `deltaSinceVerdict` | `qascope.test.js` :: `a fix that touches a file the judge never read escalates back to a size-based scope` | Six full re-reads per run was the largest repeated cost in the field; the escalation is what makes the saving safe |
+| 57 | A change outside every declared slice scope is listed for the judge, never left to be noticed | `ledger.js` → `cmdSlice` | `qascope.test.js` :: `a changed file outside every declared slice scope is listed for the judge` | Drift found only if the judge happens to look is drift that ships |
+| 58 | An outline names the commit its line numbers were read from | `outline.js` → `headSha` | `outline.test.js` :: `the outline is stamped with the HEAD it was read from` | Line numbers from a tree that has since moved are worse than none |
 
 ## Preflight
 

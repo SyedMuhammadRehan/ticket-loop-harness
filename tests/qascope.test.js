@@ -134,3 +134,149 @@ test('the label carries the scope, so a focused review cannot pass itself off as
     rmDir(root);
   }
 });
+
+// --- declared slice scope: a change outside it is listed, never inferred ---
+
+function commitAll(root, msg) {
+  git(root, 'add', '-A');
+  git(root, 'commit', '-q', '-m', msg);
+}
+
+test('a changed file outside every declared slice scope is listed for the judge', () => {
+  const { root, runDir } = mkRepo(CONFIG);
+  try {
+    assert.strictEqual(ledger(root, ['slice', runDir, 'C1', '--files', 'src/**']).status, 0);
+    fs.appendFileSync(path.join(root, 'src', 'big.js'), '\nconst extra = 1;\n');
+    fs.writeFileSync(path.join(root, 'lib', 'stray.js'), 'module.exports = 1;\n');
+    git(root, 'add', '-A');
+    const out = scopeOf(root, runDir);
+    assert.deepStrictEqual(out.declaredScope, ['src/**']);
+    assert.deepStrictEqual(out.outsideScope, ['lib/stray.js']);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('with no slice declared, outside-scope is null rather than an empty list', () => {
+  const { root, runDir } = mkRepo(CONFIG);
+  try {
+    fs.appendFileSync(path.join(root, 'src', 'big.js'), '\nconst extra = 1;\n');
+    const out = scopeOf(root, runDir);
+    assert.strictEqual(out.declaredScope, null);
+    assert.strictEqual(out.outsideScope, null);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('slice refuses an empty id and a declaration with no files', () => {
+  const { root, runDir } = mkRepo(CONFIG);
+  try {
+    assert.strictEqual(ledger(root, ['slice', runDir, '', '--files', 'src/**']).status, 1);
+    assert.strictEqual(ledger(root, ['slice', runDir, 'C1']).status, 1);
+    assert.strictEqual(ledger(root, ['slice', runDir, 'C1', '--files', 'src/a.js', '--files', 'lib/**']).status, 0);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- delta re-review: a fix that stays inside the judged files is read as the change since ---
+
+function judged(root, runDir, verdict) {
+  fs.writeFileSync(path.join(root, runDir, 'done.md'), '# Done\n');
+  fs.writeFileSync(path.join(root, runDir, 'done.approved.md'), '# Done\n');
+  if (!JSON.parse(ledger(root, ['status', runDir]).stdout).gates.includes('freeze')) {
+    assert.strictEqual(ledger(root, ['gate', runDir, 'freeze', '--evidence', path.join(runDir, 'done.md')]).status, 0);
+  }
+  assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: contract [focused]', '--source', 'hook']).status, 0);
+  const res = ledger(root, ['verdict', runDir, verdict, '--inputs', path.join(runDir, 'done.approved.md')]);
+  assert.strictEqual(res.status, 0, res.stderr);
+}
+
+function sliceRepo() {
+  const made = mkRepo(CONFIG);
+  fs.writeFileSync(path.join(made.root, 'src', 'a.js'), Array.from({ length: 30 }, (_, i) => `const a${i} = ${i};`).join('\n'));
+  commitAll(made.root, 'slice C1');
+  return made;
+}
+
+test('a fix confined to the files a judge already read is scoped as a DELTA since that verdict', () => {
+  const { root, runDir } = sliceRepo();
+  try {
+    const first = scopeOf(root, runDir);
+    assert.strictEqual(first.scope, 'FOCUSED');
+    judged(root, runDir, 'BLOCK');
+    fs.appendFileSync(path.join(root, 'src', 'a.js'), '\nconst fixed = true;\n');
+    commitAll(root, 'fix per findings');
+    const second = scopeOf(root, runDir);
+    assert.strictEqual(second.scope, 'DELTA', JSON.stringify(second));
+    assert.strictEqual(second.since, first.head);
+    assert.deepStrictEqual(second.deltaFiles, ['src/a.js']);
+    assert.ok(Number.isInteger(second.priorVerdictSeq));
+    assert.strictEqual(second.label, 'qa: contract [delta]');
+    assert.strictEqual(ledger(root, ['verify', runDir]).status, 0, 'scope receipts must keep the chain intact');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a fix that touches a file the judge never read escalates back to a size-based scope', () => {
+  const { root, runDir } = sliceRepo();
+  try {
+    scopeOf(root, runDir);
+    judged(root, runDir, 'BLOCK');
+    fs.writeFileSync(path.join(root, 'src', 'helper.js'), 'module.exports = () => 1;\n');
+    commitAll(root, 'fix reached a new file');
+    const out = scopeOf(root, runDir);
+    assert.notStrictEqual(out.scope, 'DELTA', JSON.stringify(out));
+    assert.ok(out.why.some((w) => w.includes('src/helper.js')), JSON.stringify(out.why));
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a fix that touches a risk path is FULL even when the judge read that file before', () => {
+  const { root, runDir } = sliceRepo();
+  try {
+    fs.appendFileSync(path.join(root, 'lib', 'auth.js'), '// touched\n');
+    commitAll(root, 'slice touches auth');
+    assert.strictEqual(scopeOf(root, runDir).scope, 'FULL');
+    judged(root, runDir, 'BLOCK');
+    fs.appendFileSync(path.join(root, 'lib', 'auth.js'), '// fixed\n');
+    commitAll(root, 'fix in auth');
+    const out = scopeOf(root, runDir);
+    assert.strictEqual(out.scope, 'FULL', JSON.stringify(out));
+  } finally {
+    rmDir(root);
+  }
+});
+
+// Only a risk path changed SINCE the judge read it escalates.
+test('a risk path judged in an earlier round does not force FULL on an unrelated later fix', () => {
+  const { root, runDir } = sliceRepo();
+  try {
+    fs.appendFileSync(path.join(root, 'lib', 'auth.js'), '// touched\n');
+    commitAll(root, 'slice touches auth');
+    assert.strictEqual(scopeOf(root, runDir).scope, 'FULL');
+    judged(root, runDir, 'BLOCK');
+    fs.appendFileSync(path.join(root, 'src', 'a.js'), '\nconst fixed = true;\n');
+    commitAll(root, 'fix elsewhere');
+    const out = scopeOf(root, runDir);
+    assert.strictEqual(out.scope, 'DELTA', JSON.stringify(out));
+    assert.deepStrictEqual(out.deltaFiles, ['src/a.js']);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('without a prior verdict a second qascope is never a DELTA', () => {
+  const { root, runDir } = sliceRepo();
+  try {
+    scopeOf(root, runDir);
+    fs.appendFileSync(path.join(root, 'src', 'a.js'), '\nconst more = 1;\n');
+    const out = scopeOf(root, runDir);
+    assert.strictEqual(out.scope, 'FOCUSED', JSON.stringify(out));
+  } finally {
+    rmDir(root);
+  }
+});

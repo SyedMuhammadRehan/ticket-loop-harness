@@ -454,7 +454,7 @@ test('hook-sourced and script-sourced dispatches are de-duplicated, never summed
 // PROXIES on purpose: tokens are unobservable from outside the model, so a token figure here
 // could only be the loop's self-report — unverifiable by the standard the rest of the report
 // is held to.
-test('cost derives spend from the sealed chain, and never claims token counts', () => {
+test('cost derives spend from the sealed chain, and invents no token count', () => {
   const { root, runDir } = init();
   try {
     ledger(root, ['dispatch', runDir, 'implementer: C1']);
@@ -469,11 +469,11 @@ test('cost derives spend from the sealed chain, and never claims token counts', 
     assert.ok(cost.wallClockMs >= 0, 'wall-clock comes from the receipt timestamps');
     assert.ok(Array.isArray(cost.slowestSpans));
 
-    // No token key, now or by accident later.
-    for (const key of Object.keys(cost)) {
-      assert.ok(!/token/i.test(key), `cost must not report tokens: found "${key}"`);
-    }
-    assert.match(cost.note, /NOT token counts/);
+    // Nothing reported a figure, so none may appear: null, never an estimate.
+    assert.strictEqual(cost.tokens.total, null);
+    assert.strictEqual(cost.tokens.measured, 0);
+    assert.strictEqual(cost.tokens.unmeasured, 2);
+    assert.match(cost.note, /not observable/);
   } finally {
     rmDir(root);
   }
@@ -879,6 +879,45 @@ test('outcome refuses a non-dispatch seq, an unknown verdict, and a second verdi
     const dup = ledger(root, ['outcome', runDir, '2', 'ok']);
     assert.strictEqual(dup.status, 1, dup.stdout);
     assert.match(dup.stderr, /already/i);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- dispatch cost: the total the tool reported, sealed with the outcome ---
+
+test('outcome seals the token total and duration the tool reported, and cost sums them by role', () => {
+  const { root, runDir } = init();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: contract [full]']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C2']).status, 0);
+    const a = ledger(root, ['outcome', runDir, '2', 'ok', 'slice green', '--tokens', '84852', '--ms', '23332']);
+    assert.strictEqual(a.status, 0, a.stderr);
+    const b = ledger(root, ['outcome', runDir, '3', 'ok', '--tokens', '110004', '--ms', '260168']);
+    assert.strictEqual(b.status, 0, b.stderr);
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.deepStrictEqual(cost.tokens.byRole.implementer, { dispatches: 2, measured: 1, tokens: 84852, ms: 23332 });
+    assert.deepStrictEqual(cost.tokens.byRole.qa, { dispatches: 1, measured: 1, tokens: 110004, ms: 260168 });
+    assert.strictEqual(cost.tokens.total, 194856);
+    assert.strictEqual(cost.tokens.measured, 2);
+    assert.strictEqual(cost.tokens.unmeasured, 1);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('outcome refuses a token count or duration that is not a whole number', () => {
+  const { root, runDir } = init();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1']).status, 0);
+    for (const bad of [['--tokens', '-5'], ['--tokens', 'lots'], ['--tokens', '12.5'], ['--ms', '-1'], ['--ms', 'soon']]) {
+      const res = ledger(root, ['outcome', runDir, '2', 'ok', ...bad]);
+      assert.strictEqual(res.status, 1, `should refuse ${bad.join(' ')}: ${res.stderr}`);
+    }
+    const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
+    assert.strictEqual(cost.tokens.measured, 0, 'a refused figure must not have been sealed');
+    assert.strictEqual(ledger(root, ['outcome', runDir, '2', 'ok']).status, 0, 'no figure at all is still a valid outcome');
   } finally {
     rmDir(root);
   }

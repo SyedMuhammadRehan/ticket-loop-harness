@@ -496,7 +496,17 @@ function cmdRevise(runDir, file, reason) {
 
 // Known only after the dispatch returns, so it is a separate record. It never changes the
 // count — refunding a spent slot would make the budget negotiable after the fact.
-function cmdOutcome(runDir, seqArg, outcome, note) {
+// Refused rather than stored as null: null means "not measured".
+function wholeNumberFlag(value, flag) {
+  if (value === undefined) return null;
+  if (!/^\d+$/.test(String(value))) {
+    console.error(`ledger outcome: ${flag} must be a whole number as the tool reported it, got "${value}"`);
+    process.exit(1);
+  }
+  return Number(value);
+}
+
+function cmdOutcome(runDir, seqArg, outcome, note, opts) {
   requireChain(runDir);
   requireOpen(runDir, 'outcome');
   const normalized = String(outcome || '').toLowerCase();
@@ -504,6 +514,8 @@ function cmdOutcome(runDir, seqArg, outcome, note) {
     console.error(`ledger outcome: outcome must be one of ${DISPATCH_OUTCOMES.join(', ')}`);
     process.exit(1);
   }
+  const tokens = wholeNumberFlag(opts && opts.tokens, '--tokens');
+  const ms = wholeNumberFlag(opts && opts.ms, '--ms');
   const seq = Number(seqArg);
   const target = chain.records(runDir).find((r) => r.seq === seq);
   if (!target || target.kind !== 'dispatch') {
@@ -517,8 +529,39 @@ function cmdOutcome(runDir, seqArg, outcome, note) {
     console.error(`ledger outcome: the dispatch at seq ${seq} already has an outcome — it is recorded once and not revised.`);
     process.exit(1);
   }
-  chain.append(runDir, 'outcome', { dispatchSeq: seq, outcome: normalized, note: note || null });
-  console.log(`ledger: dispatch seq ${seq} recorded as ${normalized}${normalized === 'died' ? ' (it still spent its budget slot)' : ''}`);
+  chain.append(runDir, 'outcome', { dispatchSeq: seq, outcome: normalized, note: note || null, tokens, ms });
+  console.log(
+    `ledger: dispatch seq ${seq} recorded as ${normalized}` +
+      `${tokens != null ? ` (${tokens} tokens${ms != null ? `, ${ms} ms` : ''})` : ''}` +
+      `${normalized === 'died' ? ' (it still spent its budget slot)' : ''}`
+  );
+}
+
+function roleOf(label) {
+  const m = /^\s*([a-z][\w-]*)\s*:/i.exec(String(label || ''));
+  return m ? m[1].toLowerCase() : 'unlabelled';
+}
+
+function tokenStats(runDir) {
+  const outcomes = new Map(chain.ofKind(runDir, 'outcome').map((r) => [r.payload.dispatchSeq, r.payload]));
+  const byRole = {};
+  let measured = 0;
+  let total = 0;
+  const dispatches = chain.ofKind(runDir, 'dispatch');
+  for (const d of dispatches) {
+    const role = roleOf(d.payload && d.payload.label);
+    const entry = byRole[role] || (byRole[role] = { dispatches: 0, measured: 0, tokens: 0, ms: 0 });
+    entry.dispatches++;
+    const o = outcomes.get(d.seq);
+    if (o && Number.isInteger(o.tokens)) {
+      entry.measured++;
+      entry.tokens += o.tokens;
+      if (Number.isInteger(o.ms)) entry.ms += o.ms;
+      measured++;
+      total += o.tokens;
+    }
+  }
+  return { measured, unmeasured: dispatches.length - measured, total: measured ? total : null, byRole };
 }
 
 function cmdRequire(runDir, stage) {
@@ -743,36 +786,101 @@ function cmdClear(runDir, glob, reason) {
 // `--base <ref>` judges a diff with no run behind it, for the standalone review. Everything
 // else is identical, deliberately: a review outside a run should size and fence a change the
 // same way one inside it does.
+function cmdSlice(runDir, id, globs) {
+  requireChain(runDir);
+  requireOpen(runDir, 'slice');
+  const sliceId = String(id || '').trim();
+  const files = [
+    ...new Set(
+      (globs || [])
+        .flatMap((g) => String(g).split(','))
+        .map((g) => g.trim().replace(/\\/g, '/'))
+        .filter(Boolean)
+    ),
+  ];
+  if (!sliceId) {
+    console.error('ledger slice: a slice needs an id — the criterion it implements, e.g. C3');
+    process.exit(1);
+  }
+  if (!files.length) {
+    console.error('ledger slice: name the files or globs the slice is expected to touch with --files');
+    process.exit(1);
+  }
+  chain.append(runDir, 'slice', { id: sliceId, files });
+  console.log(`ledger: slice ${sliceId} declared over ${files.join(', ')}`);
+}
+
+function gitLines(tree, args) {
+  const res = spawnSync('git', ['-C', tree, ...args], { encoding: 'utf8', timeout: 30000 });
+  if (res.status !== 0) return null;
+  return (res.stdout || '').split('\n').filter((l) => l.trim());
+}
+
+// A verdict with no scope receipt before it yields nothing; the next review is sized from scratch.
+function deltaSinceVerdict(runDir, tree, riskPaths) {
+  const verdict = chain.last(runDir, 'verdict');
+  if (!verdict) return null;
+  const judged = chain.ofKind(runDir, 'scope').filter((r) => r.seq < verdict.seq).pop();
+  if (!judged || !judged.payload.head) return null;
+  const changed = gitLines(tree, ['diff', '--name-only', judged.payload.head]);
+  if (changed === null) return null;
+  const files = changed.map((f) => f.replace(/\\/g, '/'));
+  const judgedFiles = new Set(judged.payload.files || []);
+  return {
+    since: judged.payload.head,
+    priorVerdictSeq: verdict.seq,
+    judgedCount: judgedFiles.size,
+    files,
+    outside: files.filter((f) => !judgedFiles.has(f)),
+    risk: files.filter((f) => riskPaths.some((g) => globToRegExp(g).test(f))),
+  };
+}
+
 function cmdQaScope(runDir, worktree, baseRef) {
-  if (!baseRef) requireChain(runDir);
+  const withRun = !baseRef;
+  if (withRun) {
+    requireChain(runDir);
+    requireOpen(runDir, 'qascope');
+  }
   const cfg = readConfig();
   const limit = Number((cfg.qaScope || {}).smallDiffLines);
   const threshold = Number.isInteger(limit) && limit >= 0 ? limit : DEFAULT_SMALL_DIFF_LINES;
   const baseSha = baseRef || caps(runDir).baseSha;
   const tree = worktree || '.';
 
-  const numstat = (args) => spawnSync('git', ['-C', tree, 'diff', '--numstat', ...args], { encoding: 'utf8', timeout: 30000 });
   const ranges = [];
-  if (baseSha) ranges.push(numstat([`${baseSha}..HEAD`]));
-  ranges.push(numstat(['HEAD']));
+  if (baseSha) ranges.push(gitLines(tree, ['diff', '--numstat', `${baseSha}..HEAD`]));
+  ranges.push(gitLines(tree, ['diff', '--numstat', 'HEAD']));
 
   let added = 0;
   let removed = 0;
   const files = new Set();
   let readable = false;
-  for (const res of ranges) {
-    if (res.status !== 0) continue;
+  for (const lines of ranges) {
+    if (lines === null) continue;
     readable = true;
-    for (const line of (res.stdout || '').split('\n').filter((l) => l.trim())) {
+    for (const line of lines) {
       const [a, r, file] = line.split('\t');
       if (a !== '-') added += Number(a) || 0;
       if (r !== '-') removed += Number(r) || 0;
       if (file) files.add(file.replace(/\\/g, '/'));
     }
   }
+  const headLines = gitLines(tree, ['rev-parse', 'HEAD']);
+  const head = headLines && headLines[0] ? headLines[0].trim() : null;
 
   const riskPaths = riskPathsFromConfig();
   const touchedRiskPaths = [...files].filter((f) => riskPaths.some((g) => globToRegExp(g).test(f)));
+
+  let declaredScope = null;
+  let outsideScope = null;
+  if (withRun) {
+    const globs = [...new Set(chain.ofKind(runDir, 'slice').flatMap((r) => r.payload.files || []))];
+    if (globs.length) {
+      declaredScope = globs;
+      outsideScope = [...files].filter((f) => !globs.some((g) => globToRegExp(g).test(f))).sort();
+    }
+  }
 
   // An unreadable diff is not a small one. Nothing about the change is known, so the judge
   // reads widely rather than narrowly.
@@ -780,24 +888,58 @@ function cmdQaScope(runDir, worktree, baseRef) {
   if (!readable) reasons.push('the diff could not be read, so its size is unknown');
   if (touchedRiskPaths.length) reasons.push(`risk paths touched: ${touchedRiskPaths.join(', ')}`);
   if (added > threshold) reasons.push(`${added} inserted line(s) exceeds qaScope.smallDiffLines (${threshold})`);
-  const scope = reasons.length ? 'FULL' : 'FOCUSED';
 
-  process.stdout.write(
-    JSON.stringify(
-      {
-        scope,
-        why: reasons.length ? reasons : [`${added} inserted line(s) is within qaScope.smallDiffLines (${threshold}), no risk path touched`],
-        insertions: added,
-        deletions: removed,
-        filesChanged: files.size,
-        threshold,
-        touchedRiskPaths,
-        label: `qa: contract [${scope.toLowerCase()}]`,
-      },
-      null,
-      2
-    ) + '\n'
-  );
+  // Risk is judged since the verdict, not since base.
+  const delta = withRun && readable ? deltaSinceVerdict(runDir, tree, riskPaths) : null;
+  let scope;
+  let why;
+  if (delta && !delta.outside.length && !delta.risk.length) {
+    scope = 'DELTA';
+    why = [
+      `re-review after verdict seq ${delta.priorVerdictSeq}: ${delta.files.length} file(s) changed since the judged tree ` +
+        `${delta.since.slice(0, 12)}, all inside the ${delta.judgedCount} file(s) that judge read`,
+    ];
+  } else {
+    scope = reasons.length ? 'FULL' : 'FOCUSED';
+    why = reasons.length ? reasons : [`${added} inserted line(s) is within qaScope.smallDiffLines (${threshold}), no risk path touched`];
+    if (delta && delta.outside.length) {
+      why.push(`re-review after verdict seq ${delta.priorVerdictSeq} escalated: ${delta.outside.join(', ')} were not in the judged set`);
+    }
+    if (delta && delta.risk.length) {
+      why.push(`re-review after verdict seq ${delta.priorVerdictSeq} escalated: risk paths changed since that judge read them: ${delta.risk.join(', ')}`);
+    }
+  }
+
+  const out = {
+    scope,
+    why,
+    insertions: added,
+    deletions: removed,
+    filesChanged: files.size,
+    threshold,
+    touchedRiskPaths,
+    head,
+    declaredScope,
+    outsideScope,
+    since: scope === 'DELTA' ? delta.since : null,
+    deltaFiles: scope === 'DELTA' ? delta.files : null,
+    priorVerdictSeq: delta ? delta.priorVerdictSeq : null,
+    label: `qa: contract [${scope.toLowerCase()}]`,
+  };
+  if (withRun) {
+    chain.append(runDir, 'scope', {
+      scope,
+      head,
+      files: [...files].sort(),
+      insertions: added,
+      deletions: removed,
+      touchedRiskPaths,
+      outsideScope,
+      since: out.since,
+      priorVerdictSeq: out.priorVerdictSeq,
+    });
+  }
+  process.stdout.write(JSON.stringify(out, null, 2) + '\n');
 }
 
 function readConfig() {
@@ -899,9 +1041,12 @@ function cmdCost(runDir, worktree) {
   process.stdout.write(
     JSON.stringify(
       {
-        note: 'proxies derived from the sealed chain and git — NOT token counts',
+        note:
+          'tokens are the subagent totals the Agent tool reported, sealed on dispatch outcomes; the ' +
+          'orchestrator\'s own turns are not observable, so they are a floor. Everything else is a proxy from the chain and git',
         dispatches,
         dispatchesDied: diedCount(runDir),
+        tokens: tokenStats(runDir),
         subagentPrompts: promptStats(runDir),
         evidence: evidenceStats(runDir),
         replans: byKind.replan || 0,
@@ -1076,6 +1221,9 @@ function main() {
   const evidence = takeFlag(argv, '--evidence');
   const inputs = takeFlag(argv, '--inputs');
   const revisionReason = takeFlag(argv, '--reason')[0];
+  const tokens = takeFlag(argv, '--tokens')[0];
+  const ms = takeFlag(argv, '--ms')[0];
+  const sliceFiles = takeFlag(argv, '--files');
   const [cmd, runDir, ...rest] = argv;
 
   // Takes no runDir: it is the compatibility probe the hooks run before trusting this script.
@@ -1094,7 +1242,9 @@ function main() {
         '       ledger.js verdict <runDir> <verdict> [--inputs <file>]...\n' +
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
-        '       ledger.js revise <runDir> <file> --reason "<why>" | outcome <runDir> <dispatchSeq> <ok|died> [note]'
+        '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
+        '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
+        '       ledger.js slice <runDir> <id> --files <glob>[,<glob>]...'
     );
     process.exit(1);
   }
@@ -1129,7 +1279,9 @@ function main() {
     case 'revise':
       return cmdRevise(runDir, rest[0], revisionReason);
     case 'outcome':
-      return cmdOutcome(runDir, rest[0], rest[1], rest.slice(2).join(' '));
+      return cmdOutcome(runDir, rest[0], rest[1], rest.slice(2).join(' '), { tokens, ms });
+    case 'slice':
+      return cmdSlice(runDir, rest[0], sliceFiles);
     case 'verify':
       return cmdVerify(runDir);
     default:

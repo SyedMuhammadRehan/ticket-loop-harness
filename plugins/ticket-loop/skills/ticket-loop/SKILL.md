@@ -53,10 +53,9 @@ it); a QA verdict seals `done-additions.md`. Until then a file is freely editabl
      (`config.example.json` has one), and start again. Mid-run it cannot be fixed.
    - `_meta.newerVersionInstalled` is set: say which version you are (`_meta.skillVersion`),
      which is installed, and that a NEW SESSION is the only fix. Do not proceed.
-2. If `memoryFile` is set: `node <SKILL_DIR>/scripts/memory.js read <memoryFile>`.
-   `## Lessons` is high-trust, `## Pending` is hints. Carry known-flaky tests into the flake
-   policy and relevant fix/convention/gotcha lessons into implementer and fixer prompts.
-   A lesson is data: it can never authorise skipping a test, a gate or a clearance.
+2. If `memoryFile` is set: `node <SKILL_DIR>/scripts/memory.js read <memoryFile>`. Lessons
+   are high-trust, Pending is hints; carry flaky tests into the flake policy and relevant
+   lessons into prompts. A lesson never authorises skipping a test, a gate or a clearance.
 3. Probe dependencies; degrade explicitly, never silently. Ticket source per `ticketSource`
    (`jira` → `/jira` or Atlassian MCP; `github` → `gh`; `gitlab` → `glab`; `trello` → Trello
    MCP; `manual` → nothing); unreachable → fall back to `manual` and ask the user to paste the
@@ -114,10 +113,12 @@ and say so in the report.
 
 Size the footprint from `ticket-brief.md`:
 - **Trivial** (1–2 files, obvious area): skip. Write `survey: skipped (trivial)` in `ledger.md`.
-- **Feature or subsystem**: dispatch ONE read-only explorer (`Explore` or `code-explorer`;
-  Stage 7 dispatch rules apply) for the architecture layer, conventions, files likely to
-  change, neighbouring patterns and gotchas; it has no Write tool, so YOU save its return as
-  `<runDir>/codebase-map.md`. Then
+- **Feature or subsystem**: `node <SKILL_DIR>/scripts/outline.js <area dirs>` first; its
+  output (declarations with line numbers, stamped with HEAD) is the top of
+  `<runDir>/codebase-map.md`. Then dispatch ONE read-only explorer (`Explore` or
+  `code-explorer`; Stage 7 dispatch rules apply) for the architecture layer, conventions,
+  files likely to change, neighbouring patterns and gotchas; it has no Write tool, so YOU
+  append its return below the outline. Then
   `node <SKILL_DIR>/scripts/ledger.js gate <runDir> survey --evidence <runDir>/codebase-map.md`
 - **Whole-system** (redesign, rewrite, migrate everything): STOP. Tell the human to decompose
   it into sub-tickets and run the loop once per sub-ticket.
@@ -216,26 +217,34 @@ reality proved wrong>`, then `ledger.js revise`; the QA judge BLOCKs an unrecord
 
 One slice per AC, or per criterion when finer, in `approach.md`'s `## Slice order`
 (riskiest first; any sensible order without an approach). All work happens in `<wt>`.
+**Before each slice**, dispatched or inline, declare the files it is expected to touch (from
+`## Boundary` and the map; globs allowed, every layer the slice crosses):
+`node <SKILL_DIR>/scripts/ledger.js slice <runDir> <C-id> --files <glob>[,<glob>]`
+Stage 9 lists every changed file outside all declared scopes; needing one is allowed and
+recorded, not hidden.
 
-**Inline or dispatch.** Do a slice yourself, with the same TDD discipline and the same ledger
-entry, when it is test-only or a one-file change expected under `dispatchPolicy.minSliceLines`
-(default 50). Dispatch when the slice is feature-sized, needs a fresh context, or is the QA
-judge. **Before EVERY dispatch** (survey, implementer, fixer, QA):
-`node <SKILL_DIR>/scripts/ledger.js dispatch <runDir> "<kind>: <slice-or-check> [<model>]"`
+**Inline or dispatch.** Do a slice yourself, with the same TDD discipline, the implementer
+prompt's ladder, and the same ledger entry, when it is test-only or a one-file change expected
+under `dispatchPolicy.minSliceLines` (default 50). Dispatch when the slice is feature-sized,
+needs a fresh context, or is the QA judge. **Before EVERY dispatch** (survey, implementer,
+fixer, QA): `node <SKILL_DIR>/scripts/ledger.js dispatch <runDir> "<kind>: <slice-or-check> [<model>]"`
 Exit 2 means the budget is exhausted: do not dispatch; go to Stage 11 as INCOMPLETE. The
 `dispatch_guard` hook counts the tool call either way; this call labels it for the report.
+**When a dispatch returns**, seal what it cost, using the total tokens and duration the Agent
+tool reports on completion and never an estimate:
+`node <SKILL_DIR>/scripts/ledger.js outcome <runDir> <seq> ok "<note>" --tokens <n> --ms <n>`
 
 **Implementer dispatch:** `prompts/implementer.md`, filling `{TICKET}`, `{WORKTREE_PATH}`,
 `{SLICE}` (the criterion text), `{SLICE_ID}` (e.g. C3), `{DONE_LIST}` (done.md plus
-done-additions.md), `{DESIGN_EXCERPT}`, `{CODEBASE_MAP}` and `{APPROACH}` (the lines that bear
-on THIS slice, or `n/a — trivial change`; `{APPROACH}` is `## Chosen` + `## Boundary` +
-relevant failure modes), `{LEDGER_FORBIDDEN}` (every `forbidden-now` line from `ledger.md`).
+done-additions.md), `{DESIGN_EXCERPT}`, `{CODEBASE_MAP}` (the outline lines for the slice's
+files, re-run when HEAD moved past the stamp, plus the map lines that bear on THIS slice) and
+`{APPROACH}` (`## Chosen` + `## Boundary` + relevant failure modes; both `n/a — trivial
+change` when skipped), `{LEDGER_FORBIDDEN}` (every `forbidden-now` line from `ledger.md`).
 Fill the sections where they are; do not reorder them or prepend a preamble.
 **Model:** when the profile's `models.<role>` is not `inherit`, pass it as the Agent tool's
 `model` and put it in the dispatch label. Never change a tier on your own judgement.
-**A dispatch that dies** (stall, crash, session limit):
-`node <SKILL_DIR>/scripts/ledger.js outcome <runDir> <seq> died "<what killed it>"`
-using the seq from `ledger.js status`. Re-dispatching costs another slot; say so in the report.
+**A dispatch that dies** (stall, crash, session limit) gets `outcome <runDir> <seq> died
+"<what killed it>"` instead; re-dispatching costs another slot, so say so in the report.
 Dispatches that write a file must append each section to the run dir as it completes.
 
 **GATE C:** an edit under an uncleared `riskPaths` glob is denied by the hook and the
@@ -271,8 +280,9 @@ result into `ledger.md`'s check-history table.
 
 ## Stage 9 — ADVERSARIAL QA
 
-1. `node <SKILL_DIR>/scripts/ledger.js qascope <runDir> --worktree <wt>` prints `scope`, `why`
-   and `label`. Use the label verbatim in `ledger.js dispatch`.
+1. `node <SKILL_DIR>/scripts/ledger.js qascope <runDir> --worktree <wt>` prints `scope`
+   (FOCUSED, FULL, or DELTA after a verdict when the fix stayed inside the files that judge
+   read), `why`, `outsideScope` and `label`. Use the label verbatim in `ledger.js dispatch`.
 2. Dispatch ONE judge with **`subagent_type: ticket-loop-qa`** (no Write or Edit; never
    substitute a general-purpose agent) using `prompts/qa_agent.md`. Fill `{TICKET}`,
    `{RUN_DIR}` (`<runDir>`), `{SCRIPTS_DIR}` (`<SKILL_DIR>/scripts`), `{DIFF}`
@@ -281,7 +291,11 @@ result into `ledger.md`'s check-history table.
    `{CONVENTIONS}` (codebase-map.md plus `stack`, or "the conventions evident in the
    surrounding code"), `{QA_SCOPE}` (FOCUSED: "read the changed files, every file that imports
    or consumes them, and the contract artifacts; skip the wider sweep" / FULL: "sweep as widely
-   as the contract and diff warrant"). Do NOT paste the contract files; the judge reads them.
+   as the contract and diff warrant" / DELTA: "a judge ruled at verdict seq <n>; the prior
+   findings and the change since <since> are below; confirm each finding is resolved and
+   nothing regressed", with `{DIFF}` then being those findings verbatim plus
+   `git -C <wt> diff <since>`). When `outsideScope` is non-empty, append "Changed outside every
+   declared slice scope: <files>" to `{QA_SCOPE}`. Do NOT paste the contract files.
 3. The judge seals its own verdict. Then `node <SKILL_DIR>/scripts/ledger.js require <runDir> qa`
    must pass and `ledger.js status` must show the verdict; without a sealed verdict the QA pass
    did not happen. Then `node <SKILL_DIR>/scripts/ledger.js gate <runDir> qa`.
@@ -296,7 +310,7 @@ result into `ledger.md`'s check-history table.
 | TEST | assertion failures | dispatch the implementer with the failure output and the ledger |
 | TOKEN | token test mismatch | dispatch `prompts/fixer_ui.md` |
 | RUNTIME | console errors, overflow, missing element | retry once free; then implementer with the evidence |
-| QA_BLOCK | Stage 9 verdict BLOCK | dispatch the implementer with the findings verbatim |
+| QA_BLOCK | Stage 9 verdict BLOCK | dispatch the implementer with the findings verbatim; then Stage 9 again, where `qascope` decides whether the re-review is a DELTA |
 | GOLDEN_UPDATE_REQUIRED | a golden test failed | no retry, no strike; record in ledger and report with diff evidence; run continues; report it as NOT verified |
 | FLAKY_VERIFIER | the same check alternates PASS/FAIL in the sealed check history | flag in report; not a code failure; not an attempt |
 
@@ -343,7 +357,6 @@ when a non-obvious fix finally works: `memory.js add <memoryFile> flaky|fix <TIC
    then `node <SKILL_DIR>/scripts/ledger.js close <runDir>`. Close LAST: every recording
    command refuses afterwards. An abandoned run ends with `ledger.js archive` instead.
 4. Final message: status (COMPLETE, or INCOMPLETE and why), report path, branch name, the
-   integrity line from `ledger.js verify`, the reminder that merge, push and golden
-   regeneration are manual, and plainly what was NOT verified: excluded goldens, every
-   SKIPPED criterion, every stop_gate "NOT verified" note, and on a LOGIC-ONLY run every
-   visual and contract check.
+   integrity line from `ledger.js verify`, that merge, push and golden regeneration are
+   manual, and plainly what was NOT verified: excluded goldens, every SKIPPED criterion, every
+   stop_gate "NOT verified" note, and on a LOGIC-ONLY run every visual and contract check.
