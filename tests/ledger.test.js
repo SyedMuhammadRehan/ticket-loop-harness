@@ -885,9 +885,6 @@ test('outcome refuses a non-dispatch seq, an unknown verdict, and a second verdi
 });
 
 // --- dispatch cost: the total the tool reported, sealed with the outcome ---
-// Nothing inside the run can observe tokens; the Agent tool reports each subagent's total when
-// it finishes. Sealing that figure on the outcome is what turns the Cost section from proxies
-// into a measurement, so a malformed figure is refused rather than dropped to null.
 
 test('outcome seals the token total and duration the tool reported, and cost sums them by role', () => {
   const { root, runDir } = init();

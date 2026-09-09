@@ -1,8 +1,6 @@
 #!/usr/bin/env node
-// Prints the top-level declarations of a tree with their line numbers, so an implementer reads
-// a range instead of a file. Advisory: a regex misses what a parser would catch, and a miss
-// costs one wider read. The header names the commit the lines were read from, because line
-// numbers from a tree that has since moved are worse than none.
+// Top-level declarations with line numbers, so an implementer reads a range instead of a file.
+// Regex, not a parser: a miss costs one wider read. The header names the commit read.
 //
 // usage: outline.js <path>... [--ext .js,.py]
 'use strict';
@@ -16,11 +14,9 @@ const SKIP_DIRS = new Set([
 ]);
 const MAX_FILE_BYTES = 512 * 1024;
 const BINARY_PROBE_BYTES = 8192;
-// Past this the outline is itself the thing being read whole; the tail is dropped with a note.
 const MAX_SYMBOLS = 2000;
 
-// Block comments and docstrings that span lines are the one context a column-0 declaration
-// pattern reads wrongly, so they are tracked; template literals are not.
+// Multi-line comments and docstrings are tracked; template literals are not.
 const BLOCK_COMMENT = { js: ['/*', '*/'], go: ['/*', '*/'], dart: ['/*', '*/'], py: ['"""', '"""'] };
 
 const IDENT = '[A-Za-z_$][\\w$]*';
@@ -42,8 +38,6 @@ const RULES = {
   ],
   dart: [
     { kind: 'class', re: /^(?:abstract\s+)?(?:class|mixin|enum|extension)\s+(\w+)/ },
-    // A return type, a lower-case name, a parameter list, then the body opener. Keywords never
-    // carry a return type, so control flow does not match.
     { kind: 'function', re: /^(?:[A-Z][\w<>?,\s]*|void|dynamic|int|double|String|bool|num)\s+([a-z_]\w*)\s*\([^)]*\)\s*(?:async\*?\s*)?(?:=>|\{)/ },
   ],
 };
@@ -123,8 +117,7 @@ function outlineFile(file, notes) {
       inBlock = true;
       if (opensAt === 0) continue;
     }
-    // Column 0 is what marks a declaration as top-level, so indentation is kept unless a
-    // leading comment was the thing occupying it.
+    // Column 0 marks top-level; indentation is kept unless a leading comment occupied it.
     const parts = line.split(open);
     const code =
       parts.length === 1

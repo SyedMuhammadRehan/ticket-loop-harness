@@ -136,9 +136,6 @@ test('the label carries the scope, so a focused review cannot pass itself off as
 });
 
 // --- declared slice scope: a change outside it is listed, never inferred ---
-// The judge's scope rule says "the changed files and what imports them", and drift beyond the
-// slice was found only if the judge happened to look. A slice now declares the files it expects
-// to touch before the work starts, and qascope reports every changed file outside that set.
 
 function commitAll(root, msg) {
   git(root, 'add', '-A');
@@ -183,10 +180,7 @@ test('slice refuses an empty id and a declaration with no files', () => {
   }
 });
 
-// --- delta re-review: after a verdict, a fix that stays inside the judged files is read as a delta ---
-// Every QA round used to re-read the whole diff. The scope a judge was given is now sealed
-// when qascope computes it, so the next qascope can tell whether the change since then stayed
-// inside what that judge already read. It escalates itself the moment the fix does not.
+// --- delta re-review: a fix that stays inside the judged files is read as the change since ---
 
 function judged(root, runDir, verdict) {
   fs.writeFileSync(path.join(root, runDir, 'done.md'), '# Done\n');
@@ -257,8 +251,7 @@ test('a fix that touches a risk path is FULL even when the judge read that file 
   }
 });
 
-// The riskiest slice runs first, so a risk touch early in the run is the normal case. Only a
-// change to a risk path SINCE the judge read it escalates.
+// Only a risk path changed SINCE the judge read it escalates.
 test('a risk path judged in an earlier round does not force FULL on an unrelated later fix', () => {
   const { root, runDir } = sliceRepo();
   try {

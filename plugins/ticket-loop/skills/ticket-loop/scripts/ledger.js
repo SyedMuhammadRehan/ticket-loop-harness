@@ -496,8 +496,7 @@ function cmdRevise(runDir, file, reason) {
 
 // Known only after the dispatch returns, so it is a separate record. It never changes the
 // count — refunding a spent slot would make the budget negotiable after the fact.
-// A count the tool reported, or nothing. A figure that fails to parse is refused rather than
-// stored as null, because null means "not measured" and must not be how a typo reads.
+// Refused rather than stored as null: null means "not measured".
 function wholeNumberFlag(value, flag) {
   if (value === undefined) return null;
   if (!/^\d+$/.test(String(value))) {
@@ -538,8 +537,6 @@ function cmdOutcome(runDir, seqArg, outcome, note, opts) {
   );
 }
 
-// The role is the dispatch label's prefix ("implementer: C3" → implementer), which is what the
-// playbook tells the orchestrator to write; anything else is grouped as unlabelled.
 function roleOf(label) {
   const m = /^\s*([a-z][\w-]*)\s*:/i.exec(String(label || ''));
   return m ? m[1].toLowerCase() : 'unlabelled';
@@ -789,8 +786,6 @@ function cmdClear(runDir, glob, reason) {
 // `--base <ref>` judges a diff with no run behind it, for the standalone review. Everything
 // else is identical, deliberately: a review outside a run should size and fence a change the
 // same way one inside it does.
-// A slice names the files it expects to touch before the work starts, so a change outside that
-// set is something qascope can list rather than something a judge has to notice.
 function cmdSlice(runDir, id, globs) {
   requireChain(runDir);
   requireOpen(runDir, 'slice');
@@ -821,8 +816,7 @@ function gitLines(tree, args) {
   return (res.stdout || '').split('\n').filter((l) => l.trim());
 }
 
-// The change since the tree a judge was scoped on. A verdict with no scope receipt before it
-// (a judge dispatched without qascope) yields nothing, so the next review is sized from scratch.
+// A verdict with no scope receipt before it yields nothing; the next review is sized from scratch.
 function deltaSinceVerdict(runDir, tree, riskPaths) {
   const verdict = chain.last(runDir, 'verdict');
   if (!verdict) return null;
@@ -895,8 +889,7 @@ function cmdQaScope(runDir, worktree, baseRef) {
   if (touchedRiskPaths.length) reasons.push(`risk paths touched: ${touchedRiskPaths.join(', ')}`);
   if (added > threshold) reasons.push(`${added} inserted line(s) exceeds qaScope.smallDiffLines (${threshold})`);
 
-  // Risk is judged since the verdict, not since base: a risk path read in full by an earlier
-  // judge does not make every later unrelated fix a full read.
+  // Risk is judged since the verdict, not since base.
   const delta = withRun && readable ? deltaSinceVerdict(runDir, tree, riskPaths) : null;
   let scope;
   let why;

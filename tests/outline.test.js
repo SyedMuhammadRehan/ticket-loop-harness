@@ -1,7 +1,5 @@
 'use strict';
-// The outline gives an implementer line numbers so it reads a range instead of a file. It is
-// advisory, so it never fails a run; what it must guarantee is that a reader can tell which
-// tree it describes, because line numbers from a tree that has since moved are worse than none.
+// Advisory tool; the one guarantee is that a reader can tell which tree the line numbers came from.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
