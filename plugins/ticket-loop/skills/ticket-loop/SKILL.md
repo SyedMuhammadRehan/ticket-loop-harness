@@ -41,8 +41,9 @@ human did not give. A skipped stage records no gate; note it in `ledger.md` and 
 **Editing a document after a receipt sealed it:** record it first, on every such edit:
 `node <SKILL_DIR>/scripts/ledger.js revise <runDir> <file> --reason "<what changed and why>"`
 A gate seals the file named as its `--evidence` (`approach.md`, and `ledger.md` when you cite
-it); a QA verdict seals `done-additions.md`. Until then a file is freely editable. `done.md`,
-`*.approved.md` and the profile are refused outright.
+it). Until then a file is freely editable. `done.md`, `*.approved.md` and the profile are refused
+outright. `done-additions.md` is never revised or hand-edited after a verdict: a new criterion
+goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and re-seals it.
 
 ## Stage 0 — PREFLIGHT
 
@@ -207,7 +208,8 @@ reality proved wrong>`, then `ledger.js revise`; the QA judge BLOCKs an unrecord
    edited since. It records the `freeze` gate; then
    `node <SKILL_DIR>/scripts/ledger.js gate <runDir> validate`.
    From here `done.md` and `done.approved.md` are read-only; new criteria go to
-   `<runDir>/done-additions.md`, which the freeze creates with a header only, additive only.
+   `<runDir>/done-additions.md` (created header-only by the freeze) through
+   `node <SKILL_DIR>/scripts/ledger.js addition <runDir> "- [ ] C<n> (kind): ... | run: ..."`.
 4. **`--dry-run` ends here:** print the paths of the brief, design-spec, approach (if any) and
    frozen done-list with a three-line summary of each, and stop. Say that the run stays active
    (the guard keeps protecting the run dir) until a later `/ticket-loop <TICKET>` RESUMEs it
@@ -312,7 +314,7 @@ result into `ledger.md`'s check-history table.
 | TEST | assertion failures | dispatch the implementer with the failure output and the ledger |
 | TOKEN | token test mismatch | dispatch `prompts/fixer_ui.md` |
 | RUNTIME | console errors, overflow, missing element | retry once free; then implementer with the evidence |
-| QA_BLOCK | Stage 9 verdict BLOCK | dispatch the implementer with the findings verbatim; then Stage 9 again, where `qascope` decides whether the re-review is a DELTA |
+| QA_BLOCK | Stage 9 verdict BLOCK | dispatch the implementer with the findings verbatim; a finding that needs a new criterion goes in with `ledger.js addition`; then Stage 9 again, where `qascope` decides whether the re-review is a DELTA |
 | GOLDEN_UPDATE_REQUIRED | a golden test failed | no retry, no strike; record in ledger and report with diff evidence; run continues; report it as NOT verified |
 | FLAKY_VERIFIER | the same check alternates PASS/FAIL in the sealed check history | flag in report; not a code failure; not an attempt |
 

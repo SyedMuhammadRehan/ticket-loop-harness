@@ -190,12 +190,15 @@ if (declaredNone.length && realTokens.length) {
     `Tokens declares "none" and then lists ${realTokens.length} token(s) — say one or the other`
   );
 }
-// The marker is for a run with no visual contract. Where the profile names a design source,
-// "none" would waive every token binding the design stage exists to produce.
-if (declaredNone.length && cfg.designSource && cfg.designSource !== 'none') {
+// The marker is for a run with no visual contract. A design-spec.md in the run dir is the
+// evidence one exists; with it present, "none" would waive every token binding the design
+// stage produced. Without it the ticket carried no design link and the run is LOGIC-ONLY,
+// whatever the profile's default source.
+const hasDesignSpec = fs.existsSync(path.join(runDir, 'design-spec.md'));
+if (declaredNone.length && cfg.designSource && cfg.designSource !== 'none' && hasDesignSpec) {
   errors.push(
-    `Tokens declares "none" but the profile's designSource is "${cfg.designSource}" — ` +
-      `a run with a design source must bind its tokens to design-spec.md`
+    `Tokens declares "none" but design-spec.md exists under a "${cfg.designSource}" profile — ` +
+      `a run with a design spec must bind its tokens to it`
   );
 }
 for (const t of realTokens) {

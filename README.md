@@ -341,6 +341,16 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   they need. Regex per stack, no parser, no index: a miss costs one wider read, which is what
   every read cost before.
 
+- **Additions are appended, never edited** — every QA verdict seals `done-additions.md`, and the
+  answer to a BLOCK is often a new criterion, so `ledger.js addition` is the one way to change
+  that file after a judge has read it: it appends a criterion-shaped line, refuses a duplicate id
+  and a file that was hand-edited since its seal, and records a receipt over the new content.
+  `verify` accepts the file at that content; any other change to it stays TAMPERED, and `revise`
+  refuses the file outright.
+- **"No tokens" means no design spec** — the validator refuses a `Tokens: none` line only when a
+  `design-spec.md` exists in the run dir. A profile that names Figma is the repo's default, not a
+  claim that this ticket carried a design link.
+
 ### Yours to uphold — and visible in the report if you don't
 
 - **That the token figure is the one the tool showed.** `outcome --tokens` seals whatever the
@@ -414,9 +424,10 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
 - **Honest failure classification.** `FLAKY_VERIFIER` now requires an alternating history in the
   sealed check record, and `GOLDEN_UPDATE_REQUIRED` must be reported as *not verified* — but
   choosing the right class in the first place is judgement.
-- **Keeping `done-additions.md` additive.** It has to stay writable to be useful, so a
-  weakening addition is caught by review, not by code: the QA judge reads both the frozen
-  contract and the additions from disk and BLOCKs contradictions.
+- **Whether an added criterion weakens a frozen one.** The additions file can only grow, and
+  only through `ledger.js addition` (see above), so a removed or reworded criterion is TAMPERED.
+  What the new line says is still judgement: the QA judge reads both files from disk and BLOCKs
+  a contradiction.
 
 ### Adversarial QA
 

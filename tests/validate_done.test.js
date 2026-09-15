@@ -297,7 +297,28 @@ test('a token merely NAMED none is still a token', () => {
   }
 });
 
-test('"none" is refused when the profile names a design source', () => {
+test('"none" is refused when a design spec exists under a design-source profile', () => {
+  const { root, runDir } = mkRun({
+    designSource: 'figma',
+    verify: { test: 'pytest -q', analyze: 'ruff check .' },
+  });
+  ledger(root, ['init', runDir, 'abc123']);
+  try {
+    fs.writeFileSync(path.join(runDir, 'design-spec.md'), '# Design\n## colors\n- errorColor: #B00020\n');
+    fs.writeFileSync(
+      path.join(runDir, 'done.draft.md'),
+      VALID_DRAFT.replace('- errorColor: #B00020 (source: design-spec.md#colors)', '- none (no contract)')
+    );
+    const res = runScript(SCRIPT, [runDir], { cwd: root });
+    assert.strictEqual(res.status, 1);
+    assert.match(res.stderr, /design-spec\.md exists under a "figma" profile/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// A figma profile is the repo's default, not a promise that every ticket carries a design link.
+test('"none" is accepted under a design-source profile when no design spec exists (LOGIC-ONLY)', () => {
   const { root, runDir } = mkRun({
     designSource: 'figma',
     verify: { test: 'pytest -q', analyze: 'ruff check .' },
@@ -306,11 +327,10 @@ test('"none" is refused when the profile names a design source', () => {
   try {
     fs.writeFileSync(
       path.join(runDir, 'done.draft.md'),
-      VALID_DRAFT.replace('- errorColor: #B00020 (source: design-spec.md#colors)', '- none (no contract)')
+      VALID_DRAFT.replace('- errorColor: #B00020 (source: design-spec.md#colors)', '- none (LOGIC-ONLY, the ticket has no design link)')
     );
     const res = runScript(SCRIPT, [runDir], { cwd: root });
-    assert.strictEqual(res.status, 1);
-    assert.match(res.stderr, /designSource is "figma"/);
+    assert.strictEqual(res.status, 0, res.stderr);
   } finally {
     rmDir(root);
   }
