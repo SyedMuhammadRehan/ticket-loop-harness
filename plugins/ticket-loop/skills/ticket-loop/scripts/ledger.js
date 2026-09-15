@@ -452,7 +452,8 @@ function cmdRevise(runDir, file, reason) {
     console.error(
       `ledger revise: ${file} is frozen — it may not be revised at all.\n` +
         `  The frozen contract cannot be restated after the freeze, and control-plane state has its own ` +
-        `checks in "verify" that a reason string would launder. New criteria go in done-additions.md.`
+        `checks in "verify" that a reason string would launder. New criteria are appended with ` +
+        `"ledger.js addition ${runDir} \\"- [ ] C<n> (kind): ... | run: ...\\"".`
     );
     process.exit(1);
   }
@@ -492,6 +493,60 @@ function cmdRevise(runDir, file, reason) {
     supersedes: (prior || seals[seals.length - 1].record).seq,
   });
   console.log(`ledger: revision of ${path.basename(abs)} recorded — it will show in the report's Integrity section`);
+}
+
+// Additive by construction: the only write this command makes is an append, and the receipt
+// seals the result, so a verdict-sealed additions file can grow without becoming TAMPERED
+// while any other change to it still is.
+const CRITERION_LINE = /^- \[ \] (C\d+) \((test|analyzer|runtime|token|manual)\):.+\|\s*run:\s*\S/;
+const CRITERION_ID = (id) => new RegExp(`^- \\[[ x]\\] ${id} `, 'm');
+
+function cmdAddition(runDir, line) {
+  requireChain(runDir);
+  requireOpen(runDir, 'addition');
+  const text = String(line || '').trim();
+  const m = CRITERION_LINE.exec(text);
+  if (!m) {
+    console.error(
+      'ledger addition: the line must be a criterion in the done-list shape:\n' +
+        '  "- [ ] C<n> (test|analyzer|runtime|token|manual): when <trigger>, the system shall <response> | run: <command>"'
+    );
+    process.exit(1);
+  }
+  const file = path.join(runDir, 'done-additions.md');
+  if (!fs.existsSync(file)) {
+    console.error(`ledger addition: ${file} does not exist — the freeze creates it, so nothing is frozen yet.`);
+    process.exit(1);
+  }
+  const abs = path.resolve(file);
+  const records = chain.records(runDir);
+  const seals = sealsOf(records, abs);
+  const priorAdd = records.filter((r) => r.kind === 'addition').pop();
+  const expected = priorAdd ? priorAdd.payload.sha256 : seals.length ? seals[seals.length - 1].evidence.sha256 : null;
+  const current = fs.readFileSync(abs, 'utf8');
+  if (expected && chain.sha256File(abs) !== expected) {
+    console.error(
+      `ledger addition: done-additions.md differs from what was last sealed — it was hand-edited. ` +
+        `That edit is TAMPERED and appending cannot re-seal it; restore the sealed content first.`
+    );
+    process.exit(1);
+  }
+  const approvedPath = path.join(runDir, 'done.approved.md');
+  const approved = fs.existsSync(approvedPath) ? fs.readFileSync(approvedPath, 'utf8') : '';
+  if (CRITERION_ID(m[1]).test(approved) || CRITERION_ID(m[1]).test(current)) {
+    console.error(`ledger addition: ${m[1]} already exists in the contract — a new criterion needs a new id.`);
+    process.exit(1);
+  }
+  fs.appendFileSync(abs, `${current.endsWith('\n') || current === '' ? '' : '\n'}${text}\n`);
+  const sealedBy = priorAdd ? `addition (seq ${priorAdd.seq})` : seals.length ? `${seals[seals.length - 1].record.kind} (seq ${seals[seals.length - 1].record.seq})` : 'nothing yet';
+  chain.append(runDir, 'addition', {
+    file: String(file).replace(/\\/g, '/'),
+    id: m[1],
+    line: text,
+    sha256: chain.sha256File(abs),
+    reason: `criterion ${m[1]} appended after ${sealedBy}`,
+  });
+  console.log(`ledger: ${m[1]} appended to done-additions.md and sealed — the next judge reads it from disk`);
 }
 
 // Known only after the dispatch returns, so it is a separate record. It never changes the
@@ -1171,8 +1226,8 @@ function cmdVerify(runDir) {
     }
 
     // Every sealed evidence file must still hash to what its receipt recorded, unless a later
-    // `revise` receipt names exactly the content now on disk.
-    const reviseRecords = v.records.filter((r) => r.kind === 'revise');
+    // `revise` or `addition` receipt names exactly the content now on disk.
+    const reviseRecords = v.records.filter((r) => r.kind === 'revise' || r.kind === 'addition');
     const counted = new Set();
     for (const r of v.records) {
       for (const e of (r.payload && (r.payload.evidence || r.payload.inputs)) || []) {
@@ -1267,7 +1322,8 @@ function main() {
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
         '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
-        '       ledger.js slice <runDir> <id> --files <glob>[,<glob>]...'
+        '       ledger.js slice <runDir> <id> --files <glob>[,<glob>]...\n' +
+        '       ledger.js addition <runDir> "- [ ] C<n> (kind): <criterion> | run: <command>"'
     );
     process.exit(1);
   }
@@ -1305,6 +1361,8 @@ function main() {
       return cmdOutcome(runDir, rest[0], rest[1], rest.slice(2).join(' '), { tokens, ms });
     case 'slice':
       return cmdSlice(runDir, rest[0], sliceFiles);
+    case 'addition':
+      return cmdAddition(runDir, rest.join(' '));
     case 'verify':
       return cmdVerify(runDir);
     default:
