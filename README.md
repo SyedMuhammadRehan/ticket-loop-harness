@@ -63,6 +63,7 @@ plugins/ticket-loop/
     dispatch_guard.js                #   PreToolUse(Task): the dispatch budget, enforced at the tool call
     stop_gate.js                     #   Stop: verify main repo + every worktree, vs the BRANCH POINT
     hygiene.js                       #   what the stop gate reads in the ADDED lines: debug artefacts, secrets
+    read_hint.js                     #   PreToolUse(Read|Grep): a long file's outline as context, run-active only
   agents/
     ticket-loop-qa.md                # the adversarial QA judge — granted no Write or Edit
   skills/qa-check/
@@ -82,6 +83,7 @@ plugins/ticket-loop/
       verify_falsifiable.js          # preflight: can verify.test actually fail?
       worktree_deps.js               # reuse the main repo's dependencies when the lockfile is identical
       outline.js                     # declarations with line numbers, stamped with HEAD, for range reads
+      survey.js                      # codebase-map.md from the profile's survey.source command, or the outline
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -351,7 +353,21 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   `design-spec.md` exists in the run dir. A profile that names Figma is the repo's default, not a
   claim that this ticket carried a design link.
 
+- **The survey has a seam, not a dependency** — `survey.js` writes the top of the codebase map
+  from the profile's `survey.source` command when one is set (a knowledge-graph report from a
+  tool the repo owner installed, for instance) and from the plugin's own outline when not; either
+  way the map names the command and the commit it was read from, and a failing command falls
+  back to the outline with the failure written into the map. Nothing here installs anything.
+- **A whole-file read is answered with the outline first** — while a run is active, a
+  `PreToolUse` hook on Read and Grep puts a long source file's declarations, or an identifier's
+  declaration sites, in front of the model as context before the tool runs. It never blocks and
+  does nothing outside a run; whether the model then reads a range instead of the file is its
+  call, but the information arrives at the moment the choice is made.
+
 ### Yours to uphold — and visible in the report if you don't
+
+- **Whether the read hint is taken.** The hook shows the outline; it cannot make the model read
+  a range. `ledger.js cost` per-role tokens are where an ignored hint shows up.
 
 - **That the token figure is the one the tool showed.** `outcome --tokens` seals whatever the
   orchestrator types; the chain proves it was recorded once and never changed, not that it
