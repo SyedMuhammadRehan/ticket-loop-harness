@@ -83,7 +83,7 @@ plugins/ticket-loop/
       verify_falsifiable.js          # preflight: can verify.test actually fail?
       worktree_deps.js               # reuse the main repo's dependencies when the lockfile is identical
       outline.js                     # declarations with line numbers, stamped with HEAD, for range reads
-      survey.js                      # codebase-map.md from the profile's survey.source command, or the outline
+      survey.js                      # codebase-map.md as the outline of the named paths, stamped with HEAD
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -101,7 +101,7 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `verify.analyze` / `verify.test` / `verify.pubGet` / `verify.codegen` | the commands the loop runs |
 | `riskPaths` | hard-stop paths that require human clearance (auth, API contracts, migrations, deps) |
 | `worktreePrefix` | where the isolated worktree is created |
-| `buildResolverAgent` | which subagent fixes build/compile failures |
+| `buildResolverAgent` | ignored with a warning since 0.20.0 — build failures go to the plugin's own `prompts/fixer_build.md` |
 | `memoryFile` | cross-run lessons file the loop reads at the start and appends to at the end (`null` disables) |
 | `models` | model per dispatch role (`survey` / `implementer` / `fixer` / `qa`), each defaulting to `inherit` = the session model. Opt-in cost tiering: downgrade `survey` first (read-only, caught downstream), `implementer` second (verification + QA backstop it), `qa` last or never — it is the backstop. The model used lands in the ledger label and report |
 | `qaScope.smallDiffLines` | a committed diff at or under this many changed lines (default 60) touching no `riskPaths` gets a *focused* QA read (changed files + their consumers + the contract) instead of a codebase sweep; `0` = always sweep. Scope never shrinks verdict authority, and risk-path touches always get the full read |
@@ -353,11 +353,11 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   `design-spec.md` exists in the run dir. A profile that names Figma is the repo's default, not a
   claim that this ticket carried a design link.
 
-- **The survey has a seam, not a dependency** — `survey.js` writes the top of the codebase map
-  from the profile's `survey.source` command when one is set (a knowledge-graph report from a
-  tool the repo owner installed, for instance) and from the plugin's own outline when not; either
-  way the map names the command and the commit it was read from, and a failing command falls
-  back to the outline with the failure written into the map. Nothing here installs anything.
+- **The survey is the plugin's own outline** — `survey.js` writes the top of the codebase map
+  from the paths you name, stamped with the commit it read, and a test refuses the script the
+  moment it grows a way to run an external command. Every step the loop runs is code in this
+  repo: no other plugin's agent, no third-party skill, no configured program standing in for a
+  stage. Ticket and design data come in through MCP servers and CLIs; the work does not go out.
 - **A whole-file read is answered with the outline first** — while a run is active, a
   `PreToolUse` hook on Read and Grep puts a long source file's declarations, or an identifier's
   declaration sites, in front of the model as context before the tool runs. It never blocks and
