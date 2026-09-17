@@ -24,6 +24,12 @@ const DEFAULTS = {
     // Commit trailer for repos that require AI disclosure; null = clean commits.
     commitTrailer: null,
   },
+  // A command whose stdout becomes the top of codebase-map.md at Stage 3 (a knowledge-graph
+  // report, say); null = the plugin's own outline of the tree. Runs in the worktree; trusted
+  // like every other command in this file.
+  survey: {
+    source: null,
+  },
   // Model per dispatch role; 'inherit' = the session model.
   models: {
     survey: 'inherit',
@@ -196,6 +202,10 @@ function resolve() {
       warnings.push(`invalid models.${role} — must be a model name or "inherit"; forcing "inherit"`);
       cfg.models[role] = 'inherit';
     }
+  }
+  if (cfg.survey.source != null && (typeof cfg.survey.source !== 'string' || !cfg.survey.source.trim())) {
+    warnings.push('invalid survey.source — must be a command string or null; forcing null');
+    cfg.survey.source = null;
   }
   if (!Number.isInteger(cfg.qaScope.smallDiffLines) || cfg.qaScope.smallDiffLines < 0) {
     warnings.push(

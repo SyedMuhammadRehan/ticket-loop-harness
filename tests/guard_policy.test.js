@@ -267,6 +267,11 @@ test('a cd into a directory that merely contains a protected name keeps per-stat
   assert.ok(denied(`cd "C:/work/ticket-loop-harness/.git/ticket-loop" && ${RM} PROJ-1`));
 });
 
+test('the survey script is a sanctioned writer into the run dir', () => {
+  assert.ok(!denied(`node scripts/survey.js ${RUN} --worktree ../wt --paths src,lib`));
+  assert.ok(denied(`node scripts/survey.js ${RUN} && echo x > ${RUN}/done.md`), 'chaining still forfeits the exemption');
+});
+
 test('per-statement judging does not reopen the cross-statement bypasses', () => {
   const RM = 'rm -r' + 'f';
   assert.ok(denied(`cd ${RUN} && ${RM} .`));

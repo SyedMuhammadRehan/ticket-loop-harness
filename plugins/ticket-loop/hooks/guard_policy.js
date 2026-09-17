@@ -77,7 +77,7 @@ const PROTECTED_REFS = [
 // `$` ( ) and backtick are excluded because $(...) / `...` execute inside an otherwise
 // perfectly sanctioned-looking command line.
 const SANCTIONED_COMMAND =
-  /^\s*("[^"]*node(\.exe)?"|node(\.exe)?)\s+[^;&|<>$`()%!\r\n]*\b(freeze_done|validate_done|ledger|chain)\.js\b[^;&|<>$`()%!\r\n]*$/;
+  /^\s*("[^"]*node(\.exe)?"|node(\.exe)?)\s+[^;&|<>$`()%!\r\n]*\b(freeze_done|validate_done|ledger|chain|survey)\.js\b[^;&|<>$`()%!\r\n]*$/;
 
 // --- read-only recognition ------------------------------------------------------------
 

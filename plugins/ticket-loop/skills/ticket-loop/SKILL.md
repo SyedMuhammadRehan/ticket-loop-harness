@@ -114,12 +114,13 @@ and say so in the report.
 
 Size the footprint from `ticket-brief.md`:
 - **Trivial** (1–2 files, obvious area): skip. Write `survey: skipped (trivial)` in `ledger.md`.
-- **Feature or subsystem**: `node <SKILL_DIR>/scripts/outline.js <area dirs>` first; its
-  output (declarations with line numbers, stamped with HEAD) is the top of
-  `<runDir>/codebase-map.md`. Then dispatch ONE read-only explorer (`Explore` or
-  `code-explorer`; Stage 7 dispatch rules apply) for the architecture layer, conventions,
-  files likely to change, neighbouring patterns and gotchas; it has no Write tool, so YOU
-  append its return below the outline. Then
+- **Feature or subsystem**: `node <SKILL_DIR>/scripts/survey.js <runDir> --worktree <wt>
+  --paths <area dirs>` writes the top of `<runDir>/codebase-map.md` from the profile's
+  `survey.source` command (a knowledge-graph report, say) or, when none is set, the outline of
+  those paths; both stamped with the command and HEAD. Read it. When it already answers what a
+  slice needs (layers, conventions, neighbours), skip the explorer and say so in `ledger.md`;
+  otherwise dispatch ONE read-only explorer (`Explore` or `code-explorer`; Stage 7 dispatch
+  rules apply) for what the map lacks, and append its return under `## Explorer findings`. Then
   `node <SKILL_DIR>/scripts/ledger.js gate <runDir> survey --evidence <runDir>/codebase-map.md`
 - **Whole-system** (redesign, rewrite, migrate everything): STOP. Tell the human to decompose
   it into sub-tickets and run the loop once per sub-ticket.

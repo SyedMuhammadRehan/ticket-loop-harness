@@ -170,4 +170,5 @@ function main() {
   process.stdout.write(out.join('\n') + '\n');
 }
 
-main();
+if (require.main === module) main();
+module.exports = { outlineFile, walk, headSha, LANG_BY_EXT, MAX_SYMBOLS };

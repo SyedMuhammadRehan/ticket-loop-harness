@@ -26,6 +26,12 @@
         "hooks": [
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch_guard.js\"", "timeout": 20 }
         ]
+      },
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/read_hint.js\"", "timeout": 10 }
+        ]
       }
     ],
     "Stop": [
