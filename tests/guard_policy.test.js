@@ -267,6 +267,39 @@ test('a cd into a directory that merely contains a protected name keeps per-stat
   assert.ok(denied(`cd "C:/work/ticket-loop-harness/.git/ticket-loop" && ${RM} PROJ-1`));
 });
 
+// Every one of these was refused in a field run while doing nothing but reading. A guard that
+// refuses reading is one operators learn to route around.
+test('read-only shapes operators actually use pass: assignment, xargs to a reader, loops, git -C', () => {
+  for (const cmd of [
+    `R=${RUN}; cat $R/ledger.md`,
+    `export R=${RUN}; grep -n slice $R/ledger.md`,
+    `find ${RUN} -name "*.md" | xargs wc -l`,
+    `find ${RUN} -type f | xargs grep -l PASS`,
+    `for f in ${RUN}/*.md; do wc -l $f; done`,
+    `git -C ../wt diff -- ${RUN}/done.md`,
+    `git -C ../wt diff --stat abc..HEAD`,
+    `git -c core.pager=cat -C ../wt log --oneline -3 -- ${RUN}`,
+  ]) {
+    assert.ok(!denied(cmd), `should allow: ${cmd}`);
+  }
+});
+
+test('the same shapes carrying a write are still denied', () => {
+  const RM = 'rm -r' + 'f';
+  for (const cmd of [
+    `R=${RUN}; ${RM} $R`,
+    `R=$(${RM} ${RUN}); cat $R`,
+    `find ${RUN} -name "*.md" -delete`,
+    `find ${RUN} -name "*.md" -exec ${RM} {} +`,
+    `find ${RUN} -name "*.md" | xargs ${RM}`,
+    `for f in ${RUN}/*.md; do ${RM} $f; done`,
+    `for f in ${RUN}/*.md; do echo x > $f; done`,
+    `git -C ../wt checkout -- ${RUN}/done.md`,
+  ]) {
+    assert.ok(denied(cmd), `should deny: ${cmd}`);
+  }
+});
+
 test('the survey script is a sanctioned writer into the run dir', () => {
   assert.ok(!denied(`node scripts/survey.js ${RUN} --worktree ../wt --paths src,lib`));
   assert.ok(denied(`node scripts/survey.js ${RUN} && echo x > ${RUN}/done.md`), 'chaining still forfeits the exemption');

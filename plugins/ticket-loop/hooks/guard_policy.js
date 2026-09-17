@@ -86,7 +86,7 @@ const READ_ONLY_VERBS = new Set([
   'file', 'grep', 'egrep', 'fgrep', 'rg', 'ack', 'findstr', 'select-string', 'sls',
   'get-content', 'gc', 'get-childitem', 'gci', 'get-item', 'test-path', 'measure-object',
   'diff', 'cmp', 'comm', 'sort', 'uniq', 'cut', 'md5sum', 'sha1sum', 'sha256sum', 'shasum',
-  'echo', 'write-output', 'jq', 'true', 'false', 'git',
+  'echo', 'write-output', 'jq', 'true', 'false', 'git', 'find',
   // Directory changes are harmless on their own; every other segment must still be read-only.
   'cd', 'pushd', 'popd', 'set-location', 'chdir',
 ]);
@@ -194,13 +194,29 @@ function isReadOnly(cmd) {
   // `sort -o F` truncates and rewrites F, so the verb alone does not make a statement safe.
   // No word boundary after -o: the target may be glued to it (`-oC:\path`).
   if (/\bsort\b[^|;&]*(\s-o|--output)/.test(lower)) return false;
-  if (/\b(tee|awk|xargs|install|truncate|dd|shred)\b/.test(lower)) return false;
+  if (/\b(tee|awk|install|truncate|dd|shred)\b/.test(lower)) return false;
+  // `find` deletes and executes through its own flags, not through a verb.
+  if (/\bfind\b[^|;&]*\s-(delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)\b/.test(lower)) return false;
 
-  for (const seg of segments(lower)) {
-    const verb = firstToken(seg);
+  for (const raw of segments(lower)) {
+    // Loop scaffolding executes nothing by itself; the body is judged as its own segment.
+    const seg = raw.replace(/^(do|then|else)\s+/, '');
+    if (LOOP_SCAFFOLD.test(seg) || SHELL_ASSIGNMENT.test(seg)) continue;
+    let tokens = seg.split(/\s+/).filter(Boolean);
+    // `xargs <verb>` runs the verb once per input line; it is as read-only as that verb.
+    if (tokens[0] === 'xargs') tokens = tokens.slice(1).filter((t) => !t.startsWith('-'));
+    const verb = tokens[0] || '';
     if (!READ_ONLY_VERBS.has(verb)) return false;
     if (verb === 'git') {
-      const sub = (seg.split(/\s+/).filter((t) => t && !t.startsWith('-'))[1] || '').toLowerCase();
+      // `-C <dir>` and `-c <key=value>` take an argument, which is not the subcommand;
+      // the case fold above makes them the same token.
+      const args = tokens.slice(1);
+      const positional = [];
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '-c') { i++; continue; }
+        if (!args[i].startsWith('-')) positional.push(args[i]);
+      }
+      const sub = positional[0] || '';
       if (sub === 'worktree') {
         if (!/\bworktree\s+list\b/.test(seg)) return false;
       } else if (!GIT_READ_SUBCOMMANDS.has(sub)) {
@@ -210,6 +226,11 @@ function isReadOnly(cmd) {
   }
   return true;
 }
+
+// `for f in <words>` / `done` / `fi` run nothing; a plain `NAME=value` assigns and runs nothing.
+// Command substitution inside either is caught above before this is consulted.
+const LOOP_SCAFFOLD = /^(for\s+\w+\s+in\s+[^;|&]*|while\s+[^;|&]*|done|fi|esac)$/;
+const SHELL_ASSIGNMENT = /^(export\s+)?[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'[^']*'|[^\s;|&]*)$/;
 
 // --- public verdicts ------------------------------------------------------------------
 
@@ -257,8 +278,14 @@ function commandVerdict(cmd, opts = {}) {
   if (isReadOnly(raw)) return null;
 
   // Per-statement judging stops a delete aimed elsewhere from condemning a read of the run
-  // dir; anything below can carry an effect between statements, so it forfeits that.
-  const crossSegment = CD_INTO_PROTECTED.test(lower) || /\$\(|`/.test(lower) || PIPE_TO_SHELL.test(lower);
+  // dir; anything below can carry an effect between statements, so it forfeits that. An
+  // assignment or loop header that names a protected path hands it to later statements
+  // through a variable, so the whole command is judged as one.
+  const carriesPath = statements(raw).some((s) => {
+    const low = s.toLowerCase();
+    return (SHELL_ASSIGNMENT.test(low) || LOOP_SCAFFOLD.test(low)) && protectedRefs(low, runActive).length > 0;
+  });
+  const crossSegment = carriesPath || CD_INTO_PROTECTED.test(lower) || /\$\(|`/.test(lower) || PIPE_TO_SHELL.test(lower);
   if (!crossSegment) {
     // Sanctioned invocations too: the anchored form above stops matching once anything follows.
     const offender = statements(raw).find((seg) => {

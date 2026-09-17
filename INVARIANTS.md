@@ -73,6 +73,7 @@ review were interactions between two rows below, which the code alone did not ma
 | 24 | Writing report.md does not release the freeze | `freeze_guard.js` → `activeRuns` | `freeze_guard.test.js` :: `writing report.md does NOT release the control plane` | Same off-switch failure as 12 |
 | 25 | Malformed hook input never wedges a session | `freeze_guard.js` → `readStdinJson` | `freeze_guard.test.js` :: `malformed stdin exits 0 (never wedges the whole session)` | A broken install must not break unrelated projects |
 | 26 | Publishing is refused while a run is active | `guard_policy.js` → `PUBLISHING` | `guard_policy.test.js` :: `publishing is refused while a run is active` | Merge and push are the human's decision |
+| 63 | A write reaching the run dir through a variable, a loop body, `xargs` or a `find` flag is refused; the same shapes that only read are not | `guard_policy.js` → `isReadOnly` | `guard_policy.test.js` :: `the same shapes carrying a write are still denied` | A guard that refuses reading is one operators learn to route around |
 
 ## Risk paths
 
