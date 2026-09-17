@@ -1,7 +1,7 @@
 'use strict';
-// A codebase map that does not say where it came from cannot be judged stale or trusted. The
-// survey script writes the map from a configured command or the plugin's outline, and stamps
-// it with both the source and the commit it read.
+// A codebase map that does not say where it came from cannot be judged stale. The survey
+// script is the plugin's own outline, stamped with the commit it read; nothing outside the
+// plugin is run to produce it.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -17,13 +17,13 @@ function git(cwd, ...args) {
   return res.stdout;
 }
 
-function mkRepo(config) {
+function mkRepo() {
   const root = mkTmpDir('tl-survey');
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'config', 'user.email', 'test@test');
   git(root, 'config', 'user.name', 'test');
   fs.mkdirSync(path.join(root, '.agents', 'ticket-runs', 'T-1'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), JSON.stringify(config));
+  fs.writeFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), JSON.stringify({ verify: { test: 'x' } }));
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src', 'a.js'), 'export function alpha() {}\nexport class Beta {}\n');
   fs.writeFileSync(path.join(root, '.gitignore'), '.agents/ticket-runs/\n');
@@ -39,46 +39,36 @@ function survey(root, args) {
 }
 
 test('the map is stamped with the source command and the HEAD it was read from', () => {
-  const { root, runDir, head } = mkRepo({ verify: { test: 'x' }, survey: { source: 'node -e "console.log(\'GRAPH REPORT: 3 communities\')"' } });
+  const { root, runDir, head } = mkRepo();
   try {
-    const { out, map } = survey(root, [runDir]);
+    const { out, map } = survey(root, [runDir, '--paths', 'src']);
     assert.strictEqual(out.head, head);
-    assert.ok(map.includes(`@ ${head}`), map);
-    assert.ok(map.includes('## Source: node -e'), map);
-    assert.ok(map.includes('GRAPH REPORT: 3 communities'), map);
-    assert.strictEqual(out.symbols, null, 'a configured source is used as-is, not outlined');
+    assert.ok(map.includes(`## Source: outline.js src @ ${head}`), map);
   } finally {
     rmDir(root);
   }
 });
 
-test('with no source configured the map is the outline of the tree', () => {
-  const { root, runDir } = mkRepo({ verify: { test: 'x' } });
+test('the map is the outline of the named paths', () => {
+  const { root, runDir } = mkRepo();
   try {
     const { out, map } = survey(root, [runDir, '--paths', 'src']);
-    assert.ok(map.includes('## Source: outline.js src @'), map);
     assert.ok(map.includes('src/a.js:1\tfunction\talpha'), map);
     assert.ok(map.includes('src/a.js:2\tclass\tBeta'), map);
     assert.strictEqual(out.symbols, 2);
+    assert.ok(map.includes('## Explorer findings'), 'the map leaves room for the explorer dispatch');
   } finally {
     rmDir(root);
   }
 });
 
-test('a source command that fails falls back to the outline and says so', () => {
-  const { root, runDir } = mkRepo({ verify: { test: 'x' }, survey: { source: 'node -e "process.exit(3)"' } });
-  try {
-    const { out, map } = survey(root, [runDir, '--paths', 'src']);
-    assert.ok(map.includes('## Source: outline.js src @'), map);
-    assert.ok(map.includes('survey.source failed (exit 3)'), map);
-    assert.ok(out.notes.some((n) => n.includes('failed')), JSON.stringify(out.notes));
-  } finally {
-    rmDir(root);
-  }
+test('nothing in the script runs a configured or external command', () => {
+  const src = fs.readFileSync(SURVEY, 'utf8');
+  assert.ok(!/child_process|spawn|exec/.test(src), 'survey.js must not run commands; the map is the plugin\'s own outline');
 });
 
 test('it refuses a run dir that does not exist', () => {
-  const { root } = mkRepo({ verify: { test: 'x' } });
+  const { root } = mkRepo();
   try {
     const res = runScript(SURVEY, ['.agents/ticket-runs/NOPE'], { cwd: root });
     assert.strictEqual(res.status, 1);

@@ -15,6 +15,10 @@ the hooks (the enforcement layer), the scripts (the mechanical checks), and the 
 
 - **Zero runtime dependencies.** Node ≥ 18 standard library only, in the plugin and the
   tests. No `npm install` step for a user, ever.
+- **Own code only.** Every step the loop runs is code shipped in this plugin: its own scripts,
+  its own prompts on Claude Code's built-in agent types, its own judge agent. Never another
+  plugin's agent or skill, never a profile option that runs a third-party program in place of a
+  stage. MCP servers and CLIs may supply ticket and design data; they never do the work.
 - **Cross-platform.** Windows and POSIX both. `git bash` and PowerShell are both live here;
   `mode: 0o600` is a no-op on Windows; `.bat` shims need the shell fallback in `hook_lib.js`.
 - **Hooks must never wedge a session on malformed input** (exit 0), but **must** block real

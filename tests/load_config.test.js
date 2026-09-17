@@ -23,6 +23,19 @@ test('no config file: conservative defaults + warning + configFound:false', () =
   }
 });
 
+// The loop never hands a stage to another plugin's agent; a profile that still names one is
+// told so and the value is dropped, rather than silently honoured.
+test('buildResolverAgent is ignored with a warning naming the plugin\'s own fixer', () => {
+  const repo = mkFakeRepo({ verify: { test: 'x' }, buildResolverAgent: 'dart-build-resolver' });
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: repo }).stdout);
+    assert.strictEqual(cfg.buildResolverAgent, null);
+    assert.ok(cfg._meta.warnings.some((w) => /buildResolverAgent .*ignored.*fixer_build\.md/.test(w)), JSON.stringify(cfg._meta.warnings));
+  } finally {
+    rmDir(repo);
+  }
+});
+
 test('valid config merges over defaults', () => {
   const repo = mkFakeRepo({
     stack: 'python',

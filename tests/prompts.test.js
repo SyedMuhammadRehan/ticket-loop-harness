@@ -28,7 +28,20 @@ const TEMPLATES = {
     required: ['TICKET', 'RUN_DIR', 'SCRIPTS_DIR', 'DIFF', 'CHECK_RESULTS', 'CONVENTIONS', 'QA_SCOPE'],
     perDispatch: ['DIFF', 'CHECK_RESULTS', 'CONVENTIONS', 'QA_SCOPE'],
   },
+  'fixer_build.md': {
+    required: ['TICKET', 'CHECK_ID', 'WORKTREE_PATH', 'VERIFY_ANALYZE', 'VERIFY_TEST', 'ERROR_OUTPUT', 'FILES', 'LEDGER_FORBIDDEN'],
+    perDispatch: ['ERROR_OUTPUT', 'FILES', 'LEDGER_FORBIDDEN'],
+  },
 };
+
+// Every agent the loop dispatches runs a prompt shipped here, on a Claude Code built-in agent
+// type or the plugin's own judge. Another plugin's agent is code nobody in this repo can read.
+test('the playbook names no agent from another plugin', () => {
+  const skill = fs.readFileSync(path.join(REPO_ROOT, 'plugins', 'ticket-loop', 'skills', 'ticket-loop', 'SKILL.md'), 'utf8');
+  for (const foreign of ['code-explorer', 'build-resolver', 'buildResolverAgent', '`/jira`']) {
+    assert.ok(!skill.includes(foreign), `SKILL.md delegates to "${foreign}", which is not this plugin's code`);
+  }
+});
 
 for (const [name, spec] of Object.entries(TEMPLATES)) {
   const body = fs.readFileSync(path.join(PROMPTS, name), 'utf8');

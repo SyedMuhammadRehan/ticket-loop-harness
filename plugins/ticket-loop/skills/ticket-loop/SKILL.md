@@ -58,7 +58,7 @@ goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and
    are high-trust, Pending is hints; carry flaky tests into the flake policy and relevant
    lessons into prompts. A lesson never authorises skipping a test, a gate or a clearance.
 3. Probe dependencies; degrade explicitly, never silently. Ticket source per `ticketSource`
-   (`jira` → `/jira` or Atlassian MCP; `github` → `gh`; `gitlab` → `glab`; `trello` → Trello
+   (`jira` → Atlassian MCP; `github` → `gh`; `gitlab` → `glab`; `trello` → Trello
    MCP; `manual` → nothing); unreachable → fall back to `manual` and ask the user to paste the
    ticket. Design source when `designSource != none` (`figma` → a Figma tool is callable;
    `openapi` → the contract is reachable); unavailable → the run is LOGIC-ONLY and every visual
@@ -81,7 +81,7 @@ goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and
 
 ## Stage 1 — INTAKE
 
-1. Fetch the ticket per `ticketSource`: `jira` → `/jira`; `github` → `gh issue view <ID>
+1. Fetch the ticket per `ticketSource`: `jira` → Atlassian MCP `getJiraIssue`; `github` → `gh issue view <ID>
    --comments`; `gitlab` → `glab issue view <ID> --comments`; `trello` → Trello MCP;
    `manual` → the user's text is the ticket and `<TICKET>` is a short slug you choose.
    Extract summary, description, acceptance criteria verbatim, design links (only when
@@ -115,12 +115,11 @@ and say so in the report.
 Size the footprint from `ticket-brief.md`:
 - **Trivial** (1–2 files, obvious area): skip. Write `survey: skipped (trivial)` in `ledger.md`.
 - **Feature or subsystem**: `node <SKILL_DIR>/scripts/survey.js <runDir> --worktree <wt>
-  --paths <area dirs>` writes the top of `<runDir>/codebase-map.md` from the profile's
-  `survey.source` command (a knowledge-graph report, say) or, when none is set, the outline of
-  those paths; both stamped with the command and HEAD. Read it. When it already answers what a
-  slice needs (layers, conventions, neighbours), skip the explorer and say so in `ledger.md`;
-  otherwise dispatch ONE read-only explorer (`Explore` or `code-explorer`; Stage 7 dispatch
-  rules apply) for what the map lacks, and append its return under `## Explorer findings`. Then
+  --paths <area dirs>` writes the top of `<runDir>/codebase-map.md`: the outline of those
+  paths, stamped with HEAD. Read it. When it already answers what a slice needs (layers,
+  conventions, neighbours), skip the explorer and say so in `ledger.md`; otherwise dispatch ONE
+  read-only `Explore` agent (Stage 7 dispatch rules apply) for what the map lacks, and append
+  its return under `## Explorer findings`. Then
   `node <SKILL_DIR>/scripts/ledger.js gate <runDir> survey --evidence <runDir>/codebase-map.md`
 - **Whole-system** (redesign, rewrite, migrate everything): STOP. Tell the human to decompose
   it into sub-tickets and run the loop once per sub-ticket.
@@ -311,7 +310,7 @@ result into `ledger.md`'s check-history table.
 
 | class | trigger | route |
 |---|---|---|
-| BUILD | analyzer or compile errors | dispatch the profile's `buildResolverAgent` (a general build-fix agent when null) with the full error output |
+| BUILD | analyzer or compile errors | dispatch `prompts/fixer_build.md` on a general-purpose agent, filling `{ERROR_OUTPUT}` with the full output, `{VERIFY_ANALYZE}`/`{VERIFY_TEST}` with the resolved commands, `{FILES}` with the slice's files |
 | TEST | assertion failures | dispatch the implementer with the failure output and the ledger |
 | TOKEN | token test mismatch | dispatch `prompts/fixer_ui.md` |
 | RUNTIME | console errors, overflow, missing element | retry once free; then implementer with the evidence |
@@ -354,7 +353,7 @@ when a non-obvious fix finally works: `memory.js add <memoryFile> flaky|fix <TIC
    Integrity. Exit 4 → `Integrity: TAMPERED`, problems verbatim, escalate. `Status:` is the
    work and `Integrity:` the history; report them separately. `revisions` in the output are
    recorded edits, listed with their reasons.
-2. With `--update-jira`, post the Summary as a comment via the configured source (`/jira`,
+2. With `--update-jira`, post the Summary as a comment via the configured source (Atlassian MCP,
    `gh issue comment`, `glab issue note`, Trello MCP); skip for `manual`. Never transition
    ticket status. If `memoryFile` is set, add reusable lessons with `memory.js add` and list
    them in the report.

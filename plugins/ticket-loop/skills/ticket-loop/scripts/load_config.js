@@ -24,12 +24,6 @@ const DEFAULTS = {
     // Commit trailer for repos that require AI disclosure; null = clean commits.
     commitTrailer: null,
   },
-  // A command whose stdout becomes the top of codebase-map.md at Stage 3 (a knowledge-graph
-  // report, say); null = the plugin's own outline of the tree. Runs in the worktree; trusted
-  // like every other command in this file.
-  survey: {
-    source: null,
-  },
   // Model per dispatch role; 'inherit' = the session model.
   models: {
     survey: 'inherit',
@@ -203,9 +197,13 @@ function resolve() {
       cfg.models[role] = 'inherit';
     }
   }
-  if (cfg.survey.source != null && (typeof cfg.survey.source !== 'string' || !cfg.survey.source.trim())) {
-    warnings.push('invalid survey.source — must be a command string or null; forcing null');
-    cfg.survey.source = null;
+  // Every step the loop runs is the plugin's own code; a build failure goes to the plugin's
+  // build-fix prompt on a general-purpose agent, never to another plugin's agent.
+  if (cfg.buildResolverAgent != null) {
+    warnings.push(
+      `buildResolverAgent "${cfg.buildResolverAgent}" is ignored — the loop fixes builds with its own prompts/fixer_build.md; remove the key`
+    );
+    cfg.buildResolverAgent = null;
   }
   if (!Number.isInteger(cfg.qaScope.smallDiffLines) || cfg.qaScope.smallDiffLines < 0) {
     warnings.push(
