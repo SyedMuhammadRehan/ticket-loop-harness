@@ -35,6 +35,10 @@ review were interactions between two rows below, which the code alone did not ma
 | 10 | Editing the mirror cannot raise the cap | `ledger.js` → `caps` | `ledger.test.js` :: `editing budget.json cannot raise the cap or reset the count` | budget.json is a mirror; the chain governs |
 | 11 | Archive + re-init cannot reset the count | `ledger.js` → `cmdInit` | `ledger.test.js` :: `archive + re-init cannot silently reset the budget` | Moving the run dir used to be a free budget reset |
 | 12 | Writing report.md does not release the budget | `dispatch_guard.js` → `activeRuns` | `dispatch_guard.test.js` :: `writing report.md does NOT release the budget — only a sealed close does` | The loop's own deliverable must not be its off switch |
+| 64 | A dispatch with no outcome blocks the "done" claim | `stop_gate.js` → `openDispatchFailures` | `stop_gate.test.js` :: `a dispatch with no outcome blocks the "done" claim until it is recorded` | A stalled worker and a forgotten outcome are both invisible until something refuses to proceed over them |
+| 65 | A run cannot close over an open dispatch | `ledger.js` → `openDispatches` | `ledger.test.js` :: `a dispatch with no outcome is listed as open, and close refuses until it is resolved` | Close releases the gates; whatever is unaccounted for then never will be |
+| 66 | A subagent's return is recorded without the orchestrator | `subagent_return.js` → `recordReturn` | `subagent_return.test.js` :: `a subagent return is recorded against the oldest dispatch still out, with the agent named` | Only the mark tells a stall from an unrecorded result |
+| 67 | An unresolved dispatch is named before the next slot is spent | `dispatch_guard.js` → `unresolvedContext` | `dispatch_guard.test.js` :: `the next dispatch is told about a return with no outcome, and not about a fresh label` | Between dispatches nothing else runs where the orchestrator would see it |
 
 ## Stage receipts
 

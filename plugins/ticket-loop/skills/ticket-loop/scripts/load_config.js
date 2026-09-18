@@ -49,6 +49,7 @@ const DEFAULTS = {
   dispatchPolicy: {
     minSliceLines: 50,
     promptBudgetChars: 32000,
+    stallMinutes: 30,
   },
 };
 
@@ -211,7 +212,7 @@ function resolve() {
     );
     cfg.qaScope.smallDiffLines = DEFAULTS.qaScope.smallDiffLines;
   }
-  for (const [key, min] of [['minSliceLines', 0], ['promptBudgetChars', 1]]) {
+  for (const [key, min] of [['minSliceLines', 0], ['promptBudgetChars', 1], ['stallMinutes', 0]]) {
     const v = cfg.dispatchPolicy[key];
     if (!Number.isInteger(v) || v < min) {
       warnings.push(`invalid dispatchPolicy.${key} "${v}" — must be an integer >= ${min}; forcing ${DEFAULTS.dispatchPolicy[key]}`);

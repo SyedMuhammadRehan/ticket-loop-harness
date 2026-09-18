@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { SCRIPTS_DIR, HOOKS_DIR, mkRun, rmDir, runScript, ledger } = require('./helpers.js');
+const { SCRIPTS_DIR, HOOKS_DIR, mkRun, rmDir, runScript, ledger, settleDispatches } = require('./helpers.js');
 
 const VALIDATE = path.join(SCRIPTS_DIR, 'validate_done.js');
 const FREEZE = path.join(SCRIPTS_DIR, 'freeze_done.js');
@@ -85,8 +85,9 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
     assert.strictEqual(runScript(FREEZE, [runDir], { cwd: root }).status, 0);
     ok(['gate', runDir, 'validate']);
 
-    // Stage 7 — implement (dispatches counted by the hook)
+    // Stage 7 — implement (dispatches counted by the hook, outcomes recorded as each returns)
     for (let i = 0; i < 3; i++) assert.strictEqual(dispatch(root).status, 0);
+    settleDispatches(root, runDir);
 
     // Stage 8 — verify, recording each check
     ok(['check', runDir, 'C1', 'PASS', '--by', 'command', '5/5']);
@@ -106,6 +107,7 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
       0
     );
     ok(['gate', runDir, 'qa']);
+    settleDispatches(root, runDir);
 
     // Stage 11 — report, then CLOSE. The run stays active until it is closed.
     fs.writeFileSync(path.join(runDir, 'report.md'), '# Report — T-1\nStatus: COMPLETE\n');
@@ -127,6 +129,7 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
 
     // The budget is still live until the close, and the close is what releases it.
     assert.strictEqual(dispatch(root).status, 0);
+    settleDispatches(root, runDir);
     ok(['close', runDir]);
     assert.ok(fs.existsSync(path.join(runDir, 'closed.json')));
   } finally {
@@ -210,6 +213,7 @@ test('the lazy path is refused at every step a shortcut would be taken', () => {
 
     // The sealed history itself was never broken by any of the above — but the mirror edit
     // from shortcut 5 is still reported, which is the point: it changed nothing and it shows.
+    settleDispatches(root, runDir);
     const res = ledger(root, ['verify', runDir]);
     assert.strictEqual(res.status, 4);
     const report = JSON.parse(res.stdout);

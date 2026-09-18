@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mkRun, rmDir, ledger, chainDirFor, runScript, HOOKS_DIR, SCRIPTS_DIR } = require('./helpers.js');
+const { mkRun, rmDir, ledger, settleDispatches, chainDirFor, runScript, HOOKS_DIR, SCRIPTS_DIR } = require('./helpers.js');
 const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
 
 const DRAFT =
@@ -35,6 +35,7 @@ function closedRun() {
   ledger(root, ['gate', runDir, 'qa', '--evidence', brief]);
   const report = write('report.md', '# Report\n');
   ledger(root, ['gate', runDir, 'report', '--evidence', report]);
+  settleDispatches(root, runDir);
   assert.strictEqual(ledger(root, ['close', runDir]).status, 0);
   return { root, runDir, report };
 }
@@ -955,6 +956,132 @@ test('a hook-only dispatch, with no playbook call before it, stays its own unmea
     const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
     assert.deepStrictEqual(cost.tokens.byRole, { explore: { dispatches: 1, measured: 0, tokens: 0, ms: 0 } });
     assert.strictEqual(cost.tokens.unmeasured, 1);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- open dispatches: a dispatch with no outcome is a gap in the record, not a detail ---
+//
+// The chain sees a dispatch leave and, when the subagent tool returns, a `returned` mark from
+// the SubagentStop hook. Only the orchestrator can say what came back. Until it does, the
+// dispatch is OPEN, and an open dispatch is what a stalled worker and a forgotten outcome both
+// look like from outside.
+
+// A run driven to the report gate with the dispatch seqs it made, so close can be tried.
+function reportedRun() {
+  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
+  assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
+  const write = (name, body) => {
+    const p = path.join(runDir, name);
+    fs.writeFileSync(p, body);
+    return p;
+  };
+  const brief = write('ticket-brief.md', '# brief\n');
+  ledger(root, ['gate', runDir, 'intake', '--evidence', brief]);
+  write('done.draft.md', DRAFT);
+  runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
+  runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root });
+  ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command']);
+  ledger(root, ['gate', runDir, 'verify', '--evidence', brief]);
+  ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
+  const qaSeq = chain.last(runDir, 'dispatch').seq;
+  ledger(root, [
+    'verdict', runDir, 'APPROVE',
+    '--inputs', path.join(runDir, `done${'.approved'}.md`),
+    '--inputs', path.join(runDir, 'done-additions.md'),
+  ]);
+  ledger(root, ['gate', runDir, 'qa', '--evidence', brief]);
+  const report = write('report.md', '# Report\n');
+  ledger(root, ['gate', runDir, 'report', '--evidence', report]);
+  return { root, runDir, qaSeq };
+}
+
+test('a dispatch with no outcome is listed as open, and close refuses until it is resolved', () => {
+  const { root, runDir, qaSeq } = reportedRun();
+  try {
+    let status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.open.length, 1);
+    assert.deepStrictEqual(status.open[0].seqs, [qaSeq]);
+    assert.strictEqual(status.open[0].returned, false);
+
+    const refused = ledger(root, ['close', runDir]);
+    assert.strictEqual(refused.status, 3, refused.stderr);
+    assert.ok(refused.stderr.includes(`seq ${qaSeq}`), refused.stderr);
+    assert.ok(refused.stderr.includes('outcome'), 'the refusal says what to record');
+    assert.ok(!fs.existsSync(path.join(runDir, 'closed.json')));
+
+    assert.strictEqual(ledger(root, ['outcome', runDir, String(qaSeq), 'ok', 'APPROVE']).status, 0);
+    status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.deepStrictEqual(status.open, []);
+    assert.strictEqual(ledger(root, ['close', runDir]).status, 0);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('returned pairs with the oldest unreturned dispatch; verify names a return with no outcome', () => {
+  const { root, runDir } = init();
+  try {
+    ledger(root, ['dispatch', runDir, 'implementer: C1']);
+    ledger(root, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']);
+    ledger(root, ['dispatch', runDir, 'implementer: C2']);
+    ledger(root, ['dispatch', runDir, 'implementer: C2', '--source', 'hook']);
+
+    const res = ledger(root, ['returned', runDir, '--agent', 'a1', '--type', 'general-purpose']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    const mark = chain.last(runDir, 'returned');
+    assert.strictEqual(mark.payload.dispatchSeq, 2, 'the first dispatch out is the first paired');
+    assert.strictEqual(mark.payload.agentId, 'a1');
+
+    const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.open.length, 2);
+    assert.strictEqual(status.open[0].returned, true);
+    assert.strictEqual(status.open[1].returned, false);
+
+    const verify = JSON.parse(ledger(root, ['verify', runDir]).stdout);
+    assert.strictEqual(verify.intact, false);
+    assert.ok(verify.problems.some((p) => /seq 2 .*returned.*no outcome/i.test(p)), verify.problems.join('\n'));
+    assert.ok(verify.problems.some((p) => /seq 4 .*never returned/i.test(p)), verify.problems.join('\n'));
+
+    ledger(root, ['outcome', runDir, '2', 'ok']);
+    ledger(root, ['outcome', runDir, '4', 'died', 'session limit']);
+    assert.strictEqual(JSON.parse(ledger(root, ['verify', runDir]).stdout).intact, true);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a dispatch that never returned past the stall threshold is reported as stalled', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, dispatchPolicy: { stallMinutes: 0 } });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    ledger(root, ['dispatch', runDir, 'survey', '--source', 'hook']);
+    ledger(root, ['dispatch', runDir, 'design', '--source', 'hook']);
+    ledger(root, ['returned', runDir]);
+    const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.open[0].returned, true);
+    assert.strictEqual(status.open[0].stalled, false, 'a dispatch that came back is not stalled, only unrecorded');
+    assert.strictEqual(status.open[1].stalled, true);
+    assert.strictEqual(status.stalled, 1);
+    const verify = JSON.parse(ledger(root, ['verify', runDir]).stdout);
+    assert.ok(verify.problems.some((p) => /seq 3 .*STALLED/.test(p)), verify.problems.join('\n'));
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('returned with nothing open records nothing and does not fail', () => {
+  const { root, runDir } = init();
+  try {
+    const res = ledger(root, ['returned', runDir, '--agent', 'x']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(chain.ofKind(runDir, 'returned').length, 0);
+    ledger(root, ['dispatch', runDir, 'a', '--source', 'hook']);
+    ledger(root, ['returned', runDir]);
+    const again = ledger(root, ['returned', runDir]);
+    assert.strictEqual(again.status, 0, again.stderr);
+    assert.strictEqual(chain.ofKind(runDir, 'returned').length, 1, 'one return per dispatch');
   } finally {
     rmDir(root);
   }

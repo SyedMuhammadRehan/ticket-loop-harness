@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { HOOKS_DIR, SCRIPTS_DIR, mkRun, rmDir, runScript, ledger } = require('./helpers.js');
+const { HOOKS_DIR, SCRIPTS_DIR, mkRun, rmDir, runScript, ledger, settleDispatches } = require('./helpers.js');
 const { REQUIRED_LEDGER_PROTOCOL } = require(path.join(HOOKS_DIR, 'dispatch_guard.js'));
 
 const SCRIPT = path.join(HOOKS_DIR, 'dispatch_guard.js');
@@ -177,6 +177,7 @@ test('writing report.md does NOT release the budget — only a sealed close does
       ledger(root, ['gate', runDir, 'report', '--evidence', path.join(runDir, 'report.md')]).status,
       0
     );
+    settleDispatches(root, runDir);
     assert.strictEqual(ledger(root, ['close', runDir]).status, 0);
     assert.strictEqual(dispatch(root).status, 0, 'a properly closed run releases the budget');
   } finally {
@@ -305,6 +306,49 @@ test('the hook records how large the prompt it let through was', () => {
       cost.subagentPrompts.max >= prompt.length,
       `expected >= ${prompt.length}, got ${cost.subagentPrompts.max}`
     );
+  } finally {
+    rmDir(root);
+  }
+});
+
+// --- unresolved dispatches, named where the next slot is about to be spent ---
+
+function hasContext(res) {
+  const out = res.stdout.trim();
+  if (!out) return null;
+  return JSON.parse(out).hookSpecificOutput.additionalContext;
+}
+
+test('the next dispatch is told about a return with no outcome, and not about a fresh label', () => {
+  const { root, runDir } = setup();
+  try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1']).status, 0);
+    const first = dispatch(root);
+    assert.strictEqual(first.status, 0);
+    assert.strictEqual(hasContext(first), null, 'a dispatch just labelled and not yet back is not unresolved');
+
+    assert.strictEqual(ledger(root, ['returned', runDir, '--agent', 'a1']).status, 0);
+    const second = dispatch(root);
+    assert.strictEqual(second.status, 0);
+    const context = hasContext(second);
+    assert.ok(context && context.includes('seq 2') && context.includes('outcome unrecorded'), context);
+
+    for (const o of JSON.parse(ledger(root, ['status', runDir]).stdout).open) {
+      assert.strictEqual(ledger(root, ['outcome', runDir, String(o.seqs[0]), 'ok']).status, 0);
+    }
+    assert.strictEqual(hasContext(dispatch(root)), null, 'nothing unresolved, nothing said');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a dispatch open past the stall threshold is named as STALLED at the next dispatch', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, dispatchPolicy: { stallMinutes: 0 } });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(dispatch(root).status, 0);
+    const context = hasContext(dispatch(root));
+    assert.ok(context && context.includes('seq 2') && context.includes('STALLED'), context);
   } finally {
     rmDir(root);
   }

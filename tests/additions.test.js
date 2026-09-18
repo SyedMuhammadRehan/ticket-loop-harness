@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mkRun, rmDir, ledger } = require('./helpers.js');
+const { mkRun, rmDir, ledger, settleDispatches } = require('./helpers.js');
 
 const CRITERION = '- [ ] C9 (test): when the sort is removed, the system shall fail this test | run: node tests/run.js sort';
 
@@ -22,6 +22,7 @@ function judgedRun() {
   assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: contract [full]', '--source', 'hook']).status, 0);
   const verdict = ledger(root, ['verdict', runDir, 'BLOCK', '--inputs', approved, '--inputs', additions]);
   assert.strictEqual(verdict.status, 0, verdict.stderr);
+  settleDispatches(root, runDir);
   return { root, runDir, additions };
 }
 
