@@ -3,10 +3,13 @@
 // per-repo profile the skill uses (.agents/ticket-loop.config.json) so enforcement
 // follows the config instead of hardcoding a stack.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
 const CONFIG_REL_PATH = path.join('.agents', 'ticket-loop.config.json');
+const RUNS_REL = path.join('.agents', 'ticket-runs');
+const LEDGER_REL = path.join('skills', 'ticket-loop', 'scripts', 'ledger.js');
 const MAX_ROOT_SEARCH_DEPTH = 8;
 const DEFAULT_TIMEOUT_MS = 120000;
 
@@ -84,6 +87,63 @@ function runShell(command, opts = {}) {
   });
 }
 
+// Active = initialized (budget.json) and not yet CLOSED (no closed.json, which only
+// `ledger.js close` writes, and only against a sealed report receipt). Newest first, so a
+// stale run dir left lying around never shadows the one in flight.
+//
+// Reading report.md as "the run is over" is what let an orchestrator at the cap write one
+// unprotected file and carry on dispatching, uncounted.
+function activeRuns(root) {
+  const runsDir = path.join(root, RUNS_REL);
+  let entries;
+  try {
+    entries = fs.readdirSync(runsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.isDirectory() && !e.name.includes('._old_'))
+    .map((e) => path.join(runsDir, e.name))
+    .filter((dir) => fs.existsSync(path.join(dir, 'budget.json')) && !fs.existsSync(path.join(dir, 'closed.json')))
+    .map((dir) => ({ dir, mtime: fs.statSync(dir).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime)
+    .map((r) => r.dir);
+}
+
+// Search the install layouts in order of specificity: plugin root, project-local skill,
+// user-level skill, then relative to this hooks dir (repo checkout / manual copy).
+function findLedger(root) {
+  const candidates = [
+    process.env.CLAUDE_PLUGIN_ROOT && path.join(process.env.CLAUDE_PLUGIN_ROOT, LEDGER_REL),
+    path.join(root, '.claude', LEDGER_REL),
+    path.join(os.homedir(), '.claude', LEDGER_REL),
+    path.join(root, '.claude', 'skills', 'ticket-loop', 'scripts', 'ledger.js'),
+    path.join(__dirname, '..', LEDGER_REL),
+    path.join(__dirname, '..', 'skills', 'ticket-loop', 'scripts', 'ledger.js'),
+  ].filter(Boolean);
+  return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
+// Dispatches the run's chain shows as still open, from `ledger.js status`. Callers decide what
+// an unreadable status means for them; here it is reported, never swallowed.
+function openDispatches(ledger, runDir, cwd, timeoutMs) {
+  const res = spawnSync(process.execPath, [ledger, 'status', runDir], { encoding: 'utf8', cwd, timeout: timeoutMs });
+  if (res.error) return { error: res.error.message };
+  if (res.status !== 0) return { error: (res.stderr || '').trim() || `ledger.js status exited ${res.status}`, stderr: res.stderr || '' };
+  try {
+    return { open: JSON.parse(res.stdout).open || [] };
+  } catch (e) {
+    return { error: `ledger.js status returned unreadable JSON (${e.message})` };
+  }
+}
+
+function describeOpenDispatch(o) {
+  const state = o.returned
+    ? 'returned, outcome unrecorded'
+    : `never returned, open ${o.minutesOpen} min${o.stalled ? ' — STALLED' : ''}`;
+  return `seq ${o.seqs[0]} (${o.label || 'unlabelled'}): ${state}`;
+}
+
 function readStdinJson() {
   try {
     let raw = fs.readFileSync(0, 'utf8');
@@ -106,6 +166,10 @@ module.exports = {
   CONFIG_REL_PATH,
   findRepoRoot,
   loadConfig,
+  activeRuns,
+  findLedger,
+  openDispatches,
+  describeOpenDispatch,
   buildArgv,
   runArgv,
   runShell,

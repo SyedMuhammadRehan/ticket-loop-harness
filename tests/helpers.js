@@ -64,6 +64,17 @@ function ledger(root, args) {
   return runScript(path.join(SCRIPTS_DIR, 'ledger.js'), args, { cwd: root });
 }
 
+// Record an `ok` outcome for every dispatch still open, the way an orchestrator does when each
+// returns. Fixtures that dispatch and then close or verify need this, because an open dispatch
+// is itself a reported problem.
+function settleDispatches(root, runDir) {
+  const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+  for (const o of status.open) {
+    const res = ledger(root, ['outcome', runDir, String(o.seqs[0]), 'ok']);
+    if (res.status !== 0) throw new Error(`settle failed for seq ${o.seqs[0]}: ${res.stderr}`);
+  }
+}
+
 function chainDirFor(root, ticket = 'T-1') {
   return path.join(root, '.git', 'ticket-loop', ticket);
 }
@@ -78,5 +89,6 @@ module.exports = {
   mkFakeRepo,
   mkRun,
   ledger,
+  settleDispatches,
   chainDirFor,
 };

@@ -246,7 +246,9 @@ Fill the sections where they are; do not reorder them or prepend a preamble.
 **Model:** when the profile's `models.<role>` is not `inherit`, pass it as the Agent tool's
 `model` and put it in the dispatch label. Never change a tier on your own judgement.
 **A dispatch that dies** (stall, crash, session limit) gets `outcome <runDir> <seq> died
-"<what killed it>"` instead; re-dispatching costs another slot, so say so in the report.
+"<what killed it>"` instead; re-dispatching costs another slot, so say so in the report. Every
+dispatch needs one or the other: the next dispatch names any left open, the stop gate refuses
+to end the turn and `close` refuses the run while one is open (`status` lists them as `open`).
 Dispatches that write a file must append each section to the run dir as it completes.
 
 **GATE C:** an edit under an uncleared `riskPaths` glob is denied by the hook and the

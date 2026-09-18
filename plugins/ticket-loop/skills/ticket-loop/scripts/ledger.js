@@ -22,6 +22,7 @@
 //   ledger.js clear <runDir> <glob> <reason>       record a human's GATE A/C risk clearance
 //   ledger.js revise <runDir> <file> --reason ".."  account for an edit to a sealed document
 //   ledger.js outcome <runDir> <seq> <ok|died>     what a dispatch actually produced
+//   ledger.js returned <runDir>                    the subagent tool returned (SubagentStop hook)
 //   ledger.js verify <runDir>                      chain integrity + tamper report
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
@@ -50,6 +51,8 @@ const CHECK_RESULTS = ['PASS', 'FAIL', 'SKIPPED'];
 //   asserted — neither: concluded from source, or from another agent's summary
 const CHECK_METHODS = ['command', 'observed', 'human', 'asserted'];
 const DISPATCH_OUTCOMES = ['ok', 'died'];
+// An unreturned dispatch older than this is reported as STALLED; dispatchPolicy.stallMinutes overrides.
+const DEFAULT_STALL_MINUTES = 30;
 // Mirrors load_config's dispatchPolicy default, for a run whose profile does not set one.
 const DEFAULT_PROMPT_BUDGET = 32000;
 const DEFAULT_SMALL_DIFF_LINES = 60;
@@ -173,9 +176,12 @@ function evidenceStats(runDir) {
 function counters(runDir) {
   const { maxDispatches, maxReplans, baseSha } = caps(runDir);
   const d = dispatchCount(runDir);
+  const open = openDispatches(runDir);
   return {
     dispatches: d.count,
     dispatchesDied: diedCount(runDir),
+    open,
+    stalled: open.filter((o) => o.stalled).length,
     replans: chain.ofKind(runDir, 'replan').length,
     maxDispatches,
     maxReplans,
@@ -622,6 +628,66 @@ function dispatchPairs(runDir) {
   return pairs;
 }
 
+function stallMinutes() {
+  const v = (readConfig().dispatchPolicy || {}).stallMinutes;
+  return Number.isInteger(v) && v >= 0 ? v : DEFAULT_STALL_MINUTES;
+}
+
+// Dispatches with no outcome. `returned` is the SubagentStop hook's mark that the tool call
+// came back; a dispatch that has neither returned nor been recorded past the stall threshold
+// is STALLED. Only the orchestrator can say what a returned dispatch produced, so a return
+// without an outcome stays open until it does.
+function openDispatches(runDir, now = Date.now()) {
+  const atOf = new Map(chain.records(runDir).map((r) => [r.seq, r.at]));
+  const outcomes = new Set(chain.ofKind(runDir, 'outcome').map((r) => r.payload.dispatchSeq));
+  const returns = new Set(chain.ofKind(runDir, 'returned').map((r) => r.payload.dispatchSeq));
+  const stallMs = stallMinutes() * 60000;
+  return dispatchPairs(runDir)
+    .filter((d) => !d.seqs.some((seq) => outcomes.has(seq)))
+    .map((d) => {
+      const at = atOf.get(d.seqs[0]);
+      const openMs = Math.max(0, now - Date.parse(at));
+      const returned = d.seqs.some((seq) => returns.has(seq));
+      return {
+        seqs: d.seqs,
+        label: d.label,
+        at,
+        minutesOpen: Math.round(openMs / 60000),
+        returned,
+        stalled: !returned && openMs >= stallMs,
+      };
+    });
+}
+
+function describeOpen(o) {
+  const seq = o.seqs[0];
+  const label = o.label || 'unlabelled';
+  if (o.returned) return `dispatch seq ${seq} (${label}) returned with no outcome recorded — what it produced is not in the record`;
+  if (o.stalled) return `dispatch seq ${seq} (${label}) never returned and has been open ${o.minutesOpen} min — STALLED; record it as died if it is dead`;
+  return `dispatch seq ${seq} (${label}) never returned (open ${o.minutesOpen} min) — no outcome recorded`;
+}
+
+// The SubagentStop hook cannot tell which dispatch a returning agent was, so the mark goes to
+// the oldest one still out. Parallel dispatches that return out of order swap labels, never
+// counts; the outcome the orchestrator records afterwards names its seq itself.
+function cmdReturned(runDir, opts) {
+  requireChain(runDir);
+  requireOpen(runDir, 'returned');
+  const target = openDispatches(runDir).find((o) => !o.returned);
+  if (!target) {
+    console.log('ledger: no dispatch is out — nothing to mark as returned');
+    return;
+  }
+  const messageChars = Number(opts && opts.messageChars);
+  chain.append(runDir, 'returned', {
+    dispatchSeq: target.seqs[0],
+    agentId: (opts && opts.agentId) || null,
+    agentType: (opts && opts.agentType) || null,
+    messageChars: Number.isFinite(messageChars) && messageChars >= 0 ? messageChars : null,
+  });
+  console.log(`ledger: dispatch seq ${target.seqs[0]} returned — record its outcome`);
+}
+
 function tokenStats(runDir) {
   const outcomes = new Map(chain.ofKind(runDir, 'outcome').map((r) => [r.payload.dispatchSeq, r.payload]));
   const byRole = {};
@@ -785,6 +851,15 @@ function cmdClose(runDir) {
         `  Write report.md, then "ledger.js gate ${runDir} report --evidence ${path.join(runDir, 'report.md')}", ` +
         `then close.\n` +
         `  If this run is being abandoned rather than reported, use "ledger.js archive ${runDir}" instead.`
+    );
+    process.exit(3);
+  }
+  const open = openDispatches(runDir);
+  if (open.length) {
+    console.error(
+      `ledger close: refusing to close ${runDir} — ${open.length} dispatch(es) have no outcome:\n` +
+        open.map((o) => `  - ${describeOpen(o)}`).join('\n') +
+        `\n  Record each with "ledger.js outcome ${runDir} <seq> ok|died [note]" — died if it produced nothing — then close.`
     );
     process.exit(3);
   }
@@ -1219,6 +1294,7 @@ function cmdVerify(runDir) {
     } else if (chain.ofKind(runDir, 'gate').some((r) => r.payload.stage === 'qa')) {
       problems.push('a "qa" stage receipt exists but no verdict was ever sealed — the QA pass did not happen');
     }
+    for (const o of openDispatches(runDir)) problems.push(describeOpen(o));
     for (const r of chain.ofKind(runDir, 'gate')) {
       if (!(r.payload.evidence || []).length && !(STAGE_PROOF[r.payload.stage] || {}).receipt) {
         problems.push(`gate "${r.payload.stage}" (seq ${r.seq}) sealed no evidence — recorded before this was required`);
@@ -1301,6 +1377,9 @@ function main() {
   const revisionReason = takeFlag(argv, '--reason')[0];
   const tokens = takeFlag(argv, '--tokens')[0];
   const ms = takeFlag(argv, '--ms')[0];
+  const agentId = takeFlag(argv, '--agent')[0];
+  const agentType = takeFlag(argv, '--type')[0];
+  const messageChars = takeFlag(argv, '--message-chars')[0];
   const sliceFiles = takeFlag(argv, '--files');
   const [cmd, runDir, ...rest] = argv;
 
@@ -1322,6 +1401,7 @@ function main() {
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
         '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
+        '       ledger.js returned <runDir> [--agent <id>] [--type <agentType>] [--message-chars <n>]\n' +
         '       ledger.js slice <runDir> <id> --files <glob>[,<glob>]...\n' +
         '       ledger.js addition <runDir> "- [ ] C<n> (kind): <criterion> | run: <command>"'
     );
@@ -1359,6 +1439,8 @@ function main() {
       return cmdRevise(runDir, rest[0], revisionReason);
     case 'outcome':
       return cmdOutcome(runDir, rest[0], rest[1], rest.slice(2).join(' '), { tokens, ms });
+    case 'returned':
+      return cmdReturned(runDir, { agentId, agentType, messageChars });
     case 'slice':
       return cmdSlice(runDir, rest[0], sliceFiles);
     case 'addition':
@@ -1372,4 +1454,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { counters, caps, dispatchCount, closedPath, STAGES, VERDICTS, LEDGER_PROTOCOL };
+module.exports = { counters, caps, dispatchCount, openDispatches, closedPath, STAGES, VERDICTS, LEDGER_PROTOCOL };

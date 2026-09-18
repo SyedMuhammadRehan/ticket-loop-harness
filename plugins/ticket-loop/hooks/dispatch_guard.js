@@ -10,56 +10,15 @@
 // enforcement path. `--source hook` lets ledger.js de-duplicate against the skill's own
 // bookkeeping call (it takes the max of the two, never the sum).
 'use strict';
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
 const { spawnSync } = require('child_process');
 const lib = require('./hook_lib.js');
 
-const RUNS_REL = path.join('.agents', 'ticket-runs');
-const LEDGER_REL = path.join('skills', 'ticket-loop', 'scripts', 'ledger.js');
+const { activeRuns, findLedger } = lib;
 const LEDGER_TIMEOUT_MS = 15000;
 // The ledger must be new enough to keep counters in the sealed chain. An older one accepts
 // `dispatch` happily, writes pre-chain state, and leaves the cap unenforced — so probe first
 // and refuse to call it, rather than corrupting the mirror and reporting a budget that isn't.
 const REQUIRED_LEDGER_PROTOCOL = 2;
-
-// Search the install layouts in order of specificity: plugin root, project-local skill,
-// user-level skill, then relative to this hooks dir (repo checkout / manual copy).
-function findLedger(root) {
-  const candidates = [
-    process.env.CLAUDE_PLUGIN_ROOT && path.join(process.env.CLAUDE_PLUGIN_ROOT, LEDGER_REL),
-    path.join(root, '.claude', LEDGER_REL),
-    path.join(os.homedir(), '.claude', LEDGER_REL),
-    path.join(root, '.claude', 'skills', 'ticket-loop', 'scripts', 'ledger.js'),
-    path.join(__dirname, '..', LEDGER_REL),
-    path.join(__dirname, '..', 'skills', 'ticket-loop', 'scripts', 'ledger.js'),
-  ].filter(Boolean);
-  return candidates.find((p) => fs.existsSync(p)) || null;
-}
-
-// Active = initialized (budget.json) and not yet CLOSED (no closed.json, which only
-// `ledger.js close` writes, and only against a sealed report receipt). Newest first, so a
-// stale run dir left lying around never shadows the one in flight.
-//
-// Reading report.md as "the run is over" is what let an orchestrator at the cap write one
-// unprotected file and carry on dispatching, uncounted.
-function activeRuns(root) {
-  const runsDir = path.join(root, RUNS_REL);
-  let entries;
-  try {
-    entries = fs.readdirSync(runsDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((e) => e.isDirectory() && !e.name.includes('._old_'))
-    .map((e) => path.join(runsDir, e.name))
-    .filter((dir) => fs.existsSync(path.join(dir, 'budget.json')) && !fs.existsSync(path.join(dir, 'closed.json')))
-    .map((dir) => ({ dir, mtime: fs.statSync(dir).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime)
-    .map((r) => r.dir);
-}
 
 // Returns the script's protocol number, or null when it is too old to have one.
 function ledgerProtocol(ledger, cwd) {
@@ -87,6 +46,21 @@ function labelFor(toolInput) {
   const kind = toolInput.subagent_type || toolInput.agentType || 'agent';
   const what = toolInput.description || (typeof toolInput.prompt === 'string' ? toolInput.prompt.split('\n')[0] : '');
   return `${kind}: ${String(what).slice(0, 120)}`.trim();
+}
+
+// Earlier dispatches whose result was never recorded, named at the next dispatch. A dispatch the
+// playbook has just labelled and not yet sent is open too, so only a return without an outcome
+// or a stall past the threshold is worth saying.
+function unresolvedContext(ledger, runDir, root) {
+  const { open } = lib.openDispatches(ledger, runDir, root, LEDGER_TIMEOUT_MS);
+  const unresolved = (open || []).filter((o) => o.returned || o.stalled);
+  if (unresolved.length === 0) return null;
+  return (
+    `ticket-loop: ${unresolved.length} earlier dispatch(es) have no outcome:\n` +
+    unresolved.map((o) => `  - ${lib.describeOpenDispatch(o)}`).join('\n') +
+    `\n  Record each with "ledger.js outcome ${runDir} <seq> ok|died [note]" before relying on its result; ` +
+    `the stop gate and close refuse while any is open.`
+  );
 }
 
 function main() {
@@ -125,6 +99,7 @@ function main() {
     process.exit(2);
   }
 
+  const context = unresolvedContext(ledger, runDir, root);
   const toolInput = input.tool_input || {};
   const res = spawnSync(
     process.execPath,
@@ -158,8 +133,13 @@ function main() {
     process.exit(2);
   }
 
+  if (context) {
+    process.stdout.write(
+      JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }) + '\n'
+    );
+  }
   process.exit(0);
 }
 
 if (require.main === module) main();
-module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, REQUIRED_LEDGER_PROTOCOL };
+module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, unresolvedContext, REQUIRED_LEDGER_PROTOCOL };

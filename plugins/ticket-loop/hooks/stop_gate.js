@@ -43,6 +43,7 @@ const MIN_TEST_TIMEOUT_MS = 30000;
 const DEFAULT_BRANCH_PREFIXES = ['refs/heads/ticket/'];
 const BASE_REF_CANDIDATES = ['origin/HEAD', 'origin/main', 'main', 'origin/master', 'master'];
 const MAX_SCANNED_FILE_BYTES = 256 * 1024;
+const LEDGER_TIMEOUT_MS = 15000;
 const MISSING_COMMAND = /command not found|not recognized as an internal or external|is not recognized as|No such file or directory/i;
 
 function git(cwd, args, timeout = 15000) {
@@ -430,6 +431,41 @@ function activeRuns(root) {
   }
 }
 
+// A dispatch with no outcome is a "done" claim over work whose result was never recorded. The
+// subagent tool returns inside the turn that sent it, so at a Stop nothing is still running:
+// an open dispatch is one the orchestrator never accounted for, whether it stalled or came back.
+function openDispatchFailures(root, runs) {
+  const ledger = lib.findLedger(root);
+  if (!ledger) {
+    return [
+      {
+        message:
+          `stop_gate: a ticket run is ACTIVE but ledger.js cannot be found, so its dispatches cannot be checked. ` +
+          `Fix the install, or end the run with "ledger.js archive".`,
+      },
+    ];
+  }
+  const failures = [];
+  for (const runDir of runs) {
+    const status = lib.openDispatches(ledger, runDir, root, LEDGER_TIMEOUT_MS);
+    if (status.error) {
+      // No chain means no dispatch was ever counted: dispatch_guard refuses to run one without it.
+      if (/no receipt chain/.test(status.stderr || '')) continue;
+      failures.push({ message: `stop_gate: cannot read the dispatch record for ${runDir}:\n${status.error}` });
+      continue;
+    }
+    if (status.open.length === 0) continue;
+    failures.push({
+      message:
+        `stop_gate: ${status.open.length} dispatch(es) in ${path.basename(runDir)} have no outcome — ` +
+        `a "done" claim cannot stand over work whose result was never recorded:\n` +
+        status.open.map((o) => `  - ${lib.describeOpenDispatch(o)}`).join('\n') +
+        `\n  Record each: ledger.js outcome ${runDir} <seq> ok|died [note] — died if it produced nothing.`,
+    });
+  }
+  return failures;
+}
+
 function main() {
   const input = lib.readStdinJson() || {};
   const sessionId = input.session_id || 'no-session';
@@ -458,7 +494,8 @@ function main() {
     process.exit(0);
   }
 
-  const runActive = activeRuns(root).length > 0;
+  const runs = activeRuns(root);
+  const runActive = runs.length > 0;
   const state = readState(root, sessionId);
   if (input.stop_hook_active && state.consecutiveBlocks >= MAX_CONSECUTIVE_BLOCKS) {
     console.error(`stop_gate: still red after ${state.consecutiveBlocks} blocks — allowing stop. Suite is NOT green.`);
@@ -467,11 +504,11 @@ function main() {
   }
 
   const verifyTest = config.verify && config.verify.test;
-  const failures = [];
+  const failures = runActive ? openDispatchFailures(root, runs) : [];
   for (const tree of treesToCheck(root, conf)) {
     const result = verifyTree(tree, conf, verifyTest, runActive);
     if (result.note) console.error(result.note);
-    if (!result.ok) failures.push({ tree, tail: result.tail });
+    if (!result.ok) failures.push({ message: `stop_gate: tests FAILED in ${tree}:\n${result.tail}` });
   }
 
   if (failures.length === 0) {
@@ -479,11 +516,9 @@ function main() {
     process.exit(0);
   }
   writeState(root, { sessionId: state.sessionId, consecutiveBlocks: state.consecutiveBlocks + 1 });
-  for (const f of failures) {
-    console.error(`stop_gate: tests FAILED in ${f.tree}:\n${f.tail}`);
-  }
+  for (const f of failures) console.error(f.message);
   process.exit(2);
 }
 
 if (require.main === module) main();
-module.exports = { parseWorktrees, changedSourceFiles, mapTargets, looksLikeFlake, verifyTree, treesToCheck, readState };
+module.exports = { parseWorktrees, changedSourceFiles, mapTargets, looksLikeFlake, verifyTree, treesToCheck, readState, openDispatchFailures };

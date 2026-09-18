@@ -191,6 +191,8 @@ function judged(root, runDir, verdict) {
   assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: contract [focused]', '--source', 'hook']).status, 0);
   const res = ledger(root, ['verdict', runDir, verdict, '--inputs', path.join(runDir, 'done.approved.md')]);
   assert.strictEqual(res.status, 0, res.stderr);
+  const seq = JSON.parse(ledger(root, ['status', runDir]).stdout).open[0].seqs[0];
+  assert.strictEqual(ledger(root, ['outcome', runDir, String(seq), 'ok', verdict]).status, 0);
 }
 
 function sliceRepo() {

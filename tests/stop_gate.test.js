@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { HOOKS_DIR, mkTmpDir, rmDir, runScript, mkFakeRepo } = require('./helpers.js');
+const { HOOKS_DIR, mkTmpDir, rmDir, runScript, mkFakeRepo, ledger } = require('./helpers.js');
 
 const SCRIPT = path.join(HOOKS_DIR, 'stop_gate.js');
 const { parseWorktrees, mapTargets, looksLikeFlake, readState } = require(SCRIPT);
@@ -332,6 +332,31 @@ test('clean trees pass without running anything; escape valve releases after 3 b
     const res = gate(env.main, { session_id: 's1', stop_hook_active: true });
     assert.strictEqual(res.status, 0);
     assert.ok(res.stderr.includes('NOT green'));
+  } finally {
+    teardown(env);
+  }
+});
+
+// --- open dispatches -----------------------------------------------------------------------
+//
+// A Stop mid-run is a "done" claim. A dispatch whose result was never recorded is work the claim
+// says nothing about, and it is what a stalled worker and a forgotten outcome both look like.
+
+test('a dispatch with no outcome blocks the "done" claim until it is recorded', () => {
+  const env = setupRepo();
+  try {
+    const runDir = path.join(env.main, '.agents', 'ticket-runs', 'T-1');
+    fs.mkdirSync(runDir, { recursive: true });
+    assert.strictEqual(ledger(env.main, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(gate(env.main).status, 0, 'a run with no dispatches has nothing open');
+
+    assert.strictEqual(ledger(env.main, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']).status, 0);
+    const blocked = gate(env.main);
+    assert.strictEqual(blocked.status, 2, blocked.stderr);
+    assert.ok(blocked.stderr.includes('no outcome') && blocked.stderr.includes('seq 2'), blocked.stderr);
+
+    assert.strictEqual(ledger(env.main, ['outcome', runDir, '2', 'died', 'session limit']).status, 0);
+    assert.strictEqual(gate(env.main).status, 0, 'a recorded death is an outcome');
   } finally {
     teardown(env);
   }

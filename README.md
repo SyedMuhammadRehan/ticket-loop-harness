@@ -64,6 +64,7 @@ plugins/ticket-loop/
     stop_gate.js                     #   Stop: verify main repo + every worktree, vs the BRANCH POINT
     hygiene.js                       #   what the stop gate reads in the ADDED lines: debug artefacts, secrets
     read_hint.js                     #   PreToolUse(Read|Grep): a long file's outline as context, run-active only
+    subagent_return.js               #   SubagentStop: marks a dispatch as returned, so a stall and a forgotten outcome differ
   agents/
     ticket-loop-qa.md                # the adversarial QA judge — granted no Write or Edit
   skills/qa-check/
@@ -416,9 +417,10 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   it buys is that every post-gate edit is a deliberate, separate, sealed act carrying a reason
   into the report, instead of a silent rewrite. Read the reasons; they are the loop's own words.
 - **Whether a dispatch outcome is honest.** The dispatch *count* is mechanical (`dispatch_guard`
-  counts the tool call). The `died` outcome is the orchestrator's own report: a dispatch that
-  produced nothing can be left unrecorded, which understates the waste rather than the spend.
-  The budget it consumed is still counted either way.
+  counts the tool call) and so is its *return* (`subagent_return` marks it). Whether the outcome
+  recorded afterwards is `ok` or `died` is the orchestrator's own word. What it can no longer do
+  is leave a dispatch unrecorded: the next dispatch names it, the stop gate refuses the "done"
+  claim and `close` refuses the run while one is open. The budget is counted either way.
 - **Naming a protected file as data is denied like touching it.** The write policy cannot tell
   a target from a mention, and deliberately does not try: quotes are stripped precisely so a
   quoted real target is still caught. So while a run is active, a command that merely *contains*
