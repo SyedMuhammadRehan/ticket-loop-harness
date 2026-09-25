@@ -78,6 +78,8 @@ review were interactions between two rows below, which the code alone did not ma
 | 25 | Malformed hook input never wedges a session | `freeze_guard.js` → `readStdinJson` | `freeze_guard.test.js` :: `malformed stdin exits 0 (never wedges the whole session)` | A broken install must not break unrelated projects |
 | 26 | Publishing is refused while a run is active | `guard_policy.js` → `PUBLISHING` | `guard_policy.test.js` :: `publishing is refused while a run is active` | Merge and push are the human's decision |
 | 63 | A write reaching the run dir through a variable, a loop body, `xargs` or a `find` flag is refused; the same shapes that only read are not | `guard_policy.js` → `isReadOnly` | `guard_policy.test.js` :: `the same shapes carrying a write are still denied` | A guard that refuses reading is one operators learn to route around |
+| 68 | An operator inside a quoted argument is text, not a statement boundary | `guard_policy.js` → `splitOutsideQuotes` | `guard_policy.test.js` :: `operators inside a quoted argument are text, not a pipeline or a redirection` | A grep alternation refused as a pipeline is a read the operator learns to route around |
+| 69 | A sanctioned call is recognised however its script path is quoted | `guard_policy.js` → `HARNESS_SCRIPT` | `guard_policy.test.js` :: `a sanctioned call may name its script by a quoted absolute path` | The installed plugin lives under a quoted absolute path; the harness's own calls must pass its own guard |
 
 ## Risk paths
 

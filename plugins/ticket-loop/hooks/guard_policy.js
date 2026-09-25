@@ -78,6 +78,7 @@ const PROTECTED_REFS = [
 // perfectly sanctioned-looking command line.
 const SANCTIONED_COMMAND =
   /^\s*("[^"]*node(\.exe)?"|node(\.exe)?)\s+[^;&|<>$`()%!\r\n]*\b(freeze_done|validate_done|ledger|chain|survey)\.js\b[^;&|<>$`()%!\r\n]*$/;
+const HARNESS_SCRIPT = /\b(freeze_done|validate_done|ledger|chain|survey)\.js\b/;
 
 // --- read-only recognition ------------------------------------------------------------
 
@@ -87,6 +88,8 @@ const READ_ONLY_VERBS = new Set([
   'get-content', 'gc', 'get-childitem', 'gci', 'get-item', 'test-path', 'measure-object',
   'diff', 'cmp', 'comm', 'sort', 'uniq', 'cut', 'md5sum', 'sha1sum', 'sha256sum', 'shasum',
   'echo', 'write-output', 'jq', 'true', 'false', 'git', 'find',
+  'paste', 'fold', 'nl', 'tac', 'column', 'tr', 'expr', 'printf', 'date', 'stat', 'test', '[',
+  'basename', 'dirname', 'realpath', 'readlink',
   // Directory changes are harmless on their own; every other segment must still be read-only.
   'cd', 'pushd', 'popd', 'set-location', 'chdir',
 ]);
@@ -118,10 +121,26 @@ const PIPE_TO_SHELL = /\|\s*("?[^"|\s]*[\/\\])?(sh|bash|zsh|cmd(\.exe)?|powershe
 // Keeps a pipeline whole, unlike segments(): `echo <path> | xargs rm` names the target in one
 // stage and deletes it in the next.
 function statements(cmd) {
-  return String(cmd)
-    .split(/&&|\|\||[;\n\r]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return splitOutsideQuotes(cmd, /&&|\|\||[;\n\r]+/g);
+}
+
+// An operator inside quotes is an argument: a grep alternation `'a\|b'` is one pattern, not a
+// pipeline. The mask keeps every character position so the split lands on the original text.
+function maskQuotedInterior(str) {
+  return String(str).replace(/"[^"]*"|'[^']*'/g, (m) => `${m[0]}${' '.repeat(m.length - 2)}${m[0]}`);
+}
+
+function splitOutsideQuotes(cmd, operatorRe) {
+  const str = String(cmd);
+  const masked = maskQuotedInterior(str);
+  const out = [];
+  let last = 0;
+  for (const m of masked.matchAll(operatorRe)) {
+    out.push(str.slice(last, m.index));
+    last = m.index + m[0].length;
+  }
+  out.push(str.slice(last));
+  return out.map((s) => s.trim()).filter(Boolean);
 }
 
 // After this, later statements operate in the namespace while naming nothing.
@@ -166,16 +185,15 @@ function stripQuotes(cmd) {
 // a quoted protected path stays visible to it.
 function maskQuoted(s) {
   const str = String(s);
-  // A leading quoted span is the executable ("C:\Program Files\nodejs\node.exe"), which the
-  // sanctioned pattern still has to recognise — mask arguments, not the command itself.
-  return str.replace(/"[^"]*"|'[^']*'/g, (m, off) => (/^\s*$/.test(str.slice(0, off)) ? m : '""'));
+  // The executable ("C:\Program Files\nodejs\node.exe") and the harness script's own path
+  // are what the sanctioned pattern has to recognise — mask arguments, not those.
+  return str.replace(/"[^"]*"|'[^']*'/g, (m, off) =>
+    /^\s*$/.test(str.slice(0, off)) || HARNESS_SCRIPT.test(m) ? m : '""'
+  );
 }
 
 function segments(cmd) {
-  return String(cmd)
-    .split(/\|\||&&|[;|\n\r]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return splitOutsideQuotes(cmd, /\|\||&&|[;|\n\r]+/g);
 }
 
 function firstToken(segment) {
@@ -186,9 +204,10 @@ function firstToken(segment) {
 
 function isReadOnly(cmd) {
   const lower = String(cmd).toLowerCase();
-  if (/>/.test(stripNullRedirection(lower))) return false; // any redirection, including >>
+  const unquoted = maskQuotedInterior(lower);
+  if (/>/.test(stripNullRedirection(unquoted))) return false; // any redirection, including >>
   if (INLINE_EXEC.some((re) => re.test(lower))) return false;
-  if (PIPE_TO_SHELL.test(lower)) return false;
+  if (PIPE_TO_SHELL.test(unquoted)) return false;
   if (/\$\(|`/.test(lower)) return false; // command substitution can hide anything
   if (/\bsed\b/.test(lower)) return false; // sed writes via -i and via the `w` command
   // `sort -o F` truncates and rewrites F, so the verb alone does not make a statement safe.
