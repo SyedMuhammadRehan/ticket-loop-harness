@@ -300,6 +300,45 @@ test('the same shapes carrying a write are still denied', () => {
   }
 });
 
+test('operators inside a quoted argument are text, not a pipeline or a redirection', () => {
+  const RM = 'rm -r' + 'f';
+  for (const cmd of [
+    `grep -o '"kind":"[a-z]*"\\|"stage":"[a-z]*"' ${RUN}/ledger.md`,
+    `grep -n "count > 2" ${RUN}/ledger.md`,
+    `grep -c "a;b" ${RUN}/done.md`,
+    `cat ${RUN}/ledger.md | grep "x || y"`,
+    `grep -n 'from "| sh"' ${RUN}/ledger.md`,
+    `npm test && grep -c "a;b" ${RUN}/done.md`,
+    `npm run build; grep -c 'x && y' ${RUN}/done.md`,
+  ]) {
+    assert.ok(!denied(cmd), `should allow: ${cmd}`);
+  }
+  assert.ok(denied(`grep "x" ${RUN}/ledger.md > ${RUN}/done.md`));
+  assert.ok(denied(`echo "safe > text" > ${RUN}/done.md`));
+  assert.ok(denied(`grep -o "a|b" ${RUN}/ledger.md | ${RM} ${RUN}`));
+});
+
+test('a sanctioned call may name its script by a quoted absolute path', () => {
+  const RM = 'rm -r' + 'f';
+  assert.ok(!denied(`node "C:/Users/me/plugins/ticket loop/scripts/ledger.js" status ${RUN}`));
+  assert.ok(!denied(`cd "C:/work/app" && node "C:/Users/me/.claude/plugins/ticket-loop/skills/ticket-loop/scripts/ledger.js" status ${RUN}`));
+  assert.ok(denied(`node "C:/Users/me/scripts/ledger.js" status ${RUN} && echo x > ${RUN}/done.md`));
+  assert.ok(denied(`node "C:/x/scripts/ledger.js; ${RM} ${RUN}" status ${RUN}`), 'an operator inside the quoted path still disqualifies');
+});
+
+test('inspection verbs field runs reach for are read-only', () => {
+  for (const cmd of [
+    `stat ${RUN}/done.md`,
+    `[ -f ${RUN}/closed.json ] && echo closed`,
+    `test -f ${RUN}/closed.json`,
+    `paste -sd ' ' ${RUN}/ledger.md`,
+    `cat ${RUN}/ledger.md | fold -w 200`,
+    `basename ${RUN}`,
+  ]) {
+    assert.ok(!denied(cmd), `should allow: ${cmd}`);
+  }
+});
+
 test('the survey script is a sanctioned writer into the run dir', () => {
   assert.ok(!denied(`node scripts/survey.js ${RUN} --worktree ../wt --paths src,lib`));
   assert.ok(denied(`node scripts/survey.js ${RUN} && echo x > ${RUN}/done.md`), 'chaining still forfeits the exemption');
