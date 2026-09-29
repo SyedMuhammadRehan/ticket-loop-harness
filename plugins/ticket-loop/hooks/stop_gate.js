@@ -434,36 +434,46 @@ function activeRuns(root) {
 // A dispatch with no outcome is a "done" claim over work whose result was never recorded. The
 // subagent tool returns inside the turn that sent it, so at a Stop nothing is still running:
 // an open dispatch is one the orchestrator never accounted for, whether it stalled or came back.
-function openDispatchFailures(root, runs) {
+//
+// A run this session never wrote to is enforced all the same; the note says whose it is and how
+// to end it, because an abandoned run otherwise arms this gate for every later session in the
+// repo with nothing telling them why.
+function openDispatchFailures(root, runs, sessionId, staleHours) {
   const ledger = lib.findLedger(root);
   if (!ledger) {
-    return [
-      {
-        message:
-          `stop_gate: a ticket run is ACTIVE but ledger.js cannot be found, so its dispatches cannot be checked. ` +
-          `Fix the install, or end the run with "ledger.js archive".`,
-      },
-    ];
+    return {
+      failures: [
+        {
+          message:
+            `stop_gate: a ticket run is ACTIVE but ledger.js cannot be found, so its dispatches cannot be checked. ` +
+            `Fix the install, or end the run with "ledger.js archive".`,
+        },
+      ],
+      notes: [],
+    };
   }
   const failures = [];
+  const notes = [];
   for (const runDir of runs) {
-    const status = lib.openDispatches(ledger, runDir, root, LEDGER_TIMEOUT_MS);
-    if (status.error) {
+    const res = lib.runStatus(ledger, runDir, root, LEDGER_TIMEOUT_MS);
+    if (res.error) {
       // No chain means no dispatch was ever counted: dispatch_guard refuses to run one without it.
-      if (/no receipt chain/.test(status.stderr || '')) continue;
-      failures.push({ message: `stop_gate: cannot read the dispatch record for ${runDir}:\n${status.error}` });
+      if (/no receipt chain/.test(res.stderr || '')) continue;
+      failures.push({ message: `stop_gate: cannot read the dispatch record for ${runDir}:\n${res.error}` });
       continue;
     }
-    if (status.open.length === 0) continue;
+    const foreign = lib.foreignRunNote(res.status, sessionId, runDir, staleHours);
+    if (foreign) notes.push(`stop_gate: ${foreign}`);
+    if (res.status.open.length === 0) continue;
     failures.push({
       message:
-        `stop_gate: ${status.open.length} dispatch(es) in ${path.basename(runDir)} have no outcome — ` +
+        `stop_gate: ${res.status.open.length} dispatch(es) in ${path.basename(runDir)} have no outcome — ` +
         `a "done" claim cannot stand over work whose result was never recorded:\n` +
-        status.open.map((o) => `  - ${lib.describeOpenDispatch(o)}`).join('\n') +
+        res.status.open.map((o) => `  - ${lib.describeOpenDispatch(o)}`).join('\n') +
         `\n  Record each: ledger.js outcome ${runDir} <seq> ok|died [note] — died if it produced nothing.`,
     });
   }
-  return failures;
+  return { failures, notes };
 }
 
 function main() {
@@ -504,7 +514,9 @@ function main() {
   }
 
   const verifyTest = config.verify && config.verify.test;
-  const failures = runActive ? openDispatchFailures(root, runs) : [];
+  const dispatches = runActive ? openDispatchFailures(root, runs, sessionId, config.staleRunHours) : { failures: [], notes: [] };
+  for (const note of dispatches.notes) console.error(note);
+  const failures = dispatches.failures;
   for (const tree of treesToCheck(root, conf)) {
     const result = verifyTree(tree, conf, verifyTest, runActive);
     if (result.note) console.error(result.note);

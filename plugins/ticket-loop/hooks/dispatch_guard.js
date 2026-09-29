@@ -51,9 +51,8 @@ function labelFor(toolInput) {
 // Earlier dispatches whose result was never recorded, named at the next dispatch. A dispatch the
 // playbook has just labelled and not yet sent is open too, so only a return without an outcome
 // or a stall past the threshold is worth saying.
-function unresolvedContext(ledger, runDir, root) {
-  const { open } = lib.openDispatches(ledger, runDir, root, LEDGER_TIMEOUT_MS);
-  const unresolved = (open || []).filter((o) => o.returned || o.stalled);
+function unresolvedContext(status, runDir) {
+  const unresolved = status.open.filter((o) => o.returned || o.stalled);
   if (unresolved.length === 0) return null;
   return (
     `ticket-loop: ${unresolved.length} earlier dispatch(es) have no outcome:\n` +
@@ -61,6 +60,18 @@ function unresolvedContext(ledger, runDir, root) {
     `\n  Record each with "ledger.js outcome ${runDir} <seq> ok|died [note]" before relying on its result; ` +
     `the stop gate and close refuse while any is open.`
   );
+}
+
+// What the orchestrator is told alongside a permitted dispatch: unresolved earlier dispatches,
+// and a run it did not start. Neither blocks — a resumed run is a new session by design.
+function dispatchContext(ledger, runDir, root, sessionId, staleHours) {
+  const { status } = lib.runStatus(ledger, runDir, root, LEDGER_TIMEOUT_MS);
+  if (!status) return null;
+  const notes = [unresolvedContext(status, runDir)];
+  const foreign = lib.foreignRunNote(status, sessionId, runDir, staleHours);
+  if (foreign) notes.push(`ticket-loop: this dispatch is counted against ${foreign}`);
+  const text = notes.filter(Boolean).join('\n');
+  return text || null;
 }
 
 function main() {
@@ -99,7 +110,8 @@ function main() {
     process.exit(2);
   }
 
-  const context = unresolvedContext(ledger, runDir, root);
+  const { config } = lib.loadConfig(root);
+  const context = dispatchContext(ledger, runDir, root, input.session_id, config.staleRunHours);
   const toolInput = input.tool_input || {};
   const res = spawnSync(
     process.execPath,
@@ -107,6 +119,7 @@ function main() {
       ledger, 'dispatch', runDir, labelFor(toolInput),
       '--source', 'hook',
       '--prompt-chars', String(promptCharsOf(toolInput)),
+      ...(input.session_id ? ['--session', String(input.session_id)] : []),
     ],
     { encoding: 'utf8', cwd: root, timeout: LEDGER_TIMEOUT_MS }
   );
@@ -142,4 +155,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, unresolvedContext, REQUIRED_LEDGER_PROTOCOL };
+module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, unresolvedContext, dispatchContext, REQUIRED_LEDGER_PROTOCOL };

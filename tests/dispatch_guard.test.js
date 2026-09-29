@@ -353,3 +353,41 @@ test('a dispatch open past the stall threshold is named as STALLED at the next d
     rmDir(root);
   }
 });
+
+// --- a run this session did not start ---
+//
+// Every dispatch in the repo is counted against the open run, whoever opened it. That is right
+// for a resumed run and a tax on everything else, so the orchestrator is told which it is.
+
+const fromSession = (root, sid) =>
+  runScript(SCRIPT, [], {
+    input: JSON.stringify({ tool_input: { subagent_type: 'Explore', description: 'x' }, cwd: root, session_id: sid }),
+    cwd: root,
+  });
+
+test('a dispatch into a run this session did not start is told so, and a run of its own is not', () => {
+  const { root } = setup();
+  try {
+    assert.strictEqual(hasContext(fromSession(root, 's1')), null, 'the first writer owns the run');
+    assert.strictEqual(hasContext(fromSession(root, 's1')), null);
+    const other = fromSession(root, 's2');
+    assert.strictEqual(other.status, 0, 'never blocks: a resumed run is a new session by design');
+    const context = hasContext(other);
+    assert.ok(context && context.includes('another session') && context.includes('archive'), context);
+    assert.strictEqual(hasContext(fromSession(root, 's2')), null, 'once it has written, the run is its too');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a foreign run idle past staleRunHours is named ABANDONED', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, staleRunHours: 0 });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    fromSession(root, 's1');
+    const context = hasContext(fromSession(root, 's2'));
+    assert.ok(context && context.includes('ABANDONED'), context);
+  } finally {
+    rmDir(root);
+  }
+});

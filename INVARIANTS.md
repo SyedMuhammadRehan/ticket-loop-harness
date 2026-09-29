@@ -39,6 +39,10 @@ review were interactions between two rows below, which the code alone did not ma
 | 65 | A run cannot close over an open dispatch | `ledger.js` → `openDispatches` | `ledger.test.js` :: `a dispatch with no outcome is listed as open, and close refuses until it is resolved` | Close releases the gates; whatever is unaccounted for then never will be |
 | 66 | A subagent's return is recorded without the orchestrator | `subagent_return.js` → `recordReturn` | `subagent_return.test.js` :: `a subagent return is recorded against the oldest dispatch still out, with the agent named` | Only the mark tells a stall from an unrecorded result |
 | 67 | An unresolved dispatch is named before the next slot is spent | `dispatch_guard.js` → `unresolvedContext` | `dispatch_guard.test.js` :: `the next dispatch is told about a return with no outcome, and not about a fresh label` | Between dispatches nothing else runs where the orchestrator would see it |
+| 70 | One judge, one verdict | `ledger.js` → `cmdVerdict` | `ledger.test.js` :: `a judge dispatch seals one verdict; a second seal on the same dispatch is refused` | The last of several seals would govern silently |
+| 71 | An outcome settles a dispatch, not one of its two records | `ledger.js` → `cmdOutcome` | `ledger.test.js` :: `an outcome settles both records of one dispatch, and died counts dispatches, not records` | A pair recorded twice doubles the waste the report shows |
+| 72 | A session dispatching into a run it did not start is told so | `dispatch_guard.js` → `dispatchContext` | `dispatch_guard.test.js` :: `a dispatch into a run this session did not start is told so, and a run of its own is not` | An abandoned run arms every gate in the repo with nothing saying why |
+| 73 | A stop under someone else's open run names it and how to end it | `hook_lib.js` → `foreignRunNote` | `stop_gate.test.js` :: `a stop in a repo whose open run belongs to another session says whose it is and how to end it` | The gate still enforces; the operator learns whose run it is instead of routing around it |
 
 ## Stage receipts
 

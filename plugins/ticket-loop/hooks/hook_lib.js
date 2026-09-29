@@ -124,17 +124,31 @@ function findLedger(root) {
   return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
-// Dispatches the run's chain shows as still open, from `ledger.js status`. Callers decide what
-// an unreadable status means for them; here it is reported, never swallowed.
-function openDispatches(ledger, runDir, cwd, timeoutMs) {
+// The run's counters from `ledger.js status`. Callers decide what an unreadable status means
+// for them; here it is reported, never swallowed.
+function runStatus(ledger, runDir, cwd, timeoutMs) {
   const res = spawnSync(process.execPath, [ledger, 'status', runDir], { encoding: 'utf8', cwd, timeout: timeoutMs });
   if (res.error) return { error: res.error.message };
   if (res.status !== 0) return { error: (res.stderr || '').trim() || `ledger.js status exited ${res.status}`, stderr: res.stderr || '' };
   try {
-    return { open: JSON.parse(res.stdout).open || [] };
+    const status = JSON.parse(res.stdout);
+    return { status: { ...status, open: status.open || [], sessions: status.sessions || [] } };
   } catch (e) {
     return { error: `ledger.js status returned unreadable JSON (${e.message})` };
   }
+}
+
+// A run this session has never written to, from a status. Null when it is this session's own,
+// or when nothing has been written yet for anyone to own.
+function foreignRunNote(status, sessionId, runDir, staleHours) {
+  if (!sessionId || status.sessions.length === 0 || status.sessions.includes(sessionId)) return null;
+  const idle = status.idleMinutes == null ? 'an unknown time' : status.idleMinutes >= 120 ? `${Math.round(status.idleMinutes / 60)} h` : `${status.idleMinutes} min`;
+  const stale = Number.isInteger(staleHours) && status.idleMinutes != null && status.idleMinutes >= staleHours * 60;
+  return (
+    `run ${path.basename(runDir)} was started by another session and this one has not touched it; last activity ${idle} ago` +
+    `${stale ? ' — ABANDONED by the profile\'s staleRunHours' : ''}. While it is open it arms every gate in this repo. ` +
+    `Finish it with /ticket-loop ${path.basename(runDir)}, or end it: ledger.js archive ${runDir}`
+  );
 }
 
 function describeOpenDispatch(o) {
@@ -168,7 +182,8 @@ module.exports = {
   loadConfig,
   activeRuns,
   findLedger,
-  openDispatches,
+  runStatus,
+  foreignRunNote,
   describeOpenDispatch,
   buildArgv,
   runArgv,

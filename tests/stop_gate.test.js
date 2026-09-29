@@ -362,6 +362,25 @@ test('a dispatch with no outcome blocks the "done" claim until it is recorded', 
   }
 });
 
+test('a stop in a repo whose open run belongs to another session says whose it is and how to end it', () => {
+  const env = setupRepo();
+  try {
+    const runDir = path.join(env.main, '.agents', 'ticket-runs', 'T-1');
+    fs.mkdirSync(runDir, { recursive: true });
+    assert.strictEqual(ledger(env.main, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(ledger(env.main, ['dispatch', runDir, 'implementer: C1', '--source', 'hook', '--session', 's1']).status, 0);
+    assert.strictEqual(ledger(env.main, ['outcome', runDir, '2', 'ok']).status, 0);
+    const own = gate(env.main, { session_id: 's1' });
+    assert.strictEqual(own.status, 0, own.stderr);
+    assert.ok(!own.stderr.includes('another session'), own.stderr);
+    const other = gate(env.main, { session_id: 's2' });
+    assert.strictEqual(other.status, 0, 'a clean tree still passes; the note is information');
+    assert.ok(other.stderr.includes('another session') && other.stderr.includes('archive'), other.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
 // --- the default-branch blind spot -------------------------------------------------------
 //
 // The gate diffs merge-base(HEAD, baseRef)..HEAD. When HEAD *is* the branch point — a session
