@@ -18,6 +18,7 @@ const policy = require('./guard_policy.js');
 const lib = require('./hook_lib.js');
 
 const RUNS_REL = path.join('.agents', 'ticket-runs');
+const LEDGER_TIMEOUT_MS = 15000;
 
 // A run is ACTIVE if a run dir has been initialized (budget.json exists) and not yet CLOSED
 // (no closed.json). Deliberately a filesystem heuristic and not a require() of the skill's
@@ -61,8 +62,22 @@ function clearedGlobs(runDirs) {
   return [...globs];
 }
 
-function deny(message) {
-  console.error(`BLOCKED: ${message}`);
+// Which open run is arming this denial, when it is not this session's own. Read only on a
+// denial, never on the edits that pass, so the per-edit cost stays a directory scan.
+function armingRuns(root, runs, sessionId, staleHours) {
+  const ledger = lib.findLedger(root);
+  if (!ledger) return [];
+  return runs
+    .map((runDir) => {
+      const { status } = lib.runStatus(ledger, runDir, root, LEDGER_TIMEOUT_MS);
+      return status ? lib.foreignRunNote(status, sessionId, runDir, staleHours) : null;
+    })
+    .filter(Boolean);
+}
+
+function deny(message, arming = []) {
+  const lines = arming.map((note) => `  Arming this gate: ${note}`);
+  console.error(['BLOCKED: ' + message, ...lines].join('\n'));
   process.exit(2);
 }
 
@@ -74,22 +89,23 @@ function main() {
   const root = lib.findRepoRoot(input.cwd || process.cwd());
   const runs = activeRuns(root);
   const runActive = runs.length > 0;
+  // Only touch the profile when a run is in flight — outside one this hook does no I/O
+  // beyond the run-dir scan.
+  const config = runActive ? lib.loadConfig(root).config : {};
+  const arming = () => (runActive ? armingRuns(root, runs, input.session_id, config.staleRunHours) : []);
 
   const target = toolInput.file_path || toolInput.notebook_path;
   if (target) {
     const verdict = policy.pathVerdict(target, { runActive });
-    if (verdict) deny(`${target} is a ${verdict.reason}.`);
+    if (verdict) deny(`${target} is a ${verdict.reason}.`, arming());
 
-    // Only touch the profile when a run is in flight — outside one this hook does no I/O
-    // beyond the run-dir scan.
     if (runActive) {
-      const { config } = lib.loadConfig(root);
       const risk = policy.riskVerdict(target, {
         runActive,
         riskPaths: config.riskPaths || [],
         cleared: clearedGlobs(runs),
       });
-      if (risk) deny(`${target} is a ${risk.reason}.`);
+      if (risk) deny(`${target} is a ${risk.reason}.`, arming());
     }
   }
 
@@ -101,7 +117,8 @@ function main() {
           `  Read-only inspection (cat / git diff / grep) is allowed. Writes go through the harness:\n` +
           `    criteria      -> done-additions.md (additive only)\n` +
           `    counters/gates-> node <scripts>/ledger.js <cmd> <runDir>\n` +
-          `    clean restart -> node <scripts>/ledger.js archive <runDir>`
+          `    clean restart -> node <scripts>/ledger.js archive <runDir>`,
+        arming()
       );
     }
   }
