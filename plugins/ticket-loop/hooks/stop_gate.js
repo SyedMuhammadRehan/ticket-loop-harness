@@ -44,7 +44,10 @@ const DEFAULT_BRANCH_PREFIXES = ['refs/heads/ticket/'];
 const BASE_REF_CANDIDATES = ['origin/HEAD', 'origin/main', 'main', 'origin/master', 'master'];
 const MAX_SCANNED_FILE_BYTES = 256 * 1024;
 const LEDGER_TIMEOUT_MS = 15000;
-const MISSING_COMMAND = /command not found|not recognized as an internal or external|is not recognized as|No such file or directory/i;
+const CANNOT_START = /command not found|not recognized as an internal or external|is not recognized as|No such file or directory|The command line is too long/i;
+// cmd.exe refuses a command line past 8191 characters, and the .bat fallback in runArgv goes
+// through cmd.exe; a `flutter test` naming every mapped file overran it on a 17-file change.
+const MAX_COMMAND_CHARS = process.platform === 'win32' ? 7000 : 100000;
 
 function git(cwd, args, timeout = 15000) {
   return spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout });
@@ -254,6 +257,40 @@ function mapTargets(tree, changed, conf) {
   return { targets: [...targets], allTests: all, unmatched };
 }
 
+// One command per batch, each under the command-line limit, in the order the targets came.
+function batchTargets(template, targets, maxChars) {
+  const limit = Number.isInteger(maxChars) && maxChars > 0 ? maxChars : MAX_COMMAND_CHARS;
+  const base = lib.buildArgv(template, { '{targets}': [] }).join(' ').length;
+  const batches = [];
+  let current = [];
+  let length = base;
+  for (const target of targets) {
+    if (current.length && length + target.length + 1 > limit) {
+      batches.push(current);
+      current = [];
+      length = base;
+    }
+    current.push(target);
+    length += target.length + 1;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+// Batches run in sequence and stop at the first that does not pass; the outputs are joined so
+// the tail the gate prints is the failing batch's. The timeout applies to each command.
+function runBatches(argvs, opts) {
+  const out = { status: 0, stdout: '', stderr: '', error: undefined };
+  for (const argv of argvs) {
+    const res = lib.runArgv(argv, opts);
+    out.stdout += res.stdout || '';
+    out.stderr += res.stderr || '';
+    if (res.error) return { ...out, error: res.error, status: res.status };
+    if (res.status !== 0) return { ...out, status: res.status };
+  }
+  return out;
+}
+
 function looksLikeFlake(output, conf) {
   const sigs = conf.flakeSignatures || [];
   const markers = conf.failureMarkers || [];
@@ -363,8 +400,10 @@ function verifyTree(tree, conf, verifyTest, runActive) {
     if (!conf.testCommand) {
       return finish({ ok: true, skipped: true, note: `stop_gate: ${tree}: targeted mode without hooks.stopGate.testCommand — NOT verified.` });
     }
-    const argv = lib.buildArgv(conf.testCommand, { '{targets}': targets });
-    run = () => lib.runArgv(argv, { cwd: tree, timeoutMs });
+    const argvs = batchTargets(conf.testCommand, targets, conf.maxCommandChars).map((batch) =>
+      lib.buildArgv(conf.testCommand, { '{targets}': batch })
+    );
+    run = () => runBatches(argvs, { cwd: tree, timeoutMs });
   }
 
   const attempt = () => {
@@ -376,9 +415,10 @@ function verifyTree(tree, conf, verifyTest, runActive) {
       return { verdict: 'timeout', res, output };
     }
     if (res.error) return { verdict: 'unrunnable', res, output, why: res.error.message };
-    // shell:true reports a missing binary as a normal non-zero exit, so detect it by output.
-    if (res.status !== 0 && (res.status === 127 || MISSING_COMMAND.test(output))) {
-      return { verdict: 'unrunnable', res, output, why: 'test command not found' };
+    // shell:true reports a missing binary, or a refused command line, as a normal non-zero
+    // exit, so detect it by output.
+    if (res.status !== 0 && (res.status === 127 || CANNOT_START.test(output))) {
+      return { verdict: 'unrunnable', res, output, why: 'test command could not start' };
     }
     return { verdict: res.status === 0 ? 'pass' : 'fail', res, output };
   };
@@ -533,4 +573,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { parseWorktrees, changedSourceFiles, mapTargets, looksLikeFlake, verifyTree, treesToCheck, readState, openDispatchFailures };
+module.exports = { parseWorktrees, changedSourceFiles, mapTargets, batchTargets, looksLikeFlake, verifyTree, treesToCheck, readState, openDispatchFailures };

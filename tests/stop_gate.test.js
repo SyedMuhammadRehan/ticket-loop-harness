@@ -7,7 +7,7 @@ const { spawnSync } = require('node:child_process');
 const { HOOKS_DIR, mkTmpDir, rmDir, runScript, mkFakeRepo, ledger } = require('./helpers.js');
 
 const SCRIPT = path.join(HOOKS_DIR, 'stop_gate.js');
-const { parseWorktrees, mapTargets, looksLikeFlake, readState } = require(SCRIPT);
+const { parseWorktrees, mapTargets, batchTargets, looksLikeFlake, readState } = require(SCRIPT);
 
 // --- unit: worktree parsing ---
 
@@ -55,6 +55,20 @@ test('mapTargets maps changed sources to matching test files and honors excludes
   } finally {
     rmDir(tree);
   }
+});
+
+// --- unit: targets are batched under the command-line limit ---
+
+test('batchTargets keeps every target once, in order, with each command under the limit', () => {
+  const targets = Array.from({ length: 9 }, (_, i) => `test/area/file_${i}_test.dart`);
+  const batches = batchTargets('flutter test {targets} --reporter compact', targets, 100);
+  assert.ok(batches.length > 1, 'nine 25-char paths cannot fit one 100-char command');
+  assert.deepStrictEqual(batches.flat(), targets);
+  for (const b of batches) {
+    assert.ok(`flutter test ${b.join(' ')} --reporter compact`.length <= 100, b.join(' '));
+  }
+  assert.deepStrictEqual(batchTargets('x {targets}', targets, 100000), [targets], 'a roomy limit is one command');
+  assert.deepStrictEqual(batchTargets('x {targets}', ['a'.repeat(500)], 100), [['a'.repeat(500)]], 'an oversize single target still runs');
 });
 
 test('looksLikeFlake requires a signature and no real-failure marker', () => {
@@ -290,6 +304,78 @@ test('a missing test binary degrades honestly to NOT verified', () => {
     const res = gate(env.main);
     assert.strictEqual(res.status, 0);
     assert.ok(res.stderr.includes('NOT verified'), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+// A gate that hands the runner one command naming every mapped test file stops working at the
+// exact size of change it exists to verify.
+function targetedRepo(extra = {}) {
+  const env = setupRepo({
+    stopGate: {
+      extensions: ['.py'],
+      mode: 'targeted',
+      baseRef: 'main',
+      testDir: 'test',
+      testSuffix: '_test.py',
+      testCommand: 'node record.js {targets}',
+      ...extra,
+    },
+  });
+  fs.writeFileSync(
+    path.join(env.wt, 'record.js'),
+    "const fs = require('fs');\n" +
+      "const args = process.argv.slice(2);\n" +
+      "fs.appendFileSync('calls.log', args.join(' ') + '\\n');\n" +
+      "process.exit(fs.existsSync('FAIL_M4') && args.some((a) => a.includes('m4_test')) ? 1 : 0);\n"
+  );
+  fs.mkdirSync(path.join(env.wt, 'test'), { recursive: true });
+  for (let i = 1; i <= 6; i++) {
+    fs.writeFileSync(path.join(env.wt, 'src', `m${i}.py`), `x = ${i}\n`);
+    fs.writeFileSync(path.join(env.wt, 'test', `m${i}_test.py`), '');
+  }
+  return env;
+}
+
+test('a change mapping to many test files runs them in batches, every file once', () => {
+  const env = targetedRepo({ maxCommandChars: 60 });
+  markRunActive(env.main);
+  try {
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 0, res.stderr);
+    const calls = fs.readFileSync(path.join(env.wt, 'calls.log'), 'utf8').trim().split('\n');
+    assert.ok(calls.length > 1, `expected several commands, got:\n${calls.join('\n')}`);
+    const seen = calls.flatMap((c) => c.split(' ')).sort();
+    assert.deepStrictEqual(seen, Array.from({ length: 6 }, (_, i) => `test/m${i + 1}_test.py`).sort());
+    for (const c of calls) assert.ok(`node record.js ${c}`.length <= 60, c);
+  } finally {
+    teardown(env);
+  }
+});
+
+test('a failing batch blocks like a failing suite', () => {
+  const env = targetedRepo({ maxCommandChars: 60 });
+  markRunActive(env.main);
+  try {
+    fs.writeFileSync(path.join(env.wt, 'FAIL_M4'), '');
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 2, res.stderr);
+    assert.ok(res.stderr.includes('tests FAILED'), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+test('a command line the platform refuses is reported as NOT verified, not as red tests', () => {
+  const env = targetedRepo({ testCommand: 'node refuse.js {targets}' });
+  markRunActive(env.main);
+  try {
+    fs.writeFileSync(path.join(env.wt, 'refuse.js'), "console.error('The command line is too long.'); process.exit(1);\n");
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.ok(res.stderr.includes('NOT verified'), res.stderr);
+    assert.ok(!res.stderr.includes('tests FAILED'), res.stderr);
   } finally {
     teardown(env);
   }

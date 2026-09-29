@@ -44,6 +44,7 @@ review were interactions between two rows below, which the code alone did not ma
 | 72 | A session dispatching into a run it did not start is told so | `dispatch_guard.js` → `dispatchContext` | `dispatch_guard.test.js` :: `a dispatch into a run this session did not start is told so, and a run of its own is not` | An abandoned run arms every gate in the repo with nothing saying why |
 | 73 | A stop under someone else's open run names it and how to end it | `hook_lib.js` → `foreignRunNote` | `stop_gate.test.js` :: `a stop in a repo whose open run belongs to another session says whose it is and how to end it` | The gate still enforces; the operator learns whose run it is instead of routing around it |
 | 74 | A denial names the open run that arms it when that run is another session's | `freeze_guard.js` → `armingRuns` | `freeze_guard.test.js` :: `a denial names the open run that arms it when another session started that run` | A refused edit with no stated cause is how an abandoned run goes unnoticed for a week |
+| 75 | A targeted run names its test files in commands under the platform's line limit | `stop_gate.js` → `batchTargets` | `stop_gate.test.js` :: `a change mapping to many test files runs them in batches, every file once` | One command naming every mapped file stops working at exactly the size of change the gate exists to verify |
 
 ## Stage receipts
 
