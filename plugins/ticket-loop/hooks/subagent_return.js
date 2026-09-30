@@ -23,6 +23,7 @@ function recordReturn(input) {
   if (!ledger) return 'subagent_return: ledger.js not found — the return was not recorded';
 
   const args = [ledger, 'returned', runs[0]];
+  if (input.session_id) args.push('--session', String(input.session_id));
   if (input.agent_id) args.push('--agent', String(input.agent_id));
   if (input.agent_type) args.push('--type', String(input.agent_type));
   if (typeof input.last_assistant_message === 'string') {

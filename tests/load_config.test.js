@@ -336,3 +336,20 @@ test('a stopGate block that cannot verify anything warns', () => {
     }
   }
 });
+
+test('staleRunHours defaults to a day and rejects values that are not a whole number of hours', () => {
+  const ok = mkFakeRepo({ verify: { test: 'x' } });
+  try {
+    assert.strictEqual(JSON.parse(runScript(SCRIPT, [], { cwd: ok }).stdout).staleRunHours, 24);
+  } finally {
+    rmDir(ok);
+  }
+  const bad = mkFakeRepo({ verify: { test: 'x' }, staleRunHours: -3 });
+  try {
+    const cfg = JSON.parse(runScript(SCRIPT, [], { cwd: bad }).stdout);
+    assert.strictEqual(cfg.staleRunHours, 24);
+    assert.ok(cfg._meta.warnings.some((w) => w.includes('staleRunHours')), JSON.stringify(cfg._meta.warnings));
+  } finally {
+    rmDir(bad);
+  }
+});

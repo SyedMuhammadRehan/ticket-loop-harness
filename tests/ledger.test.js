@@ -1086,3 +1086,74 @@ test('returned with nothing open records nothing and does not fail', () => {
     rmDir(root);
   }
 });
+
+// --- one record per event: a verdict per judge, an outcome per dispatch ---
+
+test('a judge dispatch seals one verdict; a second seal on the same dispatch is refused', () => {
+  const { root, runDir, approved } = frozenRun();
+  try {
+    ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
+    assert.strictEqual(ledger(root, ['verdict', runDir, 'APPROVE_WITH_COMMENTS', '--inputs', approved]).status, 0);
+    const again = ledger(root, ['verdict', runDir, 'BLOCK', '--inputs', approved]);
+    assert.strictEqual(again.status, 1, again.stderr);
+    assert.ok(again.stderr.includes('already sealed APPROVE_WITH_COMMENTS'), again.stderr);
+    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).verdict, 'APPROVE_WITH_COMMENTS');
+    ledger(root, ['dispatch', runDir, 'qa: delta', '--source', 'hook']);
+    assert.strictEqual(ledger(root, ['verdict', runDir, 'BLOCK', '--inputs', approved]).status, 0, 'a re-review is a new dispatch');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('verify names a dispatch that sealed several verdicts', () => {
+  const { root, runDir, approved } = frozenRun();
+  try {
+    ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
+    assert.strictEqual(ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]).status, 0);
+    // A chain sealed before the refusal existed.
+    const first = chain.last(runDir, 'verdict');
+    chain.append(runDir, 'verdict', { ...first.payload, verdict: 'BLOCK' });
+    settleDispatches(root, runDir);
+    const report = JSON.parse(ledger(root, ['verify', runDir]).stdout);
+    assert.ok(report.problems.some((p) => /sealed 2 verdicts \(APPROVE, BLOCK\)/.test(p)), report.problems.join('\n'));
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('an outcome settles both records of one dispatch, and died counts dispatches, not records', () => {
+  const { root, runDir } = init();
+  try {
+    ledger(root, ['dispatch', runDir, 'implementer: C1']);
+    ledger(root, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']);
+    ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '3', 'died', 'session limit']).status, 0);
+    const mate = ledger(root, ['outcome', runDir, '2', 'died', 'double count']);
+    assert.strictEqual(mate.status, 1, mate.stderr);
+    assert.ok(mate.stderr.includes('seq 3 is the same dispatch'), mate.stderr);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '4', 'died']).status, 0);
+    // A chain sealed before the refusal: the mate carries its own died record.
+    chain.append(runDir, 'outcome', { dispatchSeq: 2, outcome: 'died', note: 'double count', tokens: null, ms: null });
+    const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.dispatches, 2);
+    assert.strictEqual(status.dispatchesDied, 2, 'two dispatches died, whatever the record count');
+    assert.deepStrictEqual(status.open, []);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('status names the sessions that wrote to a run and how long it has been idle', () => {
+  const { root, runDir } = init();
+  try {
+    ledger(root, ['dispatch', runDir, 'a', '--source', 'hook', '--session', 's1']);
+    ledger(root, ['returned', runDir, '--session', 's1']);
+    ledger(root, ['dispatch', runDir, 'b', '--source', 'hook', '--session', 's2']);
+    const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.deepStrictEqual(status.sessions, ['s1', 's2']);
+    assert.ok(Number.isInteger(status.idleMinutes) && status.idleMinutes <= 1, String(status.idleMinutes));
+    assert.ok(status.lastRecordAt);
+  } finally {
+    rmDir(root);
+  }
+});

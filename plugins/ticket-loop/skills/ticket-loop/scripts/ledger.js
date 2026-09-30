@@ -159,7 +159,20 @@ function dispatchCount(runDir) {
 // Dispatches that produced nothing. They still spent their slot, so this never reduces the
 // count — it only lets the report say how much of the budget bought nothing.
 function diedCount(runDir) {
-  return chain.ofKind(runDir, 'outcome').filter((r) => r.payload && r.payload.outcome === 'died').length;
+  const died = new Set(
+    chain.ofKind(runDir, 'outcome').filter((r) => r.payload && r.payload.outcome === 'died').map((r) => r.payload.dispatchSeq)
+  );
+  return dispatchPairs(runDir).filter((d) => d.seqs.some((seq) => died.has(seq))).length;
+}
+
+// Which sessions have written to this run, and when it was last touched. A run nobody in the
+// current session started is still enforced, but the hooks can say whose it is.
+function sessionStats(runDir) {
+  const records = chain.records(runDir);
+  const sessions = [...new Set(records.map((r) => r.payload && r.payload.session).filter(Boolean))];
+  const lastRecordAt = records.length ? records[records.length - 1].at : null;
+  const idleMinutes = lastRecordAt ? Math.max(0, Math.round((Date.now() - Date.parse(lastRecordAt)) / 60000)) : null;
+  return { sessions, lastRecordAt, idleMinutes };
 }
 
 // How the run's results were reached, so a report can say "eight by command, one by a person"
@@ -182,6 +195,7 @@ function counters(runDir) {
     dispatchesDied: diedCount(runDir),
     open,
     stalled: open.filter((o) => o.stalled).length,
+    ...sessionStats(runDir),
     replans: chain.ofKind(runDir, 'replan').length,
     maxDispatches,
     maxReplans,
@@ -358,6 +372,7 @@ function cmdDispatch(runDir, label, opts) {
   chain.append(runDir, 'dispatch', {
     label: label || null,
     source: opts && opts.source ? opts.source : 'script',
+    session: (opts && opts.session) || null,
     // Only the hook sees the filled prompt, so a script-recorded dispatch leaves this null
     // rather than guessing — an invented zero would read as a free dispatch.
     promptChars: Number.isFinite(promptChars) && promptChars >= 0 ? promptChars : null,
@@ -586,8 +601,15 @@ function cmdOutcome(runDir, seqArg, outcome, note, opts) {
     );
     process.exit(1);
   }
-  if (chain.ofKind(runDir, 'outcome').some((r) => r.payload.dispatchSeq === seq)) {
-    console.error(`ledger outcome: the dispatch at seq ${seq} already has an outcome — it is recorded once and not revised.`);
+  // The playbook's labelled record and the hook's record are one dispatch, so an outcome on
+  // either seq settles both.
+  const pair = dispatchPairs(runDir).find((d) => d.seqs.includes(seq)) || { seqs: [seq] };
+  const prior = chain.ofKind(runDir, 'outcome').find((r) => pair.seqs.includes(r.payload.dispatchSeq));
+  if (prior) {
+    const same = prior.payload.dispatchSeq === seq ? '' : ` (seq ${prior.payload.dispatchSeq} is the same dispatch's other record)`;
+    console.error(
+      `ledger outcome: the dispatch at seq ${seq} already has an outcome${same} — it is recorded once and not revised.`
+    );
     process.exit(1);
   }
   chain.append(runDir, 'outcome', { dispatchSeq: seq, outcome: normalized, note: note || null, tokens, ms });
@@ -681,6 +703,7 @@ function cmdReturned(runDir, opts) {
   const messageChars = Number(opts && opts.messageChars);
   chain.append(runDir, 'returned', {
     dispatchSeq: target.seqs[0],
+    session: (opts && opts.session) || null,
     agentId: (opts && opts.agentId) || null,
     agentType: (opts && opts.agentType) || null,
     messageChars: Number.isFinite(messageChars) && messageChars >= 0 ? messageChars : null,
@@ -823,6 +846,14 @@ function cmdVerdict(runDir, verdict, inputs) {
     process.exit(3);
   }
 
+  const prior = chain.ofKind(runDir, 'verdict').find((r) => r.payload.dispatchSeq === judgeDispatch.seq);
+  if (prior) {
+    console.error(
+      `ledger verdict: the dispatch at seq ${judgeDispatch.seq} already sealed ${prior.payload.verdict} (seq ${prior.seq}) — ` +
+        `a judge's verdict is recorded once. A re-review is a new dispatch, not a second seal.`
+    );
+    process.exit(1);
+  }
   const source = (judgeDispatch.payload && judgeDispatch.payload.source) || 'script';
   chain.append(runDir, 'verdict', {
     verdict: normalized,
@@ -1295,6 +1326,20 @@ function cmdVerify(runDir) {
       problems.push('a "qa" stage receipt exists but no verdict was ever sealed — the QA pass did not happen');
     }
     for (const o of openDispatches(runDir)) problems.push(describeOpen(o));
+    const verdictsBySeq = new Map();
+    for (const r of chain.ofKind(runDir, 'verdict')) {
+      const list = verdictsBySeq.get(r.payload.dispatchSeq) || [];
+      list.push(r.payload.verdict);
+      verdictsBySeq.set(r.payload.dispatchSeq, list);
+    }
+    for (const [seq, list] of verdictsBySeq) {
+      if (list.length > 1) {
+        problems.push(
+          `the dispatch at seq ${seq} sealed ${list.length} verdicts (${list.join(', ')}) — one judge, one verdict; ` +
+            `which of these the judge meant is not in the record`
+        );
+      }
+    }
     for (const r of chain.ofKind(runDir, 'gate')) {
       if (!(r.payload.evidence || []).length && !(STAGE_PROOF[r.payload.stage] || {}).receipt) {
         problems.push(`gate "${r.payload.stage}" (seq ${r.seq}) sealed no evidence — recorded before this was required`);
@@ -1380,6 +1425,7 @@ function main() {
   const agentId = takeFlag(argv, '--agent')[0];
   const agentType = takeFlag(argv, '--type')[0];
   const messageChars = takeFlag(argv, '--message-chars')[0];
+  const session = takeFlag(argv, '--session')[0];
   const sliceFiles = takeFlag(argv, '--files');
   const [cmd, runDir, ...rest] = argv;
 
@@ -1401,7 +1447,7 @@ function main() {
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
         '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
-        '       ledger.js returned <runDir> [--agent <id>] [--type <agentType>] [--message-chars <n>]\n' +
+        '       ledger.js returned <runDir> [--agent <id>] [--type <agentType>] [--message-chars <n>] [--session <id>]\n' +
         '       ledger.js slice <runDir> <id> --files <glob>[,<glob>]...\n' +
         '       ledger.js addition <runDir> "- [ ] C<n> (kind): <criterion> | run: <command>"'
     );
@@ -1412,7 +1458,7 @@ function main() {
     case 'init':
       return cmdInit(runDir, rest[0], { restart });
     case 'dispatch':
-      return cmdDispatch(runDir, rest.join(' '), { source, promptChars });
+      return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session });
     case 'replan':
       return cmdReplan(runDir, rest.join(' '));
     case 'gate':
@@ -1440,7 +1486,7 @@ function main() {
     case 'outcome':
       return cmdOutcome(runDir, rest[0], rest[1], rest.slice(2).join(' '), { tokens, ms });
     case 'returned':
-      return cmdReturned(runDir, { agentId, agentType, messageChars });
+      return cmdReturned(runDir, { agentId, agentType, messageChars, session });
     case 'slice':
       return cmdSlice(runDir, rest[0], sliceFiles);
     case 'addition':

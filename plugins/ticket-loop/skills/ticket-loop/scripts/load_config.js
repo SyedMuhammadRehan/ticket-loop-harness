@@ -51,6 +51,9 @@ const DEFAULTS = {
     promptBudgetChars: 32000,
     stallMinutes: 30,
   },
+  // A run untouched for this long, by a session that never wrote to it, is named as abandoned
+  // by the hooks it still arms. They keep enforcing; the number only decides when they say so.
+  staleRunHours: 24,
 };
 
 const VALID_DESIGN_SOURCES = ['none', 'figma', 'openapi'];
@@ -218,6 +221,10 @@ function resolve() {
       warnings.push(`invalid dispatchPolicy.${key} "${v}" — must be an integer >= ${min}; forcing ${DEFAULTS.dispatchPolicy[key]}`);
       cfg.dispatchPolicy[key] = DEFAULTS.dispatchPolicy[key];
     }
+  }
+  if (!Number.isInteger(cfg.staleRunHours) || cfg.staleRunHours < 0) {
+    warnings.push(`invalid staleRunHours "${cfg.staleRunHours}" — must be an integer >= 0; forcing ${DEFAULTS.staleRunHours}`);
+    cfg.staleRunHours = DEFAULTS.staleRunHours;
   }
   warnings.push(...stopGateWarnings(cfg));
   warnings.push(...verifyTestWarnings(cfg));

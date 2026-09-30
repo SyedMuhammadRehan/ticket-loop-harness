@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { HOOKS_DIR, runScript, mkFakeRepo, rmDir } = require('./helpers.js');
+const { HOOKS_DIR, runScript, mkFakeRepo, rmDir, ledger } = require('./helpers.js');
 
 const SCRIPT = path.join(HOOKS_DIR, 'freeze_guard.js');
 const RUN = '.agents/ticket-runs/PROJ-1';
@@ -22,8 +22,8 @@ function repoWithRun({ closed = false, reportWritten = false } = {}) {
   return root;
 }
 
-function runHook(toolInput, cwd) {
-  return runScript(SCRIPT, [], { input: JSON.stringify({ tool_input: toolInput, cwd }), cwd });
+function runHook(toolInput, cwd, extra = {}) {
+  return runScript(SCRIPT, [], { input: JSON.stringify({ tool_input: toolInput, cwd, ...extra }), cwd });
 }
 
 test('blocks Edit/Write to frozen done.md, *.approved.md and budget.json', () => {
@@ -173,6 +173,33 @@ test('an edit under a riskPaths glob is denied while a run is active', () => {
       assert.strictEqual(res.status, 2, `${f} is risk-tier and must be denied:\n${res.stderr}`);
       assert.match(res.stderr, /risk-tier path/);
     }
+  } finally {
+    rmDir(root);
+  }
+});
+
+// A gate armed by a run this session never started is still a gate; the denial says whose run
+// it is, or the operator learns nothing except that the harness is in the way.
+test('a denial names the open run that arms it when another session started that run', () => {
+  const root = mkFakeRepo({ verify: { test: 'x' }, riskPaths: ['pubspec.yaml'] });
+  try {
+    const runDir = path.join(root, RUN);
+    fs.mkdirSync(runDir, { recursive: true });
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1', '--session', 's1']).status, 0);
+
+    const own = runHook({ file_path: 'pubspec.yaml' }, root, { session_id: 's1' });
+    assert.strictEqual(own.status, 2);
+    assert.ok(!own.stderr.includes('Arming this gate'), own.stderr);
+
+    const other = runHook({ file_path: 'pubspec.yaml' }, root, { session_id: 's2' });
+    assert.strictEqual(other.status, 2, 'still denied: the fence does not care who is editing');
+    assert.ok(other.stderr.includes('Arming this gate') && other.stderr.includes('another session'), other.stderr);
+    assert.ok(other.stderr.includes('archive'), other.stderr);
+
+    const cmd = runHook({ command: `echo x > ${RUN}/done.md` }, root, { session_id: 's2' });
+    assert.strictEqual(cmd.status, 2);
+    assert.ok(cmd.stderr.includes('Arming this gate'), cmd.stderr);
   } finally {
     rmDir(root);
   }
