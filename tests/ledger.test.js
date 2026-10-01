@@ -1157,3 +1157,35 @@ test('status names the sessions that wrote to a run and how long it has been idl
     rmDir(root);
   }
 });
+
+// --- the model a dispatch ran on is recorded, and a tier the profile did not name is reported ---
+
+test('a dispatch on a tier the profile did not name for its role is reported by verify', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, models: { implementer: 'haiku', qa: 'inherit' } });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    ledger(root, ['dispatch', runDir, 'implementer: C1']);
+    ledger(root, ['dispatch', runDir, 'implementer: C1', '--source', 'hook', '--model', 'claude-haiku-4-5-20251001']);
+    ledger(root, ['dispatch', runDir, 'survey: map']);
+    ledger(root, ['dispatch', runDir, 'survey: map', '--source', 'hook']);
+    settleDispatches(root, runDir);
+    let report = JSON.parse(ledger(root, ['verify', runDir]).stdout);
+    assert.deepStrictEqual(report.problems, [], 'an alias of the named model, and inherit for an unnamed role, are what the profile asked');
+
+    ledger(root, ['dispatch', runDir, 'implementer: C2']);
+    ledger(root, ['dispatch', runDir, 'implementer: C2', '--source', 'hook', '--model', 'sonnet']);
+    ledger(root, ['dispatch', runDir, 'qa: contract [full]']);
+    ledger(root, ['dispatch', runDir, 'qa: contract [full]', '--source', 'hook', '--model', 'opus']);
+    ledger(root, ['dispatch', runDir, 'implementer: C3']);
+    ledger(root, ['dispatch', runDir, 'implementer: C3', '--source', 'hook']);
+    settleDispatches(root, runDir);
+    report = JSON.parse(ledger(root, ['verify', runDir]).stdout);
+    const tier = report.problems.filter((p) => /tier was changed/.test(p));
+    assert.strictEqual(tier.length, 3, report.problems.join('\n'));
+    assert.ok(tier.some((p) => /\(implementer\) ran on sonnet but the profile names haiku/.test(p)), tier.join('\n'));
+    assert.ok(tier.some((p) => /\(qa\) ran on opus but the profile names inherit/.test(p)), tier.join('\n'));
+    assert.ok(tier.some((p) => /\(implementer\) ran on the session model but the profile names haiku/.test(p)), tier.join('\n'));
+  } finally {
+    rmDir(root);
+  }
+});

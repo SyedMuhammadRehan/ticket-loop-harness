@@ -120,6 +120,7 @@ function main() {
       '--source', 'hook',
       '--prompt-chars', String(promptCharsOf(toolInput)),
       ...(input.session_id ? ['--session', String(input.session_id)] : []),
+      ...(typeof toolInput.model === 'string' && toolInput.model.trim() ? ['--model', toolInput.model.trim()] : []),
     ],
     { encoding: 'utf8', cwd: root, timeout: LEDGER_TIMEOUT_MS }
   );
