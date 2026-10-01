@@ -361,8 +361,8 @@ when a non-obvious fix finally works: `memory.js add <memoryFile> flaky|fix <TIC
    ticket status. If `memoryFile` is set, add reusable lessons with `memory.js add` and list
    them in the report.
 3. `node <SKILL_DIR>/scripts/ledger.js gate <runDir> report --evidence <runDir>/report.md`
-   then `ledger.js close <runDir>`, LAST; then `ledger.js export <runDir> --out <runDir>.bundle.json`
-   signs it if a key exists. An abandoned run ends with `ledger.js archive` instead.
+   then `ledger.js close <runDir>`, LAST (abandoned: `ledger.js archive`). With a key, `ledger.js export
+   <runDir> --out <wt>/.agents/attestations/<TICKET>.bundle.json`; commit it alone: `chore(<TICKET>): attest`.
 4. Final message: status (COMPLETE, or INCOMPLETE and why), report path, branch name, the
    integrity line from `ledger.js verify`, that merge, push and golden regeneration are
    manual, and plainly what was NOT verified: excluded goldens, every SKIPPED criterion, every

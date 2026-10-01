@@ -57,6 +57,12 @@ review were interactions between two rows below, which the code alone did not ma
 | 85 | A bundle re-signed by another key is not trusted | `verify_bundle.js` → `verifyBundle` | `attest.test.js` :: `a bundle re-signed with another key verifies only as untrusted` | A valid signature from anyone is not evidence; one from a named key is |
 | 86 | Nothing unfinished or unverifiable is signed | `ledger.js` → `cmdExport` | `attest.test.js` :: `export refuses an open run, a run without a key, and a chain that does not verify` | A signature over a broken or open record would launder it |
 | 87 | A signing key is never replaced | `attest.js` → `keygen` | `attest.test.js` :: `keygen never replaces an existing key` | Replacing it silently orphans every bundle the old key signed |
+| 88 | A pull request merges only with a trusted bundle attesting its exact head | `ci_check.js` → `check` | `ci_check.test.js` :: `a commit after the attested head that changes code is refused` | A bundle for some earlier commit says nothing about the code being merged |
+| 89 | Trust and the test command come from the base branch | `ci_check.js` → `check` | `ci_check.test.js` :: `a key the base branch does not trust is refused, even when the pull request trusts it` | A pull request that can trust its own key or pick its own test command checks nothing |
+| 90 | CI reruns the tests itself | `ci_check.js` → `runCommand` | `ci_check.test.js` :: `CI reruns the base branch test command, so a red suite or a swapped command does not pass` | The bundle is the developer machine's word; the rerun is CI's own |
+| 91 | A failed or tampered run does not merge | `ci_check.js` → `PASSING_VERDICTS` | `ci_check.test.js` :: `a run whose verdict was BLOCK, or whose integrity was not intact, is refused` | A signature over a BLOCK is still a BLOCK |
+| 92 | CI countersigns what it ran with its own key | `ci_check.js` → `countersign` | `ci_check.test.js` :: `with a CI key the check countersigns exactly what it ran` | The one claim in the trail the developer's machine could not have made |
+| 93 | The trust list is frozen mid-run | `guard_policy.js` → `CONTROL_PLANE_PATTERNS` | `guard_policy.test.js` :: `the control plane is protected mid-run and writable when idle` | An agent that can trust its own key mid-run signs for itself |
 
 ## Stage receipts
 
