@@ -52,6 +52,11 @@ review were interactions between two rows below, which the code alone did not ma
 | 80 | doctor finds stale hook copies, abandoned runs and leftover worktrees without changing anything | `doctor.js` → `diagnose` | `setup_tools.test.js` :: `doctor passes a freshly initialised repo, then finds stale copies, an abandoned run and a leftover worktree` | Each of these went unnoticed for weeks in a field repo |
 | 81 | A session opening on an open run or a stale hook copy is told so | `session_start.js` → `notice` | `session_start.test.js` :: `an open run started by another session is named at session start with how to end it` | Otherwise the first sign is a refusal, in work that has nothing to do with the run |
 | 82 | Every hook the plugin ships is on the stale-copy list | `hook_lib.js` → `HARNESS_HOOK_FILES` | `session_start.test.js` :: `the stale-copy list names every hook file the plugin ships` | A copy of a hook added later would otherwise go unseen |
+| 83 | A closed run's bundle verifies with no secret and no harness | `verify_bundle.js` → `verifyBundle` | `attest.test.js` :: `a closed run exports a bundle that verifies with no secret, trusted by its key id` | The HMAC seals prove the record only to the machine holding the chain key |
+| 84 | A changed, dropped or inserted record, or an edited attestation, fails verification | `verify_bundle.js` → `digestOf` | `attest.test.js` :: `each tampering an auditor must catch is caught` | A bundle is only evidence if every way of editing it shows |
+| 85 | A bundle re-signed by another key is not trusted | `verify_bundle.js` → `verifyBundle` | `attest.test.js` :: `a bundle re-signed with another key verifies only as untrusted` | A valid signature from anyone is not evidence; one from a named key is |
+| 86 | Nothing unfinished or unverifiable is signed | `ledger.js` → `cmdExport` | `attest.test.js` :: `export refuses an open run, a run without a key, and a chain that does not verify` | A signature over a broken or open record would launder it |
+| 87 | A signing key is never replaced | `attest.js` → `keygen` | `attest.test.js` :: `keygen never replaces an existing key` | Replacing it silently orphans every bundle the old key signed |
 
 ## Stage receipts
 

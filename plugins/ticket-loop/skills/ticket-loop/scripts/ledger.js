@@ -24,6 +24,8 @@
 //   ledger.js outcome <runDir> <seq> <ok|died>     what a dispatch actually produced
 //   ledger.js returned <runDir>                    the subagent tool returned (SubagentStop hook)
 //   ledger.js verify <runDir>                      chain integrity + tamper report
+//   ledger.js keygen                               create this machine's Ed25519 signing key
+//   ledger.js export <runDir> --out <file>         signed bundle of a closed run, for verify_bundle.js
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
 const fs = require('fs');
@@ -31,6 +33,8 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const chain = require('./chain.js');
 const { importersOf } = require('./importers.js');
+const attest = require('./attest.js');
+const { digestOf, FORMAT: ATTESTATION_FORMAT } = require('./verify_bundle.js');
 
 // Bumped when the contract between the hooks and this script changes (chain-backed counters,
 // --source de-duplication, the closed.json end-of-run marker). dispatch_guard refuses to trust
@@ -1295,7 +1299,7 @@ function cmdStatus(runDir) {
 
 // The Stage-7 integrity report: chain intact? mirror in step? frozen artifacts unchanged
 // since their receipts? This is what makes "no tampering" checkable instead of asserted.
-function cmdVerify(runDir) {
+function integrityReport(runDir) {
   const v = chain.verify(runDir);
   const problems = [...v.problems];
   const revisions = [];
@@ -1435,8 +1439,96 @@ function cmdVerify(runDir) {
     revisions,
     counters: v.ok ? counters(runDir) : null,
   };
+  return report;
+}
+
+function cmdVerify(runDir) {
+  const report = integrityReport(runDir);
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
-  process.exit(problems.length === 0 ? 0 : 4);
+  process.exit(report.intact ? 0 : 4);
+}
+
+function cmdKeygen() {
+  const made = attest.keygen();
+  if (made.error) {
+    console.error(`ledger keygen: ${made.error}`);
+    process.exit(1);
+  }
+  console.log(`ledger: signing key written to ${made.priv}\n  public key: ${made.pub}\n  key id: ${made.keyId}`);
+  console.log('  Give the key id to whoever verifies your bundles; keep the private key off shared machines.');
+}
+
+function pluginVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', '..', '.claude-plugin', 'plugin.json'), 'utf8')).version || null;
+  } catch {
+    return null;
+  }
+}
+
+// A closed run, signed. The HMAC seals prove the record to this machine; the signature proves
+// the same records to anyone holding the public key, from the moment of export.
+function cmdExport(runDir, out, worktree) {
+  if (!out) {
+    console.error('ledger export: --out <file> is required');
+    process.exit(1);
+  }
+  if (!chain.exists(runDir)) {
+    console.error(`ledger export: no receipt chain for ${runDir}`);
+    process.exit(1);
+  }
+  let marker;
+  try {
+    marker = JSON.parse(fs.readFileSync(closedPath(runDir), 'utf8'));
+  } catch {
+    console.error(`ledger export: ${runDir} is not closed — only a finished run is attested. Close it first.`);
+    process.exit(3);
+  }
+  const v = chain.verify(runDir);
+  if (!v.ok) {
+    console.error(`ledger export: the chain does not verify, so there is nothing trustworthy to sign:\n- ${v.problems.join('\n- ')}`);
+    process.exit(4);
+  }
+  const signer = attest.loadSigner();
+  if (signer.error) {
+    console.error(`ledger export: ${signer.error}`);
+    process.exit(1);
+  }
+  const integrity = integrityReport(runDir);
+  const c = counters(runDir);
+  const ticket = path.basename(path.resolve(runDir));
+  const headLines = gitLines(worktree || '.', ['rev-parse', '--verify', '--quiet', `ticket/${ticket}`]);
+  const reportFile = path.join(runDir, 'report.md');
+  const records = v.records;
+  const attestation = {
+    format: ATTESTATION_FORMAT,
+    ticket,
+    pluginVersion: pluginVersion(),
+    baseSha: c.baseSha,
+    headSha: headLines && headLines[0] ? headLines[0].trim() : null,
+    closedAt: marker.closedAt || null,
+    records: records.length,
+    chainDigest: digestOf(records),
+    lastSeal: records.length ? records[records.length - 1].hmac : null,
+    report: fs.existsSync(reportFile) ? { file: 'report.md', sha256: chain.sha256File(reportFile) } : null,
+    verdict: c.verdict,
+    dispatches: c.dispatches,
+    dispatchesDied: c.dispatchesDied,
+    integrity: { intact: integrity.intact, problems: integrity.problems },
+    signedAt: new Date().toISOString(),
+    keyId: signer.keyId,
+  };
+  const bundle = {
+    attestation,
+    signature: attest.sign(signer.privateKey, chain.canonical(attestation)),
+    publicKey: signer.publicKey,
+    records,
+  };
+  fs.writeFileSync(out, JSON.stringify(bundle, null, 2) + '\n');
+  console.log(
+    `ledger: ${ticket} exported to ${out} — ${records.length} record(s), verdict ${c.verdict || 'none'}, ` +
+      `integrity ${integrity.intact ? 'intact' : `with ${integrity.problems.length} problem(s)`}, signed by key ${signer.keyId}`
+  );
 }
 
 // Collect repeated "--flag value" pairs and strip them from the positional args.
@@ -1470,6 +1562,7 @@ function main() {
   const messageChars = takeFlag(argv, '--message-chars')[0];
   const session = takeFlag(argv, '--session')[0];
   const model = takeFlag(argv, '--model')[0];
+  const outFile = takeFlag(argv, '--out')[0];
   const sliceFiles = takeFlag(argv, '--files');
   const [cmd, runDir, ...rest] = argv;
 
@@ -1478,6 +1571,7 @@ function main() {
     process.stdout.write(`${LEDGER_PROTOCOL}\n`);
     return;
   }
+  if (cmd === 'keygen') return cmdKeygen();
 
   // `qascope --base <ref>` reviews a diff with no run behind it, so it takes no runDir.
   if (!cmd || (!runDir && !(cmd === 'qascope' && baseRef))) {
@@ -1488,6 +1582,7 @@ function main() {
         '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> --by <command|observed|human|asserted> [note]\n' +
         '       ledger.js verdict <runDir> <verdict> [--inputs <file>]...\n' +
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
+        '       ledger.js keygen | export <runDir> --out <file> [--worktree <path>]\n' +
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
         '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
@@ -1537,6 +1632,8 @@ function main() {
       return cmdAddition(runDir, rest.join(' '));
     case 'verify':
       return cmdVerify(runDir);
+    case 'export':
+      return cmdExport(runDir, outFile, worktree);
     default:
       console.error(`ledger.js: unknown command "${cmd}"`);
       process.exit(1);
