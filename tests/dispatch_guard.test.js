@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { HOOKS_DIR, SCRIPTS_DIR, mkRun, rmDir, runScript, ledger, settleDispatches } = require('./helpers.js');
+const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
 const { REQUIRED_LEDGER_PROTOCOL } = require(path.join(HOOKS_DIR, 'dispatch_guard.js'));
 
 const SCRIPT = path.join(HOOKS_DIR, 'dispatch_guard.js');
@@ -387,6 +388,18 @@ test('a foreign run idle past staleRunHours is named ABANDONED', () => {
     fromSession(root, 's1');
     const context = hasContext(fromSession(root, 's2'));
     assert.ok(context && context.includes('ABANDONED'), context);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('the hook records the model the Agent tool was handed, and null for the session model', () => {
+  const { root, runDir } = setup();
+  try {
+    assert.strictEqual(dispatch(root, { subagent_type: 'general-purpose', description: 'C1', model: 'haiku' }).status, 0);
+    assert.strictEqual(chain.last(runDir, 'dispatch').payload.model, 'haiku');
+    assert.strictEqual(dispatch(root).status, 0);
+    assert.strictEqual(chain.last(runDir, 'dispatch').payload.model, null);
   } finally {
     rmDir(root);
   }

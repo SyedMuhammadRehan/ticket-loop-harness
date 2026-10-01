@@ -54,3 +54,11 @@ test('the playbook dispatches Stage 9 to that agent by name', () => {
     'SKILL.md never names the QA agent, so the narrowed tool list would not be used'
   );
 });
+
+// Effort is the one dial the Agent tool cannot set per call; it lives only in the definition.
+// The judge is the backstop for everything upstream, so it is pinned at high or above here
+// rather than inheriting whatever the session happened to run at.
+test('the QA agent reasons at high effort or above', () => {
+  const effort = frontmatter().effort;
+  assert.ok(['high', 'xhigh', 'max'].includes(effort), `effort is ${JSON.stringify(effort)}; the judge must not inherit a low session effort`);
+});

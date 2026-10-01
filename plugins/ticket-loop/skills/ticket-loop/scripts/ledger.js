@@ -376,6 +376,8 @@ function cmdDispatch(runDir, label, opts) {
     // Only the hook sees the filled prompt, so a script-recorded dispatch leaves this null
     // rather than guessing — an invented zero would read as a free dispatch.
     promptChars: Number.isFinite(promptChars) && promptChars >= 0 ? promptChars : null,
+    // The model the Agent tool was handed, as the hook saw it; null is the session model.
+    model: (opts && opts.model) || null,
   });
   mirrorBudget(runDir);
   console.log(`ledger: dispatch OK — ${dispatchCount(runDir).count}/${maxDispatches} used`);
@@ -628,6 +630,8 @@ function roleOf(label) {
 // One subagent call reaches the chain twice: the playbook's labelled `dispatch` before the
 // call, then the hook's record at the tool call. A hook record pairs with the nearest earlier
 // unpaired script record; the label comes from the script side, the prompt size from the hook.
+// `model` is what the hook saw the Agent tool handed over: null for the session model, and
+// absent entirely when no hook record exists to say.
 function dispatchPairs(runDir) {
   const pairs = [];
   const unpairedScripts = [];
@@ -638,8 +642,9 @@ function dispatchPairs(runDir) {
       if (mate) {
         mate.seqs.push(r.seq);
         if (Number.isFinite(p.promptChars) && mate.promptChars == null) mate.promptChars = p.promptChars;
+        mate.model = p.model || null;
       } else {
-        pairs.push({ seqs: [r.seq], label: p.label, promptChars: Number.isFinite(p.promptChars) ? p.promptChars : null });
+        pairs.push({ seqs: [r.seq], label: p.label, promptChars: Number.isFinite(p.promptChars) ? p.promptChars : null, model: p.model || null });
       }
     } else {
       const entry = { seqs: [r.seq], label: p.label, promptChars: Number.isFinite(p.promptChars) ? p.promptChars : null };
@@ -648,6 +653,33 @@ function dispatchPairs(runDir) {
     }
   }
   return pairs;
+}
+
+// An alias and the id it resolves to name one model (`haiku`, `claude-haiku-4-5-20251001`).
+function sameModel(a, b) {
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+// The profile names a model per role; the hook records what the Agent tool was handed. A tier
+// the profile did not choose, cheaper or dearer, is reported. Pairs with no hook record are
+// skipped here: their independence is already reported on its own.
+function modelProblems(runDir) {
+  const models = readConfig().models || {};
+  const out = [];
+  for (const d of dispatchPairs(runDir)) {
+    if (d.model === undefined) continue;
+    const role = roleOf(d.label);
+    if (!Object.prototype.hasOwnProperty.call(models, role)) continue;
+    const expected = String(models[role] || '').trim().toLowerCase() || 'inherit';
+    const actual = d.model ? String(d.model).toLowerCase() : null;
+    const matches = expected === 'inherit' ? actual === null : actual !== null && sameModel(actual, expected);
+    if (matches) continue;
+    out.push(
+      `dispatch seq ${d.seqs[0]} (${role}) ran on ${actual || 'the session model'} but the profile names ${expected} for ${role} — ` +
+        `the tier was changed at dispatch`
+    );
+  }
+  return out;
 }
 
 function stallMinutes() {
@@ -1326,6 +1358,7 @@ function cmdVerify(runDir) {
       problems.push('a "qa" stage receipt exists but no verdict was ever sealed — the QA pass did not happen');
     }
     for (const o of openDispatches(runDir)) problems.push(describeOpen(o));
+    problems.push(...modelProblems(runDir));
     const verdictsBySeq = new Map();
     for (const r of chain.ofKind(runDir, 'verdict')) {
       const list = verdictsBySeq.get(r.payload.dispatchSeq) || [];
@@ -1426,6 +1459,7 @@ function main() {
   const agentType = takeFlag(argv, '--type')[0];
   const messageChars = takeFlag(argv, '--message-chars')[0];
   const session = takeFlag(argv, '--session')[0];
+  const model = takeFlag(argv, '--model')[0];
   const sliceFiles = takeFlag(argv, '--files');
   const [cmd, runDir, ...rest] = argv;
 
@@ -1458,7 +1492,7 @@ function main() {
     case 'init':
       return cmdInit(runDir, rest[0], { restart });
     case 'dispatch':
-      return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session });
+      return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session, model });
     case 'replan':
       return cmdReplan(runDir, rest.join(' '));
     case 'gate':

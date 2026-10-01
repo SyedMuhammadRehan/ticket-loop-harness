@@ -45,6 +45,7 @@ review were interactions between two rows below, which the code alone did not ma
 | 73 | A stop under someone else's open run names it and how to end it | `hook_lib.js` → `foreignRunNote` | `stop_gate.test.js` :: `a stop in a repo whose open run belongs to another session says whose it is and how to end it` | The gate still enforces; the operator learns whose run it is instead of routing around it |
 | 74 | A denial names the open run that arms it when that run is another session's | `freeze_guard.js` → `armingRuns` | `freeze_guard.test.js` :: `a denial names the open run that arms it when another session started that run` | A refused edit with no stated cause is how an abandoned run goes unnoticed for a week |
 | 75 | A targeted run names its test files in commands under the platform's line limit | `stop_gate.js` → `batchTargets` | `stop_gate.test.js` :: `a change mapping to many test files runs them in batches, every file once` | One command naming every mapped file stops working at exactly the size of change the gate exists to verify |
+| 76 | A dispatch on a tier the profile did not name for its role is reported | `ledger.js` → `modelProblems` | `ledger.test.js` :: `a dispatch on a tier the profile did not name for its role is reported by verify` | The tiering was prose: the orchestrator was told to pass the model and nothing checked that it had |
 
 ## Stage receipts
 
