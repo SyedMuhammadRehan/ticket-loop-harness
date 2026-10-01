@@ -106,7 +106,9 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `memoryFile` | cross-run lessons file the loop reads at the start and appends to at the end (`null` disables) |
 | `models` | model per dispatch role (`survey` / `implementer` / `fixer` / `qa`), each defaulting to `inherit` = the session model. Opt-in cost tiering: downgrade `survey` first (read-only, caught downstream), `implementer` second (verification + QA backstop it), `qa` last or never — it is the backstop. `dispatch_guard` records the model each dispatch was handed and `verify` reports a role that ran on a tier the profile did not name |
 | `qaScope.smallDiffLines` | a committed diff at or under this many changed lines (default 60) touching no `riskPaths` gets a *focused* QA read (changed files + their consumers + the contract) instead of a codebase sweep; `0` = always sweep. Scope never shrinks verdict authority, and risk-path touches always get the full read |
-| `hooks.postEdit` / `hooks.stopGate` | what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile. `stopGate` also takes `baseRef` (the branch point committed slices are diffed against), `worktrees` (`all`/`ticket`/`cwd`), and `requireMatchingTest` (block source changes no test covers) |
+| `hooks.postEdit` / `hooks.stopGate` | what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile. `stopGate` also takes `baseRef` (the branch point committed slices are diffed against), `worktrees` (`all`/`ticket`/`cwd`), `requireMatchingTest` (block source changes no test covers), and `maxCommandChars` (targeted test files run in batches under this command length; the default keeps Windows under cmd.exe's limit) |
+| `dispatchPolicy` | `minSliceLines` (default 50) and `promptBudgetChars` (default 32000) are advisory and reported by `ledger.js cost`. `stallMinutes` (default 30) is how long a dispatch may stay out without returning before `status`, `verify` and the next dispatch call it STALLED |
+| `staleRunHours` | how long an open run may sit idle before the hooks call it ABANDONED when another session meets it (default 24). The gates keep enforcing either way; this only decides the wording |
 | `attribution.commitTrailer` | repo policy on AI attribution: a trailer string appended to every worktree commit (for teams that require disclosure), or `null` (default) for clean commits with none. The implementer is also barred from AI-style narration comments — new code must be indistinguishable from the code around it |
 
 Copy one profile out of `config.example.json` to `.agents/ticket-loop.config.json` and edit.
@@ -364,6 +366,30 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   declaration sites, in front of the model as context before the tool runs. It never blocks and
   does nothing outside a run; whether the model then reads a range instead of the file is its
   call, but the information arrives at the moment the choice is made.
+
+- **A dispatch is never left unaccounted for** — a `SubagentStop` hook, `subagent_return.js`,
+  marks each dispatch as returned the moment the subagent tool comes back. A dispatch with no
+  recorded outcome is OPEN: `ledger.js status` lists it, `verify` reports it, the next dispatch is
+  told about it, the stop gate refuses the "done" claim and `close` refuses the run until it is
+  recorded as `ok` or `died`. One that never returned past `dispatchPolicy.stallMinutes` is
+  reported as STALLED, so a hung worker and a forgotten outcome read differently.
+- **One judge, one verdict; one dispatch, one outcome** — `ledger.js verdict` refuses a second
+  seal on the dispatch that already sealed one, so a re-review has to be a new dispatch. An outcome
+  settles both records of a hook-and-script pair, and the died count counts dispatches. `verify`
+  names older chains that already carry several verdicts on one dispatch.
+- **The model a dispatch ran on is checked** — `dispatch_guard` records the model the Agent tool
+  was handed, and `verify` reports any role that ran on a tier the profile's `models` did not
+  name, cheaper or dearer. The QA judge's own definition pins it at high effort, because effort
+  has no per-call setting and the judge must not inherit a low session effort.
+- **A run someone else left open says so** — every dispatch and return records its session. When
+  a session meets an open run it never wrote to, the dispatch guard, the stop gate and every
+  freeze-guard denial say whose run is arming the gate, how long it has been idle, and the two
+  ways to end it: `/ticket-loop <TICKET>` to resume, `ledger.js archive` to end it. Past
+  `staleRunHours` it is called ABANDONED. Nothing is relaxed for that session; it is told why.
+- **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
+  under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
+  fails. A command the platform refuses to start is reported as NOT verified, like a missing
+  binary, never as a failing suite.
 
 ### Yours to uphold — and visible in the report if you don't
 
