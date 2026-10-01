@@ -89,6 +89,8 @@ plugins/ticket-loop/
       importers.js                   # which files import the changed files (JS/TS, Dart, Python, Go), for QA scope
       init.js                        # writes a starter profile detected from the repo; never overwrites one
       doctor.js                      # read-only health check: profile, gitignore, stale hook copies, open runs, worktrees
+      attest.js                      # Ed25519 signing key and signatures for run attestations (Node crypto)
+      verify_bundle.js               # self-contained: checks a signed run bundle with no secret and no harness
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -401,6 +403,15 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   copies of these hooks still registered beside the plugin, open or abandoned runs, and ticket
   worktrees with no run behind them. A `SessionStart` hook names the open runs and stale copies
   when a session opens, so the first sign is a line of context, not a refusal.
+- **A finished run can be proved to someone else** — the chain's HMAC seals prove the record
+  only to the machine holding the chain key. `ledger.js keygen` creates an Ed25519 key once per
+  machine (or CI supplies one through `TICKET_LOOP_SIGNING_KEY`), and `ledger.js export <runDir>
+  --out <file>` signs a closed run: an attestation naming the ticket, base and head commits, the
+  record count, a digest over every record, the report's hash, the verdict and the integrity
+  result, bundled with the records and the public key. `verify_bundle.js` is one file with no
+  dependency on the harness; it checks the signature, recomputes the digest, walks the links and
+  compares the verdict, and with `--trust <keyId>` requires a key you named. Export refuses an
+  open run and a chain that does not verify, so nothing broken is ever signed.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing
@@ -506,6 +517,11 @@ tamper-evident, not tamper-proof** — the point is that a lazy or drifting loop
 produce a clean-looking report by accident, and a determined one leaves marks.
 
 Named limits, so they are not mistaken for guarantees:
+
+- **A signature proves the record, not the machine.** The signing key lives where the loop runs,
+  so an agent with shell access there could sign a fabricated chain. A verified bundle shows the
+  records were not changed after export and names the key that signed them; it does not show
+  that the signing machine behaved. The stronger form, a key only CI holds, is the next step.
 
 - **The write policy denies on the path as *written*.** A command that never spells a protected
   path is not evaluated at all, so string concatenation, a glob, or a variable reaches files a

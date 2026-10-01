@@ -111,9 +111,14 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
 3. **Check it:** `node <SKILL_DIR>/scripts/doctor.js` reports anything wrong with the setup,
    each with its fix, and changes nothing. Run it again whenever hooks or runs behave oddly; it
    finds pre-plugin copies of these hooks, abandoned runs and leftover ticket worktrees.
-4. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
+4. **Optional: sign finished runs.** `node <SKILL_DIR>/scripts/ledger.js keygen` once per
+   machine creates an Ed25519 key under `~/.claude/ticket-loop/signing/` and prints its key id.
+   The loop then exports each closed run as a signed bundle; anyone can check one with
+   `node verify_bundle.js <bundle> --trust <keyId>`, a single file that needs nothing else.
+   In CI, point `TICKET_LOOP_SIGNING_KEY` at a key the CI holds instead.
+5. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
    browser tools (Jira/Figma/Playwright) are optional and degrade gracefully.
-5. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
+6. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
    block. It is not part of the harness and nothing here depends on it. It exists because the
    guard hooks refuse destructive and publishing commands **only while a ticket run is
    active** — outside one this is just your repo, and the harness deliberately gets out of the
