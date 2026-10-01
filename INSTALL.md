@@ -94,8 +94,10 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
 
 ## Every install — do these once per repo
 
-1. **Add a profile.** Copy one block from
-   `plugins/ticket-loop/skills/ticket-loop/config.example.json` into
+1. **Add a profile.** From the repo, `node <SKILL_DIR>/scripts/init.js --dry-run` shows the
+   profile it would write from your manifests, default branch and remote; run it without
+   `--dry-run` to write it and gitignore run state, then review the lines it lists. Or copy one
+   block from `plugins/ticket-loop/skills/ticket-loop/config.example.json` into
    `.agents/ticket-loop.config.json` and edit it for your stack (test/analyze commands,
    `ticketSource`, `designSource`, `riskPaths`). The `hooks` block arms the format/analyze and
    stop-gate hooks; set `hooks.stopGate.baseRef` to your default branch so **committed** slice
@@ -106,9 +108,12 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
    tracks. Do not delete it while a run is in flight: it holds the run's counters and receipts,
    and `ledger.js init` will refuse to carry on if it finds a run dir whose chain has gone
    missing (`--restart` is the sanctioned way out, and it records that the history was lost).
-3. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
+3. **Check it:** `node <SKILL_DIR>/scripts/doctor.js` reports anything wrong with the setup,
+   each with its fix, and changes nothing. Run it again whenever hooks or runs behave oddly; it
+   finds pre-plugin copies of these hooks, abandoned runs and leftover ticket worktrees.
+4. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
    browser tools (Jira/Figma/Playwright) are optional and degrade gracefully.
-4. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
+5. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
    block. It is not part of the harness and nothing here depends on it. It exists because the
    guard hooks refuse destructive and publishing commands **only while a ticket run is
    active** — outside one this is just your repo, and the harness deliberately gets out of the

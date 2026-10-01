@@ -34,6 +34,13 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.js\"", "timeout": 20 }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [

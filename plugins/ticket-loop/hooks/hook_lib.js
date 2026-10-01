@@ -158,6 +158,62 @@ function describeOpenDispatch(o) {
   return `seq ${o.seqs[0]} (${o.label || 'unlabelled'}): ${state}`;
 }
 
+// File names this plugin ships as hooks. A copy of one under a repo's own `.claude/hooks/`, or a
+// settings entry that runs one from there, is a pre-plugin install still registered beside the
+// plugin, so every edit and every stop runs both.
+const HARNESS_HOOK_FILES = [
+  'stop_gate.js', 'freeze_guard.js', 'dispatch_guard.js', 'post_edit.js', 'dart_post_edit.js',
+  'read_hint.js', 'subagent_return.js', 'session_start.js', 'guard_policy.js', 'hook_lib.js', 'hygiene.js',
+];
+
+function settingsHookCommands(file) {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const groups of Object.values((parsed && parsed.hooks) || {})) {
+    for (const group of Array.isArray(groups) ? groups : []) {
+      for (const h of (group && group.hooks) || []) if (h && typeof h.command === 'string') out.push(h.command);
+    }
+  }
+  return out;
+}
+
+// Each stale copy found, with where it is and how to remove it. The plugin cache is never one.
+function staleCopies(root, home = os.homedir()) {
+  const found = [];
+  const hooksDir = path.join(root, '.claude', 'hooks');
+  for (const name of HARNESS_HOOK_FILES) {
+    if (fs.existsSync(path.join(hooksDir, name))) {
+      found.push({ where: path.join(hooksDir, name), fix: `delete it; the plugin ships ${name}` });
+    }
+  }
+  for (const base of [root, home]) {
+    const skill = path.join(base, '.claude', 'skills', 'ticket-loop');
+    if (fs.existsSync(path.join(skill, 'SKILL.md'))) {
+      found.push({ where: skill, fix: 'delete the folder; the plugin ships the skill, and a copy shadows it' });
+    }
+  }
+  const files = HARNESS_HOOK_FILES.map((n) => n.replace('.', '\\.')).join('|');
+  const names = new RegExp(String.raw`(^|[\\/\s"'])(` + files + String.raw`)\b|skills[\\/]ticket-loop[\\/]`);
+  const settingsFiles = [
+    path.join(root, '.claude', 'settings.json'),
+    path.join(root, '.claude', 'settings.local.json'),
+    path.join(home, '.claude', 'settings.json'),
+  ];
+  for (const file of settingsFiles) {
+    for (const command of settingsHookCommands(file)) {
+      if (names.test(command) && !/plugins[\\/]cache|CLAUDE_PLUGIN_ROOT/.test(command)) {
+        found.push({ where: `${file}: ${command}`, fix: 'remove this hook entry; the plugin registers its own' });
+      }
+    }
+  }
+  return found;
+}
+
 function readStdinJson() {
   try {
     let raw = fs.readFileSync(0, 'utf8');
@@ -183,6 +239,8 @@ module.exports = {
   activeRuns,
   findLedger,
   runStatus,
+  staleCopies,
+  HARNESS_HOOK_FILES,
   foreignRunNote,
   describeOpenDispatch,
   buildArgv,

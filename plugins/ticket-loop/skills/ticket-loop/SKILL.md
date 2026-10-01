@@ -49,7 +49,8 @@ goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and
 
 1. `node <SKILL_DIR>/scripts/load_config.js`. Record `stack`, the resolved verify commands,
    and the first line of the stack's `--version` output for the report. STOP and ask when:
-   - `configFound` is false or `verify.test` is null: ask for the missing commands and scope.
+   - `configFound` is false: show `node <SKILL_DIR>/scripts/init.js --dry-run`, and write it with
+     `init.js` once the user agrees. `verify.test` null: ask for the command.
    - `_meta.warnings` names `hooks.stopGate`: show the warning, ask the user to add the block
      (`config.example.json` has one), and start again. Mid-run it cannot be fixed.
    - `_meta.newerVersionInstalled` is set: say which version you are (`_meta.skillVersion`),
@@ -287,7 +288,7 @@ result into `ledger.md`'s check-history table.
 
 1. `node <SKILL_DIR>/scripts/ledger.js qascope <runDir> --worktree <wt>` prints `scope`
    (FOCUSED, FULL, or DELTA after a verdict when the fix stayed inside the files that judge
-   read), `why`, `outsideScope` and `label`. Use the label verbatim in `ledger.js dispatch`.
+   read), `why`, `outsideScope`, `consumerFiles` and `label`. Use the label verbatim in `ledger.js dispatch`.
 2. Dispatch ONE judge with **`subagent_type: ticket-loop-qa`** (no Write or Edit; never
    substitute a general-purpose agent) using `prompts/qa_agent.md`. Fill `{TICKET}`,
    `{RUN_DIR}` (`<runDir>`), `{SCRIPTS_DIR}` (`<SKILL_DIR>/scripts`), `{DIFF}`
@@ -295,8 +296,8 @@ result into `ledger.md`'s check-history table.
    say when status is non-empty; past `dispatchPolicy.promptBudgetChars`, give the `--stat`
    plus those commands for the judge to run itself), `{CHECK_RESULTS}` (from `ledger.js status`),
    `{CONVENTIONS}` (codebase-map.md plus `stack`, or "the conventions evident in the
-   surrounding code"), `{QA_SCOPE}` (FOCUSED: "read the changed files, every file that imports
-   or consumes them, and the contract artifacts; skip the wider sweep" / FULL: "sweep as widely
+   surrounding code"), `{QA_SCOPE}` (FOCUSED: "read the changed files, these importers of them:
+   <consumerFiles>, and the contract artifacts; skip the wider sweep" / FULL: "sweep as widely
    as the contract and diff warrant" / DELTA: "a judge ruled at verdict seq <n>; the prior
    findings and the change since <since> are below; confirm each finding is resolved and
    nothing regressed", with `{DIFF}` then being those findings verbatim plus

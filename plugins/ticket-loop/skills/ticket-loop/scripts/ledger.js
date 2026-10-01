@@ -30,6 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const chain = require('./chain.js');
+const { importersOf } = require('./importers.js');
 
 // Bumped when the contract between the hooks and this script changes (chain-backed counters,
 // --source de-duplication, the closed.json end-of-run marker). dispatch_guard refuses to trust
@@ -1090,6 +1091,11 @@ function cmdQaScope(runDir, worktree, baseRef) {
   const riskPaths = riskPathsFromConfig();
   const touchedRiskPaths = [...files].filter((f) => riskPaths.some((g) => globToRegExp(g).test(f)));
 
+  // The files a focused read must include beyond the diff itself.
+  const graph = importersOf(tree, [...files]);
+  const consumers = Object.fromEntries(Object.entries(graph.importers).filter(([, list]) => list.length));
+  const consumerFiles = [...new Set(Object.values(consumers).flat())].filter((f) => !files.has(f)).sort();
+
   let declaredScope = null;
   let outsideScope = null;
   if (withRun) {
@@ -1142,6 +1148,9 @@ function cmdQaScope(runDir, worktree, baseRef) {
     since: scope === 'DELTA' ? delta.since : null,
     deltaFiles: scope === 'DELTA' ? delta.files : null,
     priorVerdictSeq: delta ? delta.priorVerdictSeq : null,
+    consumers,
+    consumerFiles,
+    consumersTruncated: graph.truncated,
     label: `qa: contract [${scope.toLowerCase()}]`,
   };
   if (withRun) {
@@ -1153,6 +1162,7 @@ function cmdQaScope(runDir, worktree, baseRef) {
       deletions: removed,
       touchedRiskPaths,
       outsideScope,
+      consumerFiles,
       since: out.since,
       priorVerdictSeq: out.priorVerdictSeq,
     });
