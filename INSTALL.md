@@ -116,6 +116,8 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
    The loop then exports each closed run as a signed bundle; anyone can check one with
    `node verify_bundle.js <bundle> --trust <keyId>`, a single file that needs nothing else.
    In CI, point `TICKET_LOOP_SIGNING_KEY` at a key the CI holds instead.
+   To gate merges on it, list the trusted key ids in `.agents/ticket-loop.trust` on your default
+   branch and add the merge check from [docs/ci.md](docs/ci.md) as a required status check.
 5. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
    browser tools (Jira/Figma/Playwright) are optional and degrade gracefully.
 6. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`

@@ -36,6 +36,7 @@ const FROZEN_PATH_PATTERNS = [
 // Protected only while a run is active: rewriting any of these mid-run disarms the gates.
 const CONTROL_PLANE_PATTERNS = [
   /(^|\/)\.agents\/ticket-loop\.config\.json$/,
+  /(^|\/)\.agents\/ticket-loop\.trust$/,
   /(^|\/)\.claude\/hooks\/state\//,
   /(^|\/)\.claude\/settings(\.local)?\.json$/,
   /(^|\/)hooks\/(freeze_guard|stop_gate|dispatch_guard|hook_lib|guard_policy)\.js$/,

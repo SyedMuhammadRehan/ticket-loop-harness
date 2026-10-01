@@ -91,6 +91,7 @@ plugins/ticket-loop/
       doctor.js                      # read-only health check: profile, gitignore, stale hook copies, open runs, worktrees
       attest.js                      # Ed25519 signing key and signatures for run attestations (Node crypto)
       verify_bundle.js               # self-contained: checks a signed run bundle with no secret and no harness
+      ci_check.js                    # the merge check CI runs on a pull request (see docs/ci.md)
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -412,6 +413,15 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   dependency on the harness; it checks the signature, recomputes the digest, walks the links and
   compares the verdict, and with `--trust <keyId>` requires a key you named. Export refuses an
   open run and a chain that does not verify, so nothing broken is ever signed.
+- **A branch merges only on CI's own check** — `ci_check.js` runs in CI on a pull request and
+  passes only when the branch carries a bundle signed by a key listed in the base branch's
+  `.agents/ticket-loop.trust`, attesting the pull request's exact head (one later commit adding
+  the bundle is allowed, nothing else), for a run whose verdict passed and whose integrity was
+  intact, and when the base branch's `verify.analyze` and `verify.test` pass again when CI runs
+  them. Trust and commands are read from the base, so a pull request cannot trust its own key or
+  swap its test command. With `TICKET_LOOP_SIGNING_KEY` in CI it countersigns what it ran. Make
+  it a required status check and nothing merges around it; [docs/ci.md](docs/ci.md) has the
+  GitHub, GitLab and Bitbucket jobs.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing
@@ -521,7 +531,11 @@ Named limits, so they are not mistaken for guarantees:
 - **A signature proves the record, not the machine.** The signing key lives where the loop runs,
   so an agent with shell access there could sign a fabricated chain. A verified bundle shows the
   records were not changed after export and names the key that signed them; it does not show
-  that the signing machine behaved. The stronger form, a key only CI holds, is the next step.
+  that the signing machine behaved. `ci_check.js` narrows this: CI reruns the tests and
+  countersigns with a key the developer's machine never held. What it cannot rerun is the QA
+  judgement itself, so the verdict in a bundle is still the signing machine's word.
+- **The merge check binds only if the platform requires it.** Branch protection that makes the
+  check a required status is set in GitHub, GitLab or Bitbucket, not by this harness.
 
 - **The write policy denies on the path as *written*.** A command that never spells a protected
   path is not evaluated at all, so string concatenation, a glob, or a variable reaches files a
