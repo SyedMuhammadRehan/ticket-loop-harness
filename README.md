@@ -65,6 +65,7 @@ plugins/ticket-loop/
     hygiene.js                       #   what the stop gate reads in the ADDED lines: debug artefacts, secrets
     read_hint.js                     #   PreToolUse(Read|Grep): a long file's outline as context, run-active only
     subagent_return.js               #   SubagentStop: marks a dispatch as returned, so a stall and a forgotten outcome differ
+    session_start.js                 #   SessionStart: names an open run or a stale pre-plugin hook copy, silent otherwise
   agents/
     ticket-loop-qa.md                # the adversarial QA judge — granted no Write or Edit, pinned at high effort
   skills/qa-check/
@@ -85,6 +86,9 @@ plugins/ticket-loop/
       worktree_deps.js               # reuse the main repo's dependencies when the lockfile is identical
       outline.js                     # declarations with line numbers, stamped with HEAD, for range reads
       survey.js                      # codebase-map.md as the outline of the named paths, stamped with HEAD
+      importers.js                   # which files import the changed files (JS/TS, Dart, Python, Go), for QA scope
+      init.js                        # writes a starter profile detected from the repo; never overwrites one
+      doctor.js                      # read-only health check: profile, gitignore, stale hook copies, open runs, worktrees
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -386,6 +390,17 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   freeze-guard denial say whose run is arming the gate, how long it has been idle, and the two
   ways to end it: `/ticket-loop <TICKET>` to resume, `ledger.js archive` to end it. Past
   `staleRunHours` it is called ABANDONED. Nothing is relaxed for that session; it is told why.
+- **A focused QA read is handed its consumers** — `qascope` lists, per changed file, the files
+  that import it (`importers.js`: JS/TS, Dart package and relative imports, Python, Go) and
+  seals that list with the scope. Specifiers are matched against the changed set, not the disk,
+  so the importers of a deleted file are found too. The list bounds the read, never the verdict.
+- **Setup and drift are checked, not remembered** — `init.js` writes a starter profile from the
+  repo's own manifests, default branch and remote, gitignores run state, and lists what it could
+  not guess; it never overwrites a profile or runs mid-run. `doctor.js` reports, without
+  changing anything, a missing or invalid profile, run state that is not gitignored, pre-plugin
+  copies of these hooks still registered beside the plugin, open or abandoned runs, and ticket
+  worktrees with no run behind them. A `SessionStart` hook names the open runs and stale copies
+  when a session opens, so the first sign is a line of context, not a refusal.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing

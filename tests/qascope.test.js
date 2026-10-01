@@ -282,3 +282,23 @@ test('without a prior verdict a second qascope is never a DELTA', () => {
     rmDir(root);
   }
 });
+
+test('the scope names the files that import the changed files', () => {
+  const { root } = mkRepo(CONFIG);
+  try {
+    fs.writeFileSync(path.join(root, 'src', 'util.js'), 'module.exports = { x: 1 };\n');
+    fs.writeFileSync(path.join(root, 'src', 'user.js'), "const u = require('./util');\n");
+    fs.writeFileSync(path.join(root, 'src', 'bystander.js'), 'const y = 2;\n');
+    commitAll(root, 'base with importers');
+    git(root, 'tag', 'b0');
+    fs.appendFileSync(path.join(root, 'src', 'util.js'), 'module.exports.y = 2;\n');
+    commitAll(root, 'change util');
+    const res = ledger(root, ['qascope', '--base', 'b0']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    const out = JSON.parse(res.stdout);
+    assert.deepStrictEqual(out.consumerFiles, ['src/user.js'], JSON.stringify(out));
+    assert.deepStrictEqual(out.consumers['src/util.js'], ['src/user.js']);
+  } finally {
+    rmDir(root);
+  }
+});
