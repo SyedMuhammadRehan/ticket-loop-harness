@@ -51,8 +51,8 @@ goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and
    and the first line of the stack's `--version` output for the report. STOP and ask when:
    - `configFound` is false: show `node <SKILL_DIR>/scripts/init.js --dry-run`, and write it with
      `init.js` once the user agrees. `verify.test` null: ask for the command.
-   - `_meta.warnings` names `hooks.stopGate`: show the warning, ask the user to add the block
-     (`config.example.json` has one), and start again. Mid-run it cannot be fixed.
+   - `_meta.warnings` names `hooks.stopGate` or starts `POLICY`: show it, ask the user to fix the
+     profile (or the org policy's owner), and start again. Mid-run neither can be fixed.
    - `_meta.newerVersionInstalled` is set: say which version you are (`_meta.skillVersion`),
      which is installed, and that a NEW SESSION is the only fix. Do not proceed.
 2. If `memoryFile` is set: `node <SKILL_DIR>/scripts/memory.js read <memoryFile>`. Lessons

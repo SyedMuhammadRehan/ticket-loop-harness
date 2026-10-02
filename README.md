@@ -93,6 +93,7 @@ plugins/ticket-loop/
       verify_bundle.js               # self-contained: checks a signed run bundle with no secret and no harness
       ci_check.js                    # the merge check CI runs on a pull request (see docs/ci.md)
       handoff.js                     # a closed run's pull request description and the commands to open it; pushes nothing
+      policy.js                      # the org policy: a floor under every repo's profile
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -428,6 +429,14 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   signing key and how to verify it), reads the platform from the remote, and prints the commands
   to push and open it: `gh` on GitHub, `glab` on GitLab, a prefilled link on Bitbucket. It pushes
   nothing and opens nothing, and refuses a run that is not closed.
+- **An organisation sets a floor once** — an org policy at `~/.claude/ticket-loop/policy.json` (or
+  wherever `TICKET_LOOP_POLICY` points) governs every repo on the machine, and a profile can only
+  tighten it. `riskPaths` are added to every profile's and fenced by the hooks;
+  `qaScope.maxSmallDiffLines` caps the focused QA read; `requireMatchingTest` forces the stop
+  gate's rule on; `attribution.commitTrailer` forces a trailer; `allowedModels` limits each role's
+  models. A profile naming a model the policy does not allow stops preflight, a dispatch on one is
+  reported by `verify` (and so fails the merge check), an unreadable policy starts no run, and the
+  policy is sealed at init and frozen mid-run, so relaxing it partway shows as TAMPERED.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing
@@ -540,6 +549,8 @@ Named limits, so they are not mistaken for guarantees:
   that the signing machine behaved. `ci_check.js` narrows this: CI reruns the tests and
   countersigns with a key the developer's machine never held. What it cannot rerun is the QA
   judgement itself, so the verdict in a bundle is still the signing machine's word.
+- **The org policy reaches a machine only if it is put there.** The harness enforces the file it
+  finds; distributing it, and noticing a machine without it, is the organisation's tooling.
 - **The merge check binds only if the platform requires it.** Branch protection that makes the
   check a required status is set in GitHub, GitLab or Bitbucket, not by this harness.
 

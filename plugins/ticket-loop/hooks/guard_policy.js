@@ -37,6 +37,7 @@ const FROZEN_PATH_PATTERNS = [
 const CONTROL_PLANE_PATTERNS = [
   /(^|\/)\.agents\/ticket-loop\.config\.json$/,
   /(^|\/)\.agents\/ticket-loop\.trust$/,
+  /(^|\/)\.claude\/ticket-loop\/policy\.json$/,
   /(^|\/)\.claude\/hooks\/state\//,
   /(^|\/)\.claude\/settings(\.local)?\.json$/,
   /(^|\/)hooks\/(freeze_guard|stop_gate|dispatch_guard|hook_lib|guard_policy)\.js$/,

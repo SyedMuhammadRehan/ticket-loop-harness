@@ -9,6 +9,13 @@ const { spawnSync } = require('child_process');
 
 const CONFIG_REL_PATH = path.join('.agents', 'ticket-loop.config.json');
 const RUNS_REL = path.join('.agents', 'ticket-runs');
+// The org policy ships beside the skill in the plugin layout; a hand-copied hook set has no policy.
+let policyLib = null;
+try {
+  policyLib = require(path.join(__dirname, '..', 'skills', 'ticket-loop', 'scripts', 'policy.js'));
+} catch {
+  policyLib = null;
+}
 const LEDGER_REL = path.join('skills', 'ticket-loop', 'scripts', 'ledger.js');
 const MAX_ROOT_SEARCH_DEPTH = 8;
 const DEFAULT_TIMEOUT_MS = 120000;
@@ -34,7 +41,8 @@ function loadConfig(startDir) {
   const configPath = path.join(root, CONFIG_REL_PATH);
   if (!fs.existsSync(configPath)) return { found: false, root, config: {} };
   try {
-    return { found: true, root, config: JSON.parse(fs.readFileSync(configPath, 'utf8')) };
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    return { found: true, root, config: policyLib ? policyLib.applyPolicy(config, policyLib.readPolicy()).cfg : config };
   } catch (e) {
     return { found: false, root, config: {}, error: `config parse error: ${e.message}` };
   }

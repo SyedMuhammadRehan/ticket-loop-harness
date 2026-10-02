@@ -3,6 +3,7 @@
 // <repoRoot>/.agents/ticket-loop.config.json, merges over defaults, prints JSON (or --get key).
 'use strict';
 const fs = require('fs');
+const policy = require('./policy.js');
 const path = require('path');
 const { verifyTestWarnings } = require('./verify_falsifiable.js');
 
@@ -236,15 +237,20 @@ function resolve() {
         `the run will fail late in ways that look like harness bugs. STOP and start a new session.`
     );
   }
-  cfg._meta = {
+  const loadedPolicy = policy.readPolicy();
+  const governed = policy.applyPolicy(cfg, loadedPolicy);
+  for (const v of governed.violations) warnings.push(`POLICY: ${v}`);
+  const result = governed.cfg;
+  result._meta = {
     repoRoot: root,
     configPath,
     configFound: fs.existsSync(configPath),
     skillVersion: skew ? skew.running : null,
     newerVersionInstalled: skew ? skew.newest : null,
+    policy: loadedPolicy ? { path: loadedPolicy.path, sha256: loadedPolicy.sha256 || null, applied: governed.applied } : null,
     warnings,
   };
-  return cfg;
+  return result;
 }
 
 function main() {
