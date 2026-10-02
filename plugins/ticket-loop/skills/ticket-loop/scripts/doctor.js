@@ -44,7 +44,7 @@ function profileFindings(root, add) {
     return cfg;
   }
   if (!cfg.verify || !cfg.verify.test) add('problem', 'the profile has no verify.test', 'set the command that runs this repo\'s tests');
-  for (const w of cfg._meta.warnings || []) add(/STALE SKILL|invalid|stopGate/i.test(w) ? 'problem' : 'note', w, null);
+  for (const w of cfg._meta.warnings || []) add(/STALE SKILL|invalid|stopGate|^POLICY/i.test(w) ? 'problem' : 'note', w, null);
   return cfg;
 }
 

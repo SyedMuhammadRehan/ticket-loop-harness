@@ -26,6 +26,8 @@ function rmDir(dir) {
 function runScript(scriptPath, args = [], opts = {}) {
   const env = { ...process.env, ...(opts.env || {}) };
   if (!opts.env || !('CLAUDE_PLUGIN_ROOT' in opts.env)) delete env.CLAUDE_PLUGIN_ROOT;
+  // An org policy on the machine running the suite would change what every case resolves to.
+  if (!opts.env || !('TICKET_LOOP_POLICY' in opts.env)) env.TICKET_LOOP_POLICY = path.join(os.tmpdir(), 'ticket-loop-no-policy.json');
   return spawnSync(process.execPath, [scriptPath, ...args], {
     encoding: 'utf8',
     cwd: opts.cwd,

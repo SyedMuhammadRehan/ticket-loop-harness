@@ -118,9 +118,13 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
    In CI, point `TICKET_LOOP_SIGNING_KEY` at a key the CI holds instead.
    To gate merges on it, list the trusted key ids in `.agents/ticket-loop.trust` on your default
    branch and add the merge check from [docs/ci.md](docs/ci.md) as a required status check.
-5. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
+5. **Optional: an org policy.** Put a policy JSON at `~/.claude/ticket-loop/policy.json` (or set
+   `TICKET_LOOP_POLICY`) to set a floor every repo's profile must meet: extra `riskPaths`,
+   `allowedModels` per role, `qaScope.maxSmallDiffLines`, `requireMatchingTest`,
+   `attribution.commitTrailer`. `doctor.js` reports a profile that breaks it.
+6. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
    browser tools (Jira/Figma/Playwright) are optional and degrade gracefully.
-6. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
+7. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
    block. It is not part of the harness and nothing here depends on it. It exists because the
    guard hooks refuse destructive and publishing commands **only while a ticket run is
    active** — outside one this is just your repo, and the harness deliberately gets out of the

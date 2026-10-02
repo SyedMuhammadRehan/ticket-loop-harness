@@ -65,6 +65,10 @@ review were interactions between two rows below, which the code alone did not ma
 | 93 | The trust list is frozen mid-run | `guard_policy.js` → `CONTROL_PLANE_PATTERNS` | `guard_policy.test.js` :: `the control plane is protected mid-run and writable when idle` | An agent that can trust its own key mid-run signs for itself |
 | 94 | A closed run is handed off as a ready pull request and nothing is pushed | `handoff.js` → `handoff` | `handoff.test.js` :: `a closed run becomes a pull request description from its report and attestation, and nothing is pushed` | Publishing is the human's decision; the handoff removes the typing, not the decision |
 | 95 | The handoff speaks the platform the remote is on | `handoff.js` → `commands` | `handoff.test.js` :: `the commands match the platform the remote is on` | A team on Bitbucket was handed GitHub's commands |
+| 96 | An org policy is a floor no profile can lower | `policy.js` → `applyPolicy` | `policy.test.js` :: `the org floor is applied to the profile and a disallowed model stops preflight` | A policy each repo can opt out of is a suggestion |
+| 97 | A risk path only the org names is fenced by the hooks | `hook_lib.js` → `loadConfig` | `policy.test.js` :: `a risk path only the org policy names is fenced by the hooks during a run` | Preflight applying the floor while the guard reads the bare profile would fence nothing |
+| 98 | A dispatch on a model the org does not allow is reported | `ledger.js` → `modelProblems` | `policy.test.js` :: `a dispatch on a model the org policy does not allow is reported by verify` | The integrity check is what the merge check reads, so the violation reaches CI |
+| 99 | The policy is sealed at init and an unreadable one starts no run | `ledger.js` → `cmdInit` | `policy.test.js` :: `the policy is sealed when a run starts, so relaxing it mid-run is TAMPERED` | A floor relaxed mid-run governed nothing |
 
 ## Stage receipts
 

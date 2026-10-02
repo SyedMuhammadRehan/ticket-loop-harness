@@ -172,6 +172,7 @@ test('the control plane is protected mid-run and writable when idle', () => {
   for (const p of [
     '.agents/ticket-loop.config.json',
     '.agents/ticket-loop.trust',
+    'C:/Users/me/.claude/ticket-loop/policy.json',
     '.claude/hooks/state/stop-state.json',
     '.claude/settings.json',
     '.claude/settings.local.json',

@@ -34,6 +34,7 @@ const { spawnSync } = require('child_process');
 const chain = require('./chain.js');
 const { importersOf } = require('./importers.js');
 const attest = require('./attest.js');
+const policy = require('./policy.js');
 const { digestOf, FORMAT: ATTESTATION_FORMAT } = require('./verify_bundle.js');
 
 // Bumped when the contract between the hooks and this script changes (chain-backed counters,
@@ -318,6 +319,13 @@ function cmdInit(runDir, baseSha, opts) {
   // TAMPERED in `ledger.js verify` instead of passing as "verified".
   const configRel = path.join('.agents', 'ticket-loop.config.json');
   const configSealed = fs.existsSync(configRel) ? chain.hashEvidence([configRel]) : [];
+  // The org policy governs the profile, so it is sealed beside it.
+  const orgPolicy = policy.readPolicy();
+  if (orgPolicy && orgPolicy.error) {
+    console.error(`ledger init: ${orgPolicy.error} — fix or remove it before a run starts under it.`);
+    process.exit(1);
+  }
+  if (orgPolicy) configSealed.push(...chain.hashEvidence([orgPolicy.path]));
 
   const { inGit } = chain.resolveChainDir(runDir);
   chain.append(runDir, 'init', {
@@ -670,10 +678,19 @@ function sameModel(a, b) {
 // skipped here: their independence is already reported on its own.
 function modelProblems(runDir) {
   const models = readConfig().models || {};
+  const loaded = policy.readPolicy();
+  const org = loaded && !loaded.error ? loaded.policy : null;
   const out = [];
   for (const d of dispatchPairs(runDir)) {
     if (d.model === undefined) continue;
     const role = roleOf(d.label);
+    if (org && !policy.modelAllowed(org, role, d.model)) {
+      out.push(
+        `dispatch seq ${d.seqs[0]} (${role}) ran on ${d.model || 'the session model'} but the org policy allows only ` +
+          `${policy.allowedFor(org, role).join(', ')} for ${role}`
+      );
+      continue;
+    }
     if (!Object.prototype.hasOwnProperty.call(models, role)) continue;
     const expected = String(models[role] || '').trim().toLowerCase() || 'inherit';
     const actual = d.model ? String(d.model).toLowerCase() : null;
@@ -1175,11 +1192,13 @@ function cmdQaScope(runDir, worktree, baseRef) {
 }
 
 function readConfig() {
+  let raw = {};
   try {
-    return JSON.parse(fs.readFileSync(path.join('.agents', 'ticket-loop.config.json'), 'utf8'));
+    raw = JSON.parse(fs.readFileSync(path.join('.agents', 'ticket-loop.config.json'), 'utf8'));
   } catch {
-    return {};
+    raw = {};
   }
+  return policy.applyPolicy(raw, policy.readPolicy()).cfg;
 }
 
 function riskPathsFromConfig() {
