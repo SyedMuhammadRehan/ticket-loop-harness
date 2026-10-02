@@ -4,6 +4,7 @@
 'use strict';
 const fs = require('fs');
 const policy = require('./policy.js');
+const notify = require('./notify.js');
 const path = require('path');
 const { verifyTestWarnings } = require('./verify_falsifiable.js');
 
@@ -159,6 +160,14 @@ function deepMerge(base, over) {
   return out;
 }
 
+// Which channels can reach the person, never their tokens.
+function notifyStatus() {
+  const cfg = notify.readConfig();
+  if (!cfg) return { configured: false, channels: [], canReply: false };
+  const types = (cfg.channels || []).map((c) => c && c.type);
+  return { configured: !cfg.error, error: cfg.error || null, channels: types, canReply: types.some((t) => t === 'telegram' || t === 'ntfy') };
+}
+
 function resolve() {
   const root = findRepoRoot(process.cwd());
   const configPath = path.join(root, '.agents', 'ticket-loop.config.json');
@@ -248,6 +257,7 @@ function resolve() {
     skillVersion: skew ? skew.running : null,
     newerVersionInstalled: skew ? skew.newest : null,
     policy: loadedPolicy ? { path: loadedPolicy.path, sha256: loadedPolicy.sha256 || null, applied: governed.applied } : null,
+    notify: notifyStatus(),
     warnings,
   };
   return result;

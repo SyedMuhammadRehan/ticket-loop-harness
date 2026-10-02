@@ -25,6 +25,7 @@
 //   ledger.js returned <runDir>                    the subagent tool returned (SubagentStop hook)
 //   ledger.js verify <runDir>                      chain integrity + tamper report
 //   ledger.js keygen                               create this machine's Ed25519 signing key
+//   ledger.js approval <runDir> --question .. --choice n ..   a person's answer from a notify channel
 //   ledger.js export <runDir> --out <file>         signed bundle of a closed run, for verify_bundle.js
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
@@ -990,7 +991,31 @@ function cmdArchive(runDir) {
 // chain, so the report shows exactly what was cleared and why. The orchestrator is told never
 // to run this without asking a human; that part is not mechanical, and the receipt is what
 // makes skipping it visible afterwards.
-function cmdClear(runDir, glob, reason) {
+// A person's answer, as notify.js received it: the question, the option chosen, the channel and
+// sender it came from, and the one-time code it carried. `forgeable` marks a channel the agent
+// itself could have posted on; such an answer is recorded but cannot back a clearance.
+function cmdApproval(runDir, a) {
+  requireChain(runDir);
+  requireOpen(runDir, 'approval');
+  const choice = Number(a.choice);
+  const missing = ['question', 'channel', 'sender', 'nonce'].filter((k) => !a[k] || !String(a[k]).trim());
+  if (missing.length || !Number.isInteger(choice) || choice < 1) {
+    console.error(`ledger approval: need --question, --choice <n>, --channel, --sender and --nonce${missing.length ? ` (missing ${missing.join(', ')})` : ''}`);
+    process.exit(1);
+  }
+  chain.append(runDir, 'approval', {
+    question: a.question,
+    choice,
+    choiceText: a.choiceText || null,
+    channel: a.channel,
+    sender: a.sender,
+    nonce: a.nonce,
+    forgeable: !!a.forgeable,
+  });
+  console.log(`ledger: approval recorded (seq ${chain.last(runDir, 'approval').seq}) — choice ${choice} from ${a.channel}`);
+}
+
+function cmdClear(runDir, glob, reason, approvalSeq) {
   requireChain(runDir);
   requireOpen(runDir, 'clear');
   if (!glob) {
@@ -1013,7 +1038,23 @@ function cmdClear(runDir, glob, reason) {
     console.error('ledger clear: need a reason — what did the human approve, and why is it safe?');
     process.exit(1);
   }
-  chain.append(runDir, 'clearance', { glob, reason: reason.trim() });
+  let approval = null;
+  if (approvalSeq !== undefined) {
+    approval = chain.ofKind(runDir, 'approval').find((r) => r.seq === Number(approvalSeq));
+    if (!approval) {
+      console.error(`ledger clear: seq ${approvalSeq} is not a recorded approval`);
+      process.exit(1);
+    }
+    if (approval.payload.forgeable) {
+      console.error(`ledger clear: the approval at seq ${approvalSeq} came on ${approval.payload.channel}, which the agent itself could have posted on; it cannot back a clearance`);
+      process.exit(1);
+    }
+    if (!String(approval.payload.question).includes(glob)) {
+      console.error(`ledger clear: the approval at seq ${approvalSeq} asked "${approval.payload.question}", which does not name ${glob}`);
+      process.exit(1);
+    }
+  }
+  chain.append(runDir, 'clearance', { glob, reason: reason.trim(), ...(approval ? { approvalSeq: approval.seq, approvedVia: approval.payload.channel } : {}) });
   mirrorClearances(runDir);
   console.log(`ledger: cleared "${glob}" — recorded in the chain and mirrored for the hooks`);
 }
@@ -1580,6 +1621,18 @@ function main() {
   const agentType = takeFlag(argv, '--type')[0];
   const messageChars = takeFlag(argv, '--message-chars')[0];
   const session = takeFlag(argv, '--session')[0];
+  const forgeable = argv.includes('--forgeable');
+  if (forgeable) argv.splice(argv.indexOf('--forgeable'), 1);
+  const approvalArgs = {
+    question: takeFlag(argv, '--question')[0],
+    choice: takeFlag(argv, '--choice')[0],
+    choiceText: takeFlag(argv, '--choice-text')[0],
+    channel: takeFlag(argv, '--channel')[0],
+    sender: takeFlag(argv, '--sender')[0],
+    nonce: takeFlag(argv, '--nonce')[0],
+    forgeable,
+  };
+  const approvalSeq = takeFlag(argv, '--approval')[0];
   const model = takeFlag(argv, '--model')[0];
   const outFile = takeFlag(argv, '--out')[0];
   const sliceFiles = takeFlag(argv, '--files');
@@ -1602,6 +1655,7 @@ function main() {
         '       ledger.js verdict <runDir> <verdict> [--inputs <file>]...\n' +
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
         '       ledger.js keygen | export <runDir> --out <file> [--worktree <path>]\n' +
+        '       ledger.js approval <runDir> --question <q> --choice <n> --channel <c> --sender <s> --nonce <x> [--forgeable]\n' +
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
         '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
@@ -1638,7 +1692,9 @@ function main() {
     case 'qascope':
       return cmdQaScope(runDir, worktree, baseRef);
     case 'clear':
-      return cmdClear(runDir, rest[0], rest.slice(1).join(' '));
+      return cmdClear(runDir, rest[0], rest.slice(1).join(' '), approvalSeq);
+    case 'approval':
+      return cmdApproval(runDir, approvalArgs);
     case 'revise':
       return cmdRevise(runDir, rest[0], revisionReason);
     case 'outcome':

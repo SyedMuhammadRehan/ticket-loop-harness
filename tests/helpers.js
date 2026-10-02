@@ -28,6 +28,8 @@ function runScript(scriptPath, args = [], opts = {}) {
   if (!opts.env || !('CLAUDE_PLUGIN_ROOT' in opts.env)) delete env.CLAUDE_PLUGIN_ROOT;
   // An org policy on the machine running the suite would change what every case resolves to.
   if (!opts.env || !('TICKET_LOOP_POLICY' in opts.env)) env.TICKET_LOOP_POLICY = path.join(os.tmpdir(), 'ticket-loop-no-policy.json');
+  // Nor may a notify config on that machine send real messages from the suite.
+  if (!opts.env || !('TICKET_LOOP_NOTIFY' in opts.env)) env.TICKET_LOOP_NOTIFY = path.join(os.tmpdir(), 'ticket-loop-no-notify.json');
   return spawnSync(process.execPath, [scriptPath, ...args], {
     encoding: 'utf8',
     cwd: opts.cwd,

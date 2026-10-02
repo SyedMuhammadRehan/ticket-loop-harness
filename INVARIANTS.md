@@ -69,6 +69,11 @@ review were interactions between two rows below, which the code alone did not ma
 | 97 | A risk path only the org names is fenced by the hooks | `hook_lib.js` → `loadConfig` | `policy.test.js` :: `a risk path only the org policy names is fenced by the hooks during a run` | Preflight applying the floor while the guard reads the bare profile would fence nothing |
 | 98 | A dispatch on a model the org does not allow is reported | `ledger.js` → `modelProblems` | `policy.test.js` :: `a dispatch on a model the org policy does not allow is reported by verify` | The integrity check is what the merge check reads, so the violation reaches CI |
 | 99 | The policy is sealed at init and an unreadable one starts no run | `ledger.js` → `cmdInit` | `policy.test.js` :: `the policy is sealed when a run starts, so relaxing it mid-run is TAMPERED` | A floor relaxed mid-run governed nothing |
+| 100 | A message reaches every configured channel and one failure silences none | `notify.js` → `send` | `notify.test.js` :: `a message reaches every channel, each in its own shape, and one failure silences none` | Where one service is blocked, the person must still be reachable on another |
+| 101 | An answer counts only with the question's code, from the configured chat, before the deadline | `notify.js` → `parseAnswer` | `notify.test.js` :: `an answer counts only with the code of its question and from the configured chat` | A stale or unrelated message is not consent |
+| 102 | Silence is never a yes | `notify.js` → `ask` | `notify.test.js` :: `no answer before the deadline is no answer, never a yes` | A run that proceeds on a timeout acts on an answer nobody gave |
+| 103 | Only an answer the agent could not have forged backs a clearance, and only for the glob it named | `ledger.js` → `cmdApproval` | `notify.test.js` :: `an answer is sealed into the run, and only an unforgeable one naming the glob backs a clearance` | An ntfy topic accepts posts from anyone who knows it, the agent included |
+| 104 | A session that stalls mid-run tells the person on its own | `notify_hook.js` → `messageFor` | `notify.test.js` :: `a session that stalls on a permission prompt mid-run messages the person, once, and never outside a run` | The person away from the laptop otherwise assumes the work is finishing |
 
 ## Stage receipts
 
@@ -168,7 +173,8 @@ review were interactions between two rows below, which the code alone did not ma
 These have no row above because no code enforces them. They live in README's "Yours to
 uphold" and must stay there rather than migrating into this table:
 
-- whether a human was really asked before a clearance was recorded
+- whether a human was really asked before a clearance was recorded, unless the clearance carries
+  an `--approval` from an unforgeable notify channel (row 103)
 - GATE B (a design that contradicts the ticket)
 - whether a revision reason is true
 - whether a `died` dispatch outcome was reported at all

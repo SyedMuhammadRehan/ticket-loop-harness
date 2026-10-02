@@ -122,9 +122,14 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
    `TICKET_LOOP_POLICY`) to set a floor every repo's profile must meet: extra `riskPaths`,
    `allowedModels` per role, `qaScope.maxSmallDiffLines`, `requireMatchingTest`,
    `attribution.commitTrailer`. `doctor.js` reports a profile that breaks it.
-6. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
+6. **Optional, and recommended if you walk away from runs: notifications.** Put your channels in
+   `~/.claude/ticket-loop/notify.json` (the format is at the top of `scripts/notify.js`): any of
+   ntfy, Telegram, WhatsApp, Slack, Discord or a webhook, as many as you like, so one blocked
+   where you are still leaves the others. Add Telegram or ntfy to answer from your phone. Then
+   `node <SKILL_DIR>/scripts/notify.js test`. Claude Code's own Remote Control works alongside.
+7. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
    browser tools (Jira/Figma/Playwright) are optional and degrade gracefully.
-7. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
+8. **Optional: the deny list.** `settings.example.json` also carries a `permissions.deny`
    block. It is not part of the harness and nothing here depends on it. It exists because the
    guard hooks refuse destructive and publishing commands **only while a ticket run is
    active** — outside one this is just your repo, and the harness deliberately gets out of the

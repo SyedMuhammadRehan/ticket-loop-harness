@@ -66,6 +66,7 @@ plugins/ticket-loop/
     read_hint.js                     #   PreToolUse(Read|Grep): a long file's outline as context, run-active only
     subagent_return.js               #   SubagentStop: marks a dispatch as returned, so a stall and a forgotten outcome differ
     session_start.js                 #   SessionStart: names an open run or a stale pre-plugin hook copy, silent otherwise
+    notify_hook.js                   #   Notification + Stop: messages the person when a run stalls, silent outside a run
   agents/
     ticket-loop-qa.md                # the adversarial QA judge — granted no Write or Edit, pinned at high effort
   skills/qa-check/
@@ -94,6 +95,7 @@ plugins/ticket-loop/
       ci_check.js                    # the merge check CI runs on a pull request (see docs/ci.md)
       handoff.js                     # a closed run's pull request description and the commands to open it; pushes nothing
       policy.js                      # the org policy: a floor under every repo's profile
+      notify.js                      # reach the person on every channel they set up; ask, and seal the answer
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -437,6 +439,18 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   models. A profile naming a model the policy does not allow stops preflight, a dispatch on one is
   reported by `verify` (and so fails the merge check), an unreadable policy starts no run, and the
   policy is sealed at init and frozen mid-run, so relaxing it partway shows as TAMPERED.
+- **The person is reachable wherever they are** — channels live in a user-level
+  `~/.claude/ticket-loop/notify.json` (or `TICKET_LOOP_NOTIFY`), never in the repo: ntfy (which can
+  also forward to email), Telegram, WhatsApp, Slack, Discord, and a plain webhook for Teams,
+  Google Chat or Mattermost. Every message goes to every channel, so one blocked in a country or
+  failing on the day silences none. While a run is open, `notify_hook.js` messages the person when
+  the session waits on a permission prompt or a question, or stops mid-run, once per quiet spell.
+  `notify.js ask` sends a numbered question with a one-time code and reads the answer back on
+  Telegram or ntfy, the two that need no server; an answer counts only with that code, from the
+  configured chat, before the deadline, and no answer is never a yes. With `--run` the answer is
+  sealed as an `approval`, and `ledger.js clear --approval <seq>` accepts it only when it came on
+  a channel the agent could not post on itself and named the glob being cleared. `notify.js test`
+  checks every channel; `doctor.js` warns when nothing can reach you.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing
@@ -549,6 +563,10 @@ Named limits, so they are not mistaken for guarantees:
   that the signing machine behaved. `ci_check.js` narrows this: CI reruns the tests and
   countersigns with a key the developer's machine never held. What it cannot rerun is the QA
   judgement itself, so the verdict in a bundle is still the signing machine's word.
+- **A reply channel is only as private as its secret.** Anyone holding the Telegram chat, or
+  knowing the ntfy topic, can answer. Telegram answers can back a clearance because the agent
+  cannot post as you there; ntfy answers never can. WhatsApp, Slack, Discord and webhooks only
+  send: receiving on them needs a server this plugin does not run.
 - **The org policy reaches a machine only if it is put there.** The harness enforces the file it
   finds; distributing it, and noticing a machine without it, is the organisation's tooling.
 - **The merge check binds only if the platform requires it.** Branch protection that makes the

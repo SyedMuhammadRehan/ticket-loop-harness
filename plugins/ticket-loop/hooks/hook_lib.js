@@ -171,7 +171,7 @@ function describeOpenDispatch(o) {
 // plugin, so every edit and every stop runs both.
 const HARNESS_HOOK_FILES = [
   'stop_gate.js', 'freeze_guard.js', 'dispatch_guard.js', 'post_edit.js', 'dart_post_edit.js',
-  'read_hint.js', 'subagent_return.js', 'session_start.js', 'guard_policy.js', 'hook_lib.js', 'hygiene.js',
+  'read_hint.js', 'subagent_return.js', 'session_start.js', 'notify_hook.js', 'guard_policy.js', 'hook_lib.js', 'hygiene.js',
 ];
 
 function settingsHookCommands(file) {
