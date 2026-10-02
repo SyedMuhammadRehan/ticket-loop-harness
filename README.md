@@ -92,6 +92,7 @@ plugins/ticket-loop/
       attest.js                      # Ed25519 signing key and signatures for run attestations (Node crypto)
       verify_bundle.js               # self-contained: checks a signed run bundle with no secret and no harness
       ci_check.js                    # the merge check CI runs on a pull request (see docs/ci.md)
+      handoff.js                     # a closed run's pull request description and the commands to open it; pushes nothing
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -422,6 +423,11 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   swap its test command. With `TICKET_LOOP_SIGNING_KEY` in CI it countersigns what it ran. Make
   it a required status check and nothing merges around it; [docs/ci.md](docs/ci.md) has the
   GitHub, GitLab and Bitbucket jobs.
+- **A finished branch is handed off, not published** — `handoff.js` writes a closed run's pull
+  request description from its report and attestation (verdict, integrity, attested head, the
+  signing key and how to verify it), reads the platform from the remote, and prints the commands
+  to push and open it: `gh` on GitHub, `glab` on GitLab, a prefilled link on Bitbucket. It pushes
+  nothing and opens nothing, and refuses a run that is not closed.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing
