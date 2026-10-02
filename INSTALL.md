@@ -125,7 +125,9 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
 6. **Optional, and recommended if you walk away from runs: notifications.** Put your channels in
    `~/.claude/ticket-loop/notify.json` (the format is at the top of `scripts/notify.js`): any of
    ntfy, Telegram, WhatsApp, Slack, Discord or a webhook, as many as you like, so one blocked
-   where you are still leaves the others. Add Telegram or ntfy to answer from your phone. Then
+   where you are still leaves the others. To answer from your phone, add ntfy, or a Telegram,
+   Slack or Discord bot with your own `userId` (only that user's answers can clear a risk path;
+   where Telegram is blocked, Slack or Discord does the same job). Then
    `node <SKILL_DIR>/scripts/notify.js test`. Claude Code's own Remote Control works alongside.
 7. **Requirements:** Claude Code, Node ≥ 18, your stack's toolchain on PATH. Ticket/design/
    browser tools (Jira/Figma/Playwright) are optional and degrade gracefully.

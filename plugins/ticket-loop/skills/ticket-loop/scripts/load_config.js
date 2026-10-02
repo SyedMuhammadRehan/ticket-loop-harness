@@ -165,7 +165,8 @@ function notifyStatus() {
   const cfg = notify.readConfig();
   if (!cfg) return { configured: false, channels: [], canReply: false };
   const types = (cfg.channels || []).map((c) => c && c.type);
-  return { configured: !cfg.error, error: cfg.error || null, channels: types, canReply: types.some((t) => t === 'telegram' || t === 'ntfy') };
+  const replies = (cfg.channels || []).some((c) => c && (c.type === 'telegram' || c.type === 'ntfy' || ((c.type === 'slack' || c.type === 'discord') && c.botToken)));
+  return { configured: !cfg.error, error: cfg.error || null, channels: types, canReply: replies };
 }
 
 function resolve() {

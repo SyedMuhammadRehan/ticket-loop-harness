@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Reach the person who started the run, wherever they are, on whatever their country lets
 // through. Every message goes to every channel they configured, so one blocked or failing
-// channel never leaves them unreachable. Replies come back on the channels that need no server
-// of their own: Telegram and ntfy.
+// channel never leaves them unreachable. Replies come back on the channels our code can poll
+// without a server of its own: Telegram, Slack and Discord bots, and ntfy.
 //
 // Channels live in a user-level file, never in the repo, because they hold tokens:
 // ~/.claude/ticket-loop/notify.json, or wherever TICKET_LOOP_NOTIFY points.
@@ -11,8 +11,10 @@
 //       { "type": "ntfy", "topic": "my-secret-topic", "server": "https://ntfy.sh", "email": "me@x.com" },
 //       { "type": "telegram", "token": "<bot token>", "chatId": "<your chat id>" },
 //       { "type": "whatsapp", "token": "<cloud api token>", "phoneNumberId": "<id>", "to": "<your number>" },
-//       { "type": "slack", "webhookUrl": "https://hooks.slack.com/..." },
-//       { "type": "discord", "webhookUrl": "https://discord.com/api/webhooks/..." },
+//       { "type": "slack", "webhookUrl": "https://hooks.slack.com/..." },              // send only
+//       { "type": "slack", "botToken": "xoxb-...", "channel": "C0123", "userId": "U0456" },
+//       { "type": "discord", "webhookUrl": "https://discord.com/api/webhooks/..." },   // send only
+//       { "type": "discord", "botToken": "...", "channelId": "123", "userId": "456" },
 //       { "type": "webhook", "url": "https://...", "headers": { } }      // Teams, Google Chat, Mattermost
 //   ] }
 //
@@ -31,11 +33,15 @@ const SEND_TIMEOUT_MS = 8000;
 const POLL_INTERVAL_MS = 5000;
 const DEFAULT_ASK_MINUTES = 30;
 const MAX_TEXT = 3500;
-const REPLY_CAPABLE = ['telegram', 'ntfy'];
-// A reply on these cannot have been written by the agent itself: it holds the bot token, but a
-// bot cannot post as the person it talks to. An ntfy topic accepts posts from anyone who knows
-// it, the agent included, so an ntfy answer is a notification reply, never a sealed approval.
-const UNFORGEABLE = ['telegram'];
+// A reply on a bot channel cannot have been written by the agent itself: it holds the bot token,
+// but a bot cannot post as the person it talks to, and its own messages are marked as a bot's.
+// An ntfy topic accepts posts from anyone who knows it, the agent included, so an ntfy answer is
+// a notification reply, never a sealed approval.
+const UNFORGEABLE = ['telegram', 'slack', 'discord'];
+
+function canReply(c) {
+  return c.type === 'telegram' || c.type === 'ntfy' || ((c.type === 'slack' || c.type === 'discord') && !!c.botToken);
+}
 
 function configPath() {
   return process.env[ENV_NOTIFY] || path.join(os.homedir(), '.claude', 'ticket-loop', 'notify.json');
@@ -60,7 +66,14 @@ function readConfig() {
   const channels = Array.isArray(parsed.channels) ? parsed.channels : [];
   if (!channels.length) problems.push('no channels listed');
   channels.forEach((c, i) => {
-    const need = { ntfy: ['topic'], telegram: ['token', 'chatId'], whatsapp: ['token', 'phoneNumberId', 'to'], slack: ['webhookUrl'], discord: ['webhookUrl'], webhook: ['url'] }[c && c.type];
+    const need = {
+      ntfy: ['topic'],
+      telegram: ['token', 'chatId'],
+      whatsapp: ['token', 'phoneNumberId', 'to'],
+      slack: c && c.botToken ? ['botToken', 'channel'] : ['webhookUrl'],
+      discord: c && c.botToken ? ['botToken', 'channelId'] : ['webhookUrl'],
+      webhook: ['url'],
+    }[c && c.type];
     if (!need) problems.push(`channel ${i + 1}: unknown type "${c && c.type}"`);
     else for (const k of need) if (!c[k]) problems.push(`channel ${i + 1} (${c.type}): ${k} is missing`);
   });
@@ -77,6 +90,9 @@ async function post(url, body, headers = {}) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res;
 }
+
+const slackBase = (c) => (c.apiBase || 'https://slack.com/api').replace(/\/+$/, '');
+const discordBase = (c) => (c.apiBase || 'https://discord.com/api/v10').replace(/\/+$/, '');
 
 function ntfyBase(c) {
   return (c.server || 'https://ntfy.sh').replace(/\/+$/, '');
@@ -108,10 +124,18 @@ async function sendOne(c, text, ask) {
           : { messaging_product: 'whatsapp', to: c.to, type: 'text', text: { body: clipped } },
         { authorization: `Bearer ${c.token}` }
       );
-    case 'slack':
-      return post(c.webhookUrl, { text: clipped });
-    case 'discord':
-      return post(c.webhookUrl, { content: clipped.slice(0, 1900) });
+    case 'slack': {
+      if (!c.botToken) return post(c.webhookUrl, { text: clipped });
+      // Slack reports a refused post as HTTP 200 with ok:false.
+      const body = await (await post(`${slackBase(c)}/chat.postMessage`, { channel: c.channel, text: clipped }, { authorization: `Bearer ${c.botToken}` })).json();
+      if (!body.ok) throw new Error(`slack: ${body.error || 'not ok'}`);
+      return { ts: body.ts };
+    }
+    case 'discord': {
+      if (!c.botToken) return post(c.webhookUrl, { content: clipped.slice(0, 1900) });
+      const body = await (await post(`${discordBase(c)}/channels/${c.channelId}/messages`, { content: clipped.slice(0, 1900) }, { authorization: `Bot ${c.botToken}` })).json();
+      return { id: body.id };
+    }
     case 'webhook':
       return post(c.url, { text: clipped }, c.headers || {});
     default:
@@ -127,8 +151,8 @@ async function send(text, opts = {}) {
   const results = await Promise.all(
     cfg.channels.map(async (c) => {
       try {
-        await sendOne(c, text, opts.ask);
-        return { type: c.type, ok: true };
+        const sent = await sendOne(c, text, opts.ask);
+        return { type: c.type, ok: true, meta: sent && (sent.ts || sent.id) ? sent : null };
       } catch (err) {
         return { type: c.type, ok: false, error: err.message };
       }
@@ -137,8 +161,8 @@ async function send(text, opts = {}) {
   return { sent: results.filter((r) => r.ok).length, results };
 }
 
-async function getJson(url) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+async function getJson(url, headers = {}) {
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }
@@ -164,6 +188,41 @@ async function pollTelegram(c, state, nonce, count) {
   return null;
 }
 
+// A person's message, never a bot's: Slack marks a bot's with bot_id or a subtype. With userId
+// set, only that person counts; without it, an answer is accepted but cannot be sealed.
+async function pollSlack(c, meta, nonce, count) {
+  if (!meta || !meta.ts) return null;
+  const headers = { authorization: `Bearer ${c.botToken}` };
+  const seen = [];
+  for (const url of [
+    `${slackBase(c)}/conversations.replies?channel=${encodeURIComponent(c.channel)}&ts=${meta.ts}`,
+    `${slackBase(c)}/conversations.history?channel=${encodeURIComponent(c.channel)}&oldest=${meta.ts}`,
+  ]) {
+    const body = JSON.parse(await getJson(url, headers));
+    if (body.ok) seen.push(...(body.messages || []));
+  }
+  for (const m of seen) {
+    if (m.bot_id || m.subtype || !m.user || m.ts === meta.ts) continue;
+    if (c.userId && m.user !== c.userId) continue;
+    const choice = parseAnswer(m.text, nonce, count);
+    if (choice) return { choice, channel: 'slack', sender: m.user, sealable: !!c.userId };
+  }
+  return null;
+}
+
+async function pollDiscord(c, meta, nonce, count) {
+  if (!meta || !meta.id) return null;
+  const list = JSON.parse(await getJson(`${discordBase(c)}/channels/${c.channelId}/messages?after=${meta.id}&limit=50`, { authorization: `Bot ${c.botToken}` }));
+  for (const m of Array.isArray(list) ? list : []) {
+    const author = m.author || {};
+    if (author.bot) continue;
+    if (c.userId && String(author.id) !== String(c.userId)) continue;
+    const choice = parseAnswer(m.content, nonce, count);
+    if (choice) return { choice, channel: 'discord', sender: String(author.id), sealable: !!c.userId };
+  }
+  return null;
+}
+
 async function pollNtfy(c, since, nonce, count) {
   const topic = c.replyTopic || `${c.topic}-reply`;
   const text = await getJson(`${ntfyBase(c)}/${topic}/json?poll=1&since=${since}`);
@@ -183,8 +242,8 @@ async function pollNtfy(c, since, nonce, count) {
 async function ask(question, options, opts = {}) {
   const cfg = opts.config || readConfig();
   if (!cfg || cfg.error) return { error: cfg ? cfg.error : 'no notify config; nobody can be asked' };
-  const listeners = cfg.channels.filter((c) => REPLY_CAPABLE.includes(c.type));
-  if (!listeners.length) return { error: 'no channel that can carry a reply (telegram or ntfy) is configured' };
+  const listeners = cfg.channels.filter(canReply);
+  if (!listeners.length) return { error: 'no channel that can carry a reply is configured (ntfy, or a Telegram, Slack or Discord bot)' };
   const nonce = crypto.randomBytes(3).toString('hex').toUpperCase();
   const lines = options.map((o, i) => `${i + 1}. ${o}`).join('\n');
   const text = `${question}\n\n${lines}\n\nReply "${nonce} <number>". No reply in ${opts.timeoutMin || DEFAULT_ASK_MINUTES} min means none of these.`;
@@ -201,14 +260,20 @@ async function ask(question, options, opts = {}) {
     telegramState.set(c, state);
   }
   const delivery = await send(text, { config: cfg, ask: { nonce, options } });
+  const posted = new Map(cfg.channels.map((c, i) => [c, delivery.results[i] && delivery.results[i].meta]));
   const deadline = Date.now() + (opts.timeoutMin || DEFAULT_ASK_MINUTES) * 60000;
   const interval = opts.pollMs || POLL_INTERVAL_MS;
   while (Date.now() < deadline) {
     for (const c of listeners) {
       try {
-        const hit = c.type === 'telegram' ? await pollTelegram(c, telegramState.get(c), nonce, options.length) : await pollNtfy(c, startedSec, nonce, options.length);
+        const hit =
+          c.type === 'telegram' ? await pollTelegram(c, telegramState.get(c), nonce, options.length) :
+          c.type === 'slack' ? await pollSlack(c, posted.get(c), nonce, options.length) :
+          c.type === 'discord' ? await pollDiscord(c, posted.get(c), nonce, options.length) :
+          await pollNtfy(c, startedSec, nonce, options.length);
         if (hit) {
-          return { answered: true, nonce, question, options, ...hit, choiceText: options[hit.choice - 1], sealable: UNFORGEABLE.includes(hit.channel), at: new Date().toISOString(), delivery };
+          const sealable = UNFORGEABLE.includes(hit.channel) && hit.sealable !== false;
+          return { answered: true, nonce, question, options, ...hit, choiceText: options[hit.choice - 1], sealable, at: new Date().toISOString(), delivery };
         }
       } catch {
         // A poll that fails is retried until the deadline; the person may still answer elsewhere.

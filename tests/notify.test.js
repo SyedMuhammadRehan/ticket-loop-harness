@@ -30,6 +30,20 @@ async function fakeServices(t) {
         res.end(JSON.stringify(value));
       };
       if (req.url.startsWith('/fail')) return json(500, {});
+      if (req.url === '/slackapi/chat.postMessage') {
+        state.nonce = (/Reply "(\w+) <number>"/.exec(JSON.parse(body).text) || [])[1];
+        return json(200, { ok: true, ts: '100.1' });
+      }
+      if (req.url.startsWith('/slackapi/conversations.')) {
+        return json(200, { ok: true, messages: state.slack ? state.slack(state.nonce) : [] });
+      }
+      if (req.method === 'POST' && req.url === '/discordapi/channels/C1/messages') {
+        state.nonce = (/Reply "(\w+) <number>"/.exec(JSON.parse(body).content) || [])[1];
+        return json(200, { id: '500' });
+      }
+      if (req.method === 'GET' && req.url.startsWith('/discordapi/channels/C1/messages?after=500')) {
+        return json(200, state.discord ? state.discord(state.nonce) : []);
+      }
       if (/\/sendMessage$/.test(req.url)) {
         const text = JSON.parse(body).text;
         const nonce = (/Reply "(\w+) <number>"/.exec(text) || [])[1];
@@ -211,4 +225,55 @@ test('a broken config is an error, a missing one sends nothing, and preflight na
   const out = await runAsync(path.join(SCRIPTS_DIR, 'load_config.js'), [], { cwd: root, env: { TICKET_LOOP_NOTIFY: bad, TICKET_LOOP_POLICY: path.join(root, 'none.json') } });
   assert.ok(!out.stdout.includes('SECRET-TOKEN'), 'a token never reaches the preflight output');
   assert.deepStrictEqual(JSON.parse(out.stdout)._meta.notify.channels, ['telegram', 'pigeon']);
+});
+
+// Where Telegram is blocked, a Slack or Discord bot carries the answer instead, with the same
+// guarantee: a bot cannot post as the person, so only their own message counts and can be sealed.
+test('a Slack bot answer counts only from the configured person, never from a bot, and can be sealed', async (t) => {
+  const { base, state } = await fakeServices(t);
+  state.slack = (nonce) => [
+    { ts: '100.1', bot_id: 'B1', text: `Reply "${nonce} <number>"` },
+    { ts: '100.2', bot_id: 'B1', text: `${nonce} 1` },
+    { ts: '100.3', user: 'U999', text: `${nonce} 1` },
+    { ts: '100.4', user: 'U0456', text: `${nonce} 2` },
+  ];
+  const channels = [{ type: 'slack', apiBase: `${base}/slackapi`, botToken: 'xoxb-1', channel: 'C0123', userId: 'U0456' }];
+  const r = await notify.ask('Clear pubspec.yaml?', ['yes', 'no'], { config: { channels }, timeoutMin: 0.05, pollMs: 50 });
+  assert.strictEqual(r.answered, true, JSON.stringify(r));
+  assert.strictEqual(r.choice, 2);
+  assert.strictEqual(r.sender, 'U0456');
+  assert.strictEqual(r.sealable, true);
+});
+
+test('a Discord bot answer counts only from the configured person, and without a userId it cannot be sealed', async (t) => {
+  const { base, state } = await fakeServices(t);
+  state.discord = (nonce) => [
+    { id: '501', author: { id: '9', bot: true }, content: `${nonce} 1` },
+    { id: '502', author: { id: '777' }, content: `${nonce} 2` },
+  ];
+  const pinned = [{ type: 'discord', apiBase: `${base}/discordapi`, botToken: 'D', channelId: 'C1', userId: '777' }];
+  const r = await notify.ask('Continue?', ['yes', 'no'], { config: { channels: pinned }, timeoutMin: 0.05, pollMs: 50 });
+  assert.strictEqual(r.answered, true, JSON.stringify(r));
+  assert.strictEqual(r.sender, '777');
+  assert.strictEqual(r.sealable, true);
+
+  const open = [{ type: 'discord', apiBase: `${base}/discordapi`, botToken: 'D', channelId: 'C1' }];
+  const anyone = await notify.ask('Continue?', ['yes', 'no'], { config: { channels: open }, timeoutMin: 0.05, pollMs: 50 });
+  assert.strictEqual(anyone.answered, true);
+  assert.strictEqual(anyone.choice, 2, 'the bot that posted first is never the one answering');
+  assert.strictEqual(anyone.sealable, false, 'an answer from whoever is in the channel is not the person who started the run');
+});
+
+test('without a configured Slack user a bot message is still never an answer', async (t) => {
+  const { base, state } = await fakeServices(t);
+  state.slack = (nonce) => [
+    { ts: '100.2', bot_id: 'B1', text: `${nonce} 1` },
+    { ts: '100.3', subtype: 'bot_message', text: `${nonce} 1` },
+    { ts: '100.4', user: 'U999', text: `${nonce} 2` },
+  ];
+  const channels = [{ type: 'slack', apiBase: `${base}/slackapi`, botToken: 'xoxb-1', channel: 'C0123' }];
+  const r = await notify.ask('Continue?', ['yes', 'no'], { config: { channels }, timeoutMin: 0.05, pollMs: 50 });
+  assert.strictEqual(r.answered, true, JSON.stringify(r));
+  assert.strictEqual(r.choice, 2);
+  assert.strictEqual(r.sealable, false);
 });

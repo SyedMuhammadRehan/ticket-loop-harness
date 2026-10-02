@@ -445,9 +445,10 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   Google Chat or Mattermost. Every message goes to every channel, so one blocked in a country or
   failing on the day silences none. While a run is open, `notify_hook.js` messages the person when
   the session waits on a permission prompt or a question, or stops mid-run, once per quiet spell.
-  `notify.js ask` sends a numbered question with a one-time code and reads the answer back on
-  Telegram or ntfy, the two that need no server; an answer counts only with that code, from the
-  configured chat, before the deadline, and no answer is never a yes. With `--run` the answer is
+  `notify.js ask` sends a numbered question with a one-time code and reads the answer back on the
+  channels our code can poll with no server: ntfy, and a Telegram, Slack or Discord bot (so a
+  country that blocks one still has another). An answer counts only with that code, from the
+  configured chat or user, before the deadline, never from a bot, and no answer is never a yes. With `--run` the answer is
   sealed as an `approval`, and `ledger.js clear --approval <seq>` accepts it only when it came on
   a channel the agent could not post on itself and named the glob being cleared. `notify.js test`
   checks every channel; `doctor.js` warns when nothing can reach you.
@@ -564,9 +565,11 @@ Named limits, so they are not mistaken for guarantees:
   countersigns with a key the developer's machine never held. What it cannot rerun is the QA
   judgement itself, so the verdict in a bundle is still the signing machine's word.
 - **A reply channel is only as private as its secret.** Anyone holding the Telegram chat, or
-  knowing the ntfy topic, can answer. Telegram answers can back a clearance because the agent
-  cannot post as you there; ntfy answers never can. WhatsApp, Slack, Discord and webhooks only
-  send: receiving on them needs a server this plugin does not run.
+  knowing the ntfy topic, can answer. Telegram answers, and Slack or Discord answers from the
+  configured `userId`, can back a clearance because the agent cannot post as you there; ntfy
+  answers never can. WhatsApp, Slack and Discord webhooks, and plain webhooks, only send:
+  receiving on them needs a server this plugin does not run. A Discord bot reads message text
+  only with the Message Content intent enabled in its developer settings.
 - **The org policy reaches a machine only if it is put there.** The harness enforces the file it
   finds; distributing it, and noticing a machine without it, is the organisation's tooling.
 - **The merge check binds only if the platform requires it.** Branch protection that makes the

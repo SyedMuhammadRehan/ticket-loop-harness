@@ -74,6 +74,7 @@ review were interactions between two rows below, which the code alone did not ma
 | 102 | Silence is never a yes | `notify.js` → `ask` | `notify.test.js` :: `no answer before the deadline is no answer, never a yes` | A run that proceeds on a timeout acts on an answer nobody gave |
 | 103 | Only an answer the agent could not have forged backs a clearance, and only for the glob it named | `ledger.js` → `cmdApproval` | `notify.test.js` :: `an answer is sealed into the run, and only an unforgeable one naming the glob backs a clearance` | An ntfy topic accepts posts from anyone who knows it, the agent included |
 | 104 | A session that stalls mid-run tells the person on its own | `notify_hook.js` → `messageFor` | `notify.test.js` :: `a session that stalls on a permission prompt mid-run messages the person, once, and never outside a run` | The person away from the laptop otherwise assumes the work is finishing |
+| 105 | A Slack or Discord answer counts only from a person, never a bot, and seals only from the configured user | `notify.js` → `pollSlack` | `notify.test.js` :: `without a configured Slack user a bot message is still never an answer` | Where Telegram is blocked, a bot channel must carry the same guarantee: the agent holds the bot token, and a bot cannot post as the person |
 
 ## Stage receipts
 
@@ -174,7 +175,7 @@ These have no row above because no code enforces them. They live in README's "Yo
 uphold" and must stay there rather than migrating into this table:
 
 - whether a human was really asked before a clearance was recorded, unless the clearance carries
-  an `--approval` from an unforgeable notify channel (row 103)
+  an `--approval` from an unforgeable notify channel (rows 103 and 105)
 - GATE B (a design that contradicts the ticket)
 - whether a revision reason is true
 - whether a `died` dispatch outcome was reported at all
