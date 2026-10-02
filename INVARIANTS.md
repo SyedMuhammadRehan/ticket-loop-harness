@@ -63,6 +63,8 @@ review were interactions between two rows below, which the code alone did not ma
 | 91 | A failed or tampered run does not merge | `ci_check.js` → `PASSING_VERDICTS` | `ci_check.test.js` :: `a run whose verdict was BLOCK, or whose integrity was not intact, is refused` | A signature over a BLOCK is still a BLOCK |
 | 92 | CI countersigns what it ran with its own key | `ci_check.js` → `countersign` | `ci_check.test.js` :: `with a CI key the check countersigns exactly what it ran` | The one claim in the trail the developer's machine could not have made |
 | 93 | The trust list is frozen mid-run | `guard_policy.js` → `CONTROL_PLANE_PATTERNS` | `guard_policy.test.js` :: `the control plane is protected mid-run and writable when idle` | An agent that can trust its own key mid-run signs for itself |
+| 94 | A closed run is handed off as a ready pull request and nothing is pushed | `handoff.js` → `handoff` | `handoff.test.js` :: `a closed run becomes a pull request description from its report and attestation, and nothing is pushed` | Publishing is the human's decision; the handoff removes the typing, not the decision |
+| 95 | The handoff speaks the platform the remote is on | `handoff.js` → `commands` | `handoff.test.js` :: `the commands match the platform the remote is on` | A team on Bitbucket was handed GitHub's commands |
 
 ## Stage receipts
 
