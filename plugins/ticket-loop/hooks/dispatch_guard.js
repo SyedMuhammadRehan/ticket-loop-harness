@@ -48,18 +48,25 @@ function labelFor(toolInput) {
   return `${kind}: ${String(what).slice(0, 120)}`.trim();
 }
 
-// Earlier dispatches whose result was never recorded, named at the next dispatch. A dispatch the
-// playbook has just labelled and not yet sent is open too, so only a return without an outcome
-// or a stall past the threshold is worth saying.
+// Earlier dispatches gone quiet past the stall threshold, named at the next dispatch. One still
+// working is not news, and telling the orchestrator to record an outcome for it would push it to
+// record one before the result exists.
 function unresolvedContext(status, runDir) {
-  const unresolved = status.open.filter((o) => o.returned || o.stalled);
+  const unresolved = status.open.filter((o) => o.stalled);
   if (unresolved.length === 0) return null;
   return (
-    `ticket-loop: ${unresolved.length} earlier dispatch(es) have no outcome:\n` +
+    `ticket-loop: ${unresolved.length} earlier dispatch(es) have gone quiet with no outcome:\n` +
     unresolved.map((o) => `  - ${lib.describeOpenDispatch(o)}`).join('\n') +
-    `\n  Record each with "ledger.js outcome ${runDir} <seq> ok|died [note]" before relying on its result; ` +
-    `the stop gate and close refuse while any is open.`
+    `\n  If one is dead, record it: "ledger.js outcome ${runDir} <seq> died [note]". Close refuses while any is open.`
   );
+}
+
+// A filled prompt keeps none of its template's {PLACEHOLDERS}; one left in hands the subagent a
+// literal it cannot resolve, and nothing downstream notices.
+const UNFILLED = /\{[A-Z][A-Z0-9_]{2,}\}/g;
+function unfilledPlaceholders(toolInput) {
+  const text = ['prompt', 'description'].map((k) => (typeof toolInput[k] === 'string' ? toolInput[k] : '')).join('\n');
+  return [...new Set(text.match(UNFILLED) || [])];
 }
 
 // What the orchestrator is told alongside a permitted dispatch: unresolved earlier dispatches,
@@ -110,6 +117,15 @@ function main() {
     process.exit(2);
   }
 
+  const unfilled = unfilledPlaceholders(input.tool_input || {});
+  if (unfilled.length) {
+    console.error(
+      `BLOCKED: the dispatch prompt still holds template placeholder(s) ${unfilled.join(', ')}.\n` +
+        `  Fill every one from the playbook's fill list before dispatching; this dispatch was not counted.`
+    );
+    process.exit(2);
+  }
+
   const { config } = lib.loadConfig(root);
   const context = dispatchContext(ledger, runDir, root, input.session_id, config.staleRunHours);
   const toolInput = input.tool_input || {};
@@ -156,4 +172,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, unresolvedContext, dispatchContext, REQUIRED_LEDGER_PROTOCOL };
+module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, unresolvedContext, dispatchContext, unfilledPlaceholders, REQUIRED_LEDGER_PROTOCOL };

@@ -15,7 +15,7 @@ Reasons for every rule are in README.md ("How the loop stays honest"); this file
 **Constants:** STRIKES_PER_CLASS=3, MAX_REPLANS=2, MAX_DISPATCHES=25.
 **Failure classes:** BUILD, TEST, TOKEN, RUNTIME, QA_BLOCK, GOLDEN_UPDATE_REQUIRED, FLAKY_VERIFIER.
 **Run dir:** `.agents/ticket-runs/<TICKET>/`, created with its `screenshots/` subdir by
-`ledger.js init` at Stage 0 (a plain `mkdir` there is refused by the write guard);
+`ledger.js init` at Stage 0 (the write guard refuses `mkdir` and shell writes there: edit its files with Edit/Write, and before gating them);
 `<runDir>` below means that path and `<wt>` means `<worktreePrefix><TICKET>`. Counters, check
 results, verdicts and gates live in a sealed chain under `<gitdir>/ticket-loop/<TICKET>/`,
 written only by `<SKILL_DIR>/scripts/ledger.js`; `budget.json` is a read-only mirror and

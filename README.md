@@ -64,7 +64,7 @@ plugins/ticket-loop/
     stop_gate.js                     #   Stop: verify main repo + every worktree, vs the BRANCH POINT
     hygiene.js                       #   what the stop gate reads in the ADDED lines: debug artefacts, secrets
     read_hint.js                     #   PreToolUse(Read|Grep): a long file's outline as context, run-active only
-    subagent_return.js               #   SubagentStop: marks a dispatch as returned, so a stall and a forgotten outcome differ
+    subagent_return.js               #   SubagentStop: marks a dispatch as seen alive, so a stall can be told from work in progress
     session_start.js                 #   SessionStart: names an open run or a stale pre-plugin hook copy, silent otherwise
     notify_hook.js                   #   Notification + Stop: messages the person when a run stalls, silent outside a run
   agents/
@@ -378,12 +378,14 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   does nothing outside a run; whether the model then reads a range instead of the file is its
   call, but the information arrives at the moment the choice is made.
 
-- **A dispatch is never left unaccounted for** — a `SubagentStop` hook, `subagent_return.js`,
-  marks each dispatch as returned the moment the subagent tool comes back. A dispatch with no
-  recorded outcome is OPEN: `ledger.js status` lists it, `verify` reports it, the next dispatch is
-  told about it, the stop gate refuses the "done" claim and `close` refuses the run until it is
-  recorded as `ok` or `died`. One that never returned past `dispatchPolicy.stallMinutes` is
-  reported as STALLED, so a hung worker and a forgotten outcome read differently.
+- **A dispatch is never left unaccounted for** — a dispatch with no recorded outcome is OPEN:
+  `ledger.js status` lists it, `verify` reports it, and `close` refuses the run until it is
+  recorded as `ok` or `died`. A `SubagentStop` hook, `subagent_return.js`, marks each dispatch
+  as seen alive; that is a sign of life, never a finish, because Claude Code fires it for a
+  background agent soon after launch. One with no sign of life past
+  `dispatchPolicy.stallMinutes` is STALLED: the next dispatch is told, and the stop gate refuses
+  to end the turn over it. A turn may end while agents are still working. The dispatch hook
+  also refuses a prompt that still holds an unfilled `{PLACEHOLDER}` from its template.
 - **One judge, one verdict; one dispatch, one outcome** — `ledger.js verdict` refuses a second
   seal on the dispatch that already sealed one, so a re-review has to be a new dispatch. An outcome
   settles both records of a hook-and-script pair, and the died count counts dispatches. `verify`

@@ -160,9 +160,9 @@ function foreignRunNote(status, sessionId, runDir, staleHours) {
 }
 
 function describeOpenDispatch(o) {
-  const state = o.returned
-    ? 'returned, outcome unrecorded'
-    : `never returned, open ${o.minutesOpen} min${o.stalled ? ' — STALLED' : ''}`;
+  const state = o.stalled
+    ? `no outcome and no sign of life for ${o.minutesQuiet} min — STALLED`
+    : `still out (${o.minutesOpen} min), no outcome yet`;
   return `seq ${o.seqs[0]} (${o.label || 'unlabelled'}): ${state}`;
 }
 

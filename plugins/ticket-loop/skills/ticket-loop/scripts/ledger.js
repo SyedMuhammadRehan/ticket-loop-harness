@@ -714,24 +714,29 @@ function stallMinutes() {
 // came back; a dispatch that has neither returned nor been recorded past the stall threshold
 // is STALLED. Only the orchestrator can say what a returned dispatch produced, so a return
 // without an outcome stays open until it does.
+// A `returned` record is a sign of life, not a finish: SubagentStop fires for a background
+// agent shortly after it starts, long before its result arrives. So an open dispatch is
+// judged by how long it has gone without one, from its last mark or, with none, its launch.
 function openDispatches(runDir, now = Date.now()) {
   const atOf = new Map(chain.records(runDir).map((r) => [r.seq, r.at]));
   const outcomes = new Set(chain.ofKind(runDir, 'outcome').map((r) => r.payload.dispatchSeq));
-  const returns = new Set(chain.ofKind(runDir, 'returned').map((r) => r.payload.dispatchSeq));
+  const lastSeen = new Map();
+  for (const r of chain.ofKind(runDir, 'returned')) lastSeen.set(r.payload.dispatchSeq, r.at);
   const stallMs = stallMinutes() * 60000;
   return dispatchPairs(runDir)
     .filter((d) => !d.seqs.some((seq) => outcomes.has(seq)))
     .map((d) => {
       const at = atOf.get(d.seqs[0]);
-      const openMs = Math.max(0, now - Date.parse(at));
-      const returned = d.seqs.some((seq) => returns.has(seq));
+      const seenAt = d.seqs.map((seq) => lastSeen.get(seq)).filter(Boolean).sort().pop() || null;
+      const quietMs = Math.max(0, now - Date.parse(seenAt || at));
       return {
         seqs: d.seqs,
         label: d.label,
         at,
-        minutesOpen: Math.round(openMs / 60000),
-        returned,
-        stalled: !returned && openMs >= stallMs,
+        minutesOpen: Math.round(Math.max(0, now - Date.parse(at)) / 60000),
+        seenAt,
+        minutesQuiet: Math.round(quietMs / 60000),
+        stalled: quietMs >= stallMs,
       };
     });
 }
@@ -739,20 +744,22 @@ function openDispatches(runDir, now = Date.now()) {
 function describeOpen(o) {
   const seq = o.seqs[0];
   const label = o.label || 'unlabelled';
-  if (o.returned) return `dispatch seq ${seq} (${label}) returned with no outcome recorded — what it produced is not in the record`;
-  if (o.stalled) return `dispatch seq ${seq} (${label}) never returned and has been open ${o.minutesOpen} min — STALLED; record it as died if it is dead`;
-  return `dispatch seq ${seq} (${label}) never returned (open ${o.minutesOpen} min) — no outcome recorded`;
+  if (o.stalled) return `dispatch seq ${seq} (${label}) has no outcome and no sign of life for ${o.minutesQuiet} min — STALLED; record it as died if it is dead`;
+  return `dispatch seq ${seq} (${label}) has no outcome recorded (out ${o.minutesOpen} min) — wait for it, or record what it produced`;
 }
 
-// The SubagentStop hook cannot tell which dispatch a returning agent was, so the mark goes to
-// the oldest one still out. Parallel dispatches that return out of order swap labels, never
-// counts; the outcome the orchestrator records afterwards names its seq itself.
+// Marks the dispatch an agent belongs to: the one an earlier mark from the same agent named,
+// or else the oldest one never marked. Parallel launches can swap labels, never counts; the
+// outcome the orchestrator records names its seq itself.
 function cmdReturned(runDir, opts) {
   requireChain(runDir);
   requireOpen(runDir, 'returned');
-  const target = openDispatches(runDir).find((o) => !o.returned);
+  const open = openDispatches(runDir);
+  const agentId = opts && opts.agentId;
+  const known = agentId ? chain.ofKind(runDir, 'returned').find((r) => r.payload.agentId === agentId) : null;
+  const target = known ? open.find((o) => o.seqs.includes(known.payload.dispatchSeq)) : open.find((o) => !o.seenAt);
   if (!target) {
-    console.log('ledger: no dispatch is out — nothing to mark as returned');
+    console.log('ledger: no dispatch is out — nothing to mark');
     return;
   }
   const messageChars = Number(opts && opts.messageChars);
@@ -763,7 +770,7 @@ function cmdReturned(runDir, opts) {
     agentType: (opts && opts.agentType) || null,
     messageChars: Number.isFinite(messageChars) && messageChars >= 0 ? messageChars : null,
   });
-  console.log(`ledger: dispatch seq ${target.seqs[0]} returned — record its outcome`);
+  console.log(`ledger: dispatch seq ${target.seqs[0]} seen — its outcome is recorded when its result arrives`);
 }
 
 function tokenStats(runDir) {

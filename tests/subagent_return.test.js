@@ -29,7 +29,7 @@ test('a subagent return is recorded against the oldest dispatch still out, with 
     assert.strictEqual(mark.payload.agentId, 'ag-1');
     assert.strictEqual(mark.payload.agentType, 'general-purpose');
     assert.strictEqual(mark.payload.messageChars, 14);
-    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).open[0].returned, true);
+    assert.ok(JSON.parse(ledger(root, ['status', runDir]).stdout).open[0].seenAt, 'the dispatch is marked as seen');
   } finally {
     rmDir(root);
   }

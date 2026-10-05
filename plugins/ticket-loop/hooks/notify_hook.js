@@ -55,6 +55,15 @@ function messageFor(input, root, runs) {
   return null;
 }
 
+function agentsWorking(root, runs) {
+  const ledger = lib.findLedger(root);
+  if (!ledger) return false;
+  return runs.some((runDir) => {
+    const { status } = lib.runStatus(ledger, runDir, root, 10000);
+    return !!status && status.open.some((o) => !o.stalled);
+  });
+}
+
 async function main() {
   const input = lib.readStdinJson();
   if (!input || !notifyLib) process.exit(0);
@@ -63,6 +72,8 @@ async function main() {
   if (runs.length === 0) process.exit(0);
   const msg = messageFor(input, root, runs);
   if (!msg) process.exit(0);
+  // A turn that ends while the run's own agents are still working is waiting on them, not on you.
+  if (input.hook_event_name === 'Stop' && agentsWorking(root, runs)) process.exit(0);
   const state = readState(root);
   const last = state[msg.key] || 0;
   if (Date.now() - last < msg.repeatMs) process.exit(0);

@@ -1003,7 +1003,7 @@ test('a dispatch with no outcome is listed as open, and close refuses until it i
     let status = JSON.parse(ledger(root, ['status', runDir]).stdout);
     assert.strictEqual(status.open.length, 1);
     assert.deepStrictEqual(status.open[0].seqs, [qaSeq]);
-    assert.strictEqual(status.open[0].returned, false);
+    assert.strictEqual(status.open[0].seenAt, null);
 
     const refused = ledger(root, ['close', runDir]);
     assert.strictEqual(refused.status, 3, refused.stderr);
@@ -1020,7 +1020,7 @@ test('a dispatch with no outcome is listed as open, and close refuses until it i
   }
 });
 
-test('returned pairs with the oldest unreturned dispatch; verify names a return with no outcome', () => {
+test('a mark goes to the oldest unmarked dispatch, a repeat from the same agent to the same one, and verify names every open dispatch', () => {
   const { root, runDir } = init();
   try {
     ledger(root, ['dispatch', runDir, 'implementer: C1']);
@@ -1028,21 +1028,20 @@ test('returned pairs with the oldest unreturned dispatch; verify names a return 
     ledger(root, ['dispatch', runDir, 'implementer: C2']);
     ledger(root, ['dispatch', runDir, 'implementer: C2', '--source', 'hook']);
 
-    const res = ledger(root, ['returned', runDir, '--agent', 'a1', '--type', 'general-purpose']);
-    assert.strictEqual(res.status, 0, res.stderr);
-    const mark = chain.last(runDir, 'returned');
-    assert.strictEqual(mark.payload.dispatchSeq, 2, 'the first dispatch out is the first paired');
-    assert.strictEqual(mark.payload.agentId, 'a1');
+    assert.strictEqual(ledger(root, ['returned', runDir, '--agent', 'a1', '--type', 'general-purpose']).status, 0);
+    assert.strictEqual(chain.last(runDir, 'returned').payload.dispatchSeq, 2, 'the first dispatch out is the first marked');
+    assert.strictEqual(ledger(root, ['returned', runDir, '--agent', 'a1']).status, 0);
+    assert.strictEqual(chain.last(runDir, 'returned').payload.dispatchSeq, 2, 'the same agent again is the same dispatch, not the next one');
 
     const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
     assert.strictEqual(status.open.length, 2);
-    assert.strictEqual(status.open[0].returned, true);
-    assert.strictEqual(status.open[1].returned, false);
+    assert.ok(status.open[0].seenAt, 'the marked dispatch carries when it was last seen');
+    assert.strictEqual(status.open[1].seenAt, null);
 
     const verify = JSON.parse(ledger(root, ['verify', runDir]).stdout);
     assert.strictEqual(verify.intact, false);
-    assert.ok(verify.problems.some((p) => /seq 2 .*returned.*no outcome/i.test(p)), verify.problems.join('\n'));
-    assert.ok(verify.problems.some((p) => /seq 4 .*never returned/i.test(p)), verify.problems.join('\n'));
+    assert.ok(verify.problems.some((p) => /seq 2 .*no outcome recorded/.test(p)), verify.problems.join('\n'));
+    assert.ok(verify.problems.some((p) => /seq 4 .*no outcome recorded/.test(p)), verify.problems.join('\n'));
 
     ledger(root, ['outcome', runDir, '2', 'ok']);
     ledger(root, ['outcome', runDir, '4', 'died', 'session limit']);
@@ -1052,20 +1051,34 @@ test('returned pairs with the oldest unreturned dispatch; verify names a return 
   }
 });
 
-test('a dispatch that never returned past the stall threshold is reported as stalled', () => {
+// Field run T5: SubagentStop fired about 30 s after each background agent launched, minutes
+// before its result. Reading that as a finish told the orchestrator to record outcomes for work
+// still running. A mark is a sign of life; only silence past the threshold is a stall.
+test('a sign of life is not a finish: a marked dispatch still working is never reported as stalled', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, dispatchPolicy: { stallMinutes: 30 } });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    ledger(root, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']);
+    ledger(root, ['returned', runDir, '--agent', 'bg1']);
+    const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.open.length, 1, 'still open: its result has not arrived');
+    assert.strictEqual(status.open[0].stalled, false);
+    assert.ok(!('returned' in status.open[0]), 'nothing calls a launch-time mark a return');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a dispatch with no sign of life past the stall threshold is reported as stalled', () => {
   const { root, runDir } = mkRun({ verify: { test: 'x' }, dispatchPolicy: { stallMinutes: 0 } });
   try {
     assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
     ledger(root, ['dispatch', runDir, 'survey', '--source', 'hook']);
-    ledger(root, ['dispatch', runDir, 'design', '--source', 'hook']);
-    ledger(root, ['returned', runDir]);
     const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
-    assert.strictEqual(status.open[0].returned, true);
-    assert.strictEqual(status.open[0].stalled, false, 'a dispatch that came back is not stalled, only unrecorded');
-    assert.strictEqual(status.open[1].stalled, true);
+    assert.strictEqual(status.open[0].stalled, true);
     assert.strictEqual(status.stalled, 1);
     const verify = JSON.parse(ledger(root, ['verify', runDir]).stdout);
-    assert.ok(verify.problems.some((p) => /seq 3 .*STALLED/.test(p)), verify.problems.join('\n'));
+    assert.ok(verify.problems.some((p) => /seq 2 .*STALLED/.test(p)), verify.problems.join('\n'));
   } finally {
     rmDir(root);
   }

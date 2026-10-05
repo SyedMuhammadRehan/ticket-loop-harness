@@ -320,24 +320,27 @@ function hasContext(res) {
   return JSON.parse(out).hookSpecificOutput.additionalContext;
 }
 
-test('the next dispatch is told about a return with no outcome, and not about a fresh label', () => {
+test('the next dispatch says nothing about agents still working, even ones already seen', () => {
   const { root, runDir } = setup();
   try {
     assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1']).status, 0);
-    const first = dispatch(root);
-    assert.strictEqual(first.status, 0);
-    assert.strictEqual(hasContext(first), null, 'a dispatch just labelled and not yet back is not unresolved');
-
+    assert.strictEqual(hasContext(dispatch(root)), null, 'a dispatch just labelled and not yet back is not unresolved');
     assert.strictEqual(ledger(root, ['returned', runDir, '--agent', 'a1']).status, 0);
-    const second = dispatch(root);
-    assert.strictEqual(second.status, 0);
-    const context = hasContext(second);
-    assert.ok(context && context.includes('seq 2') && context.includes('outcome unrecorded'), context);
+    assert.strictEqual(hasContext(dispatch(root)), null, 'a background agent seen at launch is working, and recording its outcome now would be invented');
+  } finally {
+    rmDir(root);
+  }
+});
 
-    for (const o of JSON.parse(ledger(root, ['status', runDir]).stdout).open) {
-      assert.strictEqual(ledger(root, ['outcome', runDir, String(o.seqs[0]), 'ok']).status, 0);
-    }
-    assert.strictEqual(hasContext(dispatch(root)), null, 'nothing unresolved, nothing said');
+// A field run handed a re-review judge a prompt still carrying a literal {RUN_DIR}.
+test('a prompt with an unfilled template placeholder is refused and not counted', () => {
+  const { root, runDir } = setup();
+  try {
+    const res = dispatch(root, { subagent_type: 'ticket-loop-qa', description: 'QA delta', prompt: 'Do NOT read {RUN_DIR}/ledger.md. Judge the diff.' });
+    assert.strictEqual(res.status, 2, res.stderr);
+    assert.match(res.stderr, /\{RUN_DIR\}/);
+    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 0);
+    assert.strictEqual(dispatch(root, { subagent_type: 'ticket-loop-qa', description: 'QA', prompt: 'Read .agents/ticket-runs/T-1/done.md; JSON like {"a":1} and {lower} are fine.' }).status, 0);
   } finally {
     rmDir(root);
   }
