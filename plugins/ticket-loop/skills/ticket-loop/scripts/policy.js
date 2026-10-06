@@ -7,6 +7,7 @@
 //   qaScope.maxSmallDiffLines  caps the diff size a focused QA read may cover
 //   requireMatchingTest    forces hooks.stopGate.requireMatchingTest on
 //   attribution.commitTrailer  forces the trailer string onto every worktree commit
+//   dispatchPolicy.maxRunTokens  caps the tokens one run may spend
 //
 // A violation is not repaired silently: changing a model behind the user's back would leave the
 // run on a tier nobody chose. It is reported, and preflight stops on it.
@@ -79,6 +80,14 @@ function applyPolicy(cfg, loaded) {
     if (!Number.isInteger(out.qaScope.smallDiffLines) || out.qaScope.smallDiffLines > cap) {
       out.qaScope.smallDiffLines = cap;
       applied.push(`qaScope.smallDiffLines capped at ${cap}`);
+    }
+  }
+  const tokenCap = p.dispatchPolicy && p.dispatchPolicy.maxRunTokens;
+  if (Number.isInteger(tokenCap) && tokenCap > 0) {
+    const own = out.dispatchPolicy && out.dispatchPolicy.maxRunTokens;
+    if (!Number.isInteger(own) || own > tokenCap) {
+      out.dispatchPolicy = { ...(out.dispatchPolicy || {}), maxRunTokens: tokenCap };
+      applied.push(`dispatchPolicy.maxRunTokens capped at ${tokenCap}`);
     }
   }
   if (p.requireMatchingTest === true && out.hooks && out.hooks.stopGate && out.hooks.stopGate.requireMatchingTest !== true) {

@@ -10,6 +10,7 @@
 // enforcement path. `--source hook` lets ledger.js de-duplicate against the skill's own
 // bookkeeping call (it takes the max of the two, never the sum).
 'use strict';
+const path = require('path');
 const { spawnSync } = require('child_process');
 const lib = require('./hook_lib.js');
 
@@ -71,17 +72,50 @@ function unfilledPlaceholders(toolInput) {
 
 // What the orchestrator is told alongside a permitted dispatch: unresolved earlier dispatches,
 // and a run it did not start. Neither blocks — a resumed run is a new session by design.
-function dispatchContext(ledger, runDir, root, sessionId, staleHours) {
-  const { status } = lib.runStatus(ledger, runDir, root, LEDGER_TIMEOUT_MS);
+// The playbook's three strikes for QA_BLOCK, held here: a fourth judge is a loop nobody is
+// steering, and only a person can say whether the contract or the work is wrong.
+const MAX_QA_BLOCKS = 3;
+const SOFT_CEILING = 0.8;
+const BLOCK_NOTIFY_MS = 30 * 60 * 1000;
+
+function isJudge(toolInput) {
+  return /ticket-loop-qa/.test(String(toolInput.subagent_type || toolInput.agentType || ''));
+}
+
+// A refusal this dispatch must not pass, or null.
+function budgetRefusal(status, toolInput, runDir) {
+  if (isJudge(toolInput) && status.blockVerdicts >= MAX_QA_BLOCKS) {
+    return {
+      key: `qa-cap:${runDir}`,
+      text:
+        `${status.blockVerdicts} QA verdicts in this run were BLOCK; a ${MAX_QA_BLOCKS + 1}th judge is refused. ` +
+        `Stop and ask the person whether the contract or the work is wrong (Stage 10 escalation).`,
+    };
+  }
+  if (status.maxRunTokens && status.tokensUsed >= status.maxRunTokens) {
+    return {
+      key: `ceiling:${runDir}`,
+      text:
+        `the run has used ${status.tokensUsed} of its ${status.maxRunTokens}-token ceiling; no further dispatch. ` +
+        `Go to Stage 11 as INCOMPLETE, or, on the person's word, "ledger.js raise ${runDir} --tokens <n> \"<reason>\"".`,
+    };
+  }
+  return null;
+}
+
+function dispatchContext(status, runDir, sessionId, staleHours) {
   if (!status) return null;
   const notes = [unresolvedContext(status, runDir)];
+  if (status.maxRunTokens && status.tokensUsed >= status.maxRunTokens * SOFT_CEILING) {
+    notes.push(`ticket-loop: ${status.tokensUsed} of the run's ${status.maxRunTokens}-token ceiling is spent; plan the remaining work to fit it.`);
+  }
   const foreign = lib.foreignRunNote(status, sessionId, runDir, staleHours);
   if (foreign) notes.push(`ticket-loop: this dispatch is counted against ${foreign}`);
   const text = notes.filter(Boolean).join('\n');
   return text || null;
 }
 
-function main() {
+async function main() {
   const input = lib.readStdinJson();
   if (!input) process.exit(0);
 
@@ -127,8 +161,15 @@ function main() {
   }
 
   const { config } = lib.loadConfig(root);
-  const context = dispatchContext(ledger, runDir, root, input.session_id, config.staleRunHours);
   const toolInput = input.tool_input || {};
+  const { status } = lib.runStatus(ledger, runDir, root, LEDGER_TIMEOUT_MS);
+  const refusal = status ? budgetRefusal(status, toolInput, runDir) : null;
+  if (refusal) {
+    console.error(`BLOCKED: ${refusal.text}\n  This dispatch was not counted.`);
+    await lib.notifyOnce(root, refusal.key, BLOCK_NOTIFY_MS, `ticket-loop ${path.basename(runDir)} in ${path.basename(root)} stopped: ${refusal.text}`);
+    process.exit(2);
+  }
+  const context = dispatchContext(status, runDir, input.session_id, config.staleRunHours);
   const res = spawnSync(
     process.execPath,
     [
@@ -171,5 +212,11 @@ function main() {
   process.exit(0);
 }
 
-if (require.main === module) main();
-module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, unresolvedContext, dispatchContext, unfilledPlaceholders, REQUIRED_LEDGER_PROTOCOL };
+if (require.main === module) {
+  main().catch((err) => {
+    // A run is active past the first checks, so a crash here must not let the dispatch through.
+    console.error(`BLOCKED: dispatch_guard failed (${err.message}); the dispatch was not counted.`);
+    process.exit(2);
+  });
+}
+module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, unresolvedContext, dispatchContext, unfilledPlaceholders, budgetRefusal, MAX_QA_BLOCKS, REQUIRED_LEDGER_PROTOCOL };

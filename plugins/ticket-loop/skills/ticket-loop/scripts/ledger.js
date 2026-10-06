@@ -26,6 +26,7 @@
 //   ledger.js verify <runDir>                      chain integrity + tamper report
 //   ledger.js keygen                               create this machine's Ed25519 signing key
 //   ledger.js approval <runDir> --question .. --choice n ..   a person's answer from a notify channel
+//   ledger.js raise <runDir> --tokens <n> <reason> [--approval <seq>]  a person lifts the token ceiling
 //   ledger.js export <runDir> --out <file>         signed bundle of a closed run, for verify_bundle.js
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
@@ -60,6 +61,9 @@ const CHECK_METHODS = ['command', 'observed', 'human', 'asserted'];
 const DISPATCH_OUTCOMES = ['ok', 'died'];
 // An unreturned dispatch older than this is reported as STALLED; dispatchPolicy.stallMinutes overrides.
 const DEFAULT_STALL_MINUTES = 30;
+// A phone answer backs one clearance or raise, and only while it is fresh; `approvalMinutes` in
+// the profile overrides.
+const DEFAULT_APPROVAL_MINUTES = 60;
 // Mirrors load_config's dispatchPolicy default, for a run whose profile does not set one.
 const DEFAULT_PROMPT_BUDGET = 32000;
 const DEFAULT_SMALL_DIFF_LINES = 60;
@@ -211,7 +215,19 @@ function counters(runDir) {
     dispatchesByScript: d.byScript,
     gates: chain.ofKind(runDir, 'gate').map((r) => r.payload.stage),
     verdict: (chain.last(runDir, 'verdict') || { payload: {} }).payload.verdict || null,
+    blockVerdicts: chain.ofKind(runDir, 'verdict').filter((r) => r.payload.verdict === 'BLOCK').length,
+    ...tokenCeiling(runDir),
   };
+}
+
+// Tokens are known only when a dispatch's outcome is recorded, so the ceiling is checked before
+// each dispatch against what has finished: a run can overshoot by at most the one in flight.
+function tokenCeiling(runDir) {
+  const used = tokenStats(runDir).total || 0;
+  const base = Number((readConfig().dispatchPolicy || {}).maxRunTokens);
+  if (!Number.isInteger(base) || base <= 0) return { tokensUsed: used, maxRunTokens: null };
+  const raised = chain.ofKind(runDir, 'raise').reduce((n, r) => n + (Number(r.payload.tokens) || 0), 0);
+  return { tokensUsed: used, maxRunTokens: base + raised };
 }
 
 // budget.json exists so a human can read the state without a tool. It is never read back.
@@ -1022,6 +1038,46 @@ function cmdApproval(runDir, a) {
   console.log(`ledger: approval recorded (seq ${chain.last(runDir, 'approval').seq}) — choice ${choice} from ${a.channel}`);
 }
 
+// The approval a clearance or raise cites: recorded, from a channel the agent could not post on,
+// still fresh, and not already spent on another act.
+function usableApproval(runDir, approvalSeq, what) {
+  const approval = chain.ofKind(runDir, 'approval').find((r) => r.seq === Number(approvalSeq));
+  const fail = (msg) => {
+    console.error(`ledger ${what}: ${msg}`);
+    process.exit(1);
+  };
+  if (!approval) fail(`seq ${approvalSeq} is not a recorded approval`);
+  if (approval.payload.forgeable) {
+    fail(`the approval at seq ${approvalSeq} came on ${approval.payload.channel}, which the agent itself could have posted on; it cannot back a ${what}`);
+  }
+  const limit = Number(readConfig().approvalMinutes);
+  const minutes = Number.isInteger(limit) && limit >= 0 ? limit : DEFAULT_APPROVAL_MINUTES;
+  if (Date.now() - Date.parse(approval.at) > minutes * 60000) {
+    fail(`the approval at seq ${approvalSeq} is older than ${minutes} min; ask again`);
+  }
+  const spent = [...chain.ofKind(runDir, 'clearance'), ...chain.ofKind(runDir, 'raise')].find((r) => r.payload.approvalSeq === approval.seq);
+  if (spent) fail(`the approval at seq ${approvalSeq} already backed the ${spent.kind} at seq ${spent.seq}; one answer, one act`);
+  return approval;
+}
+
+function cmdRaise(runDir, tokensArg, reason, approvalSeq) {
+  requireChain(runDir);
+  requireOpen(runDir, 'raise');
+  const tokens = Number(tokensArg);
+  if (!Number.isInteger(tokens) || tokens <= 0) {
+    console.error('ledger raise: --tokens must be a whole number above zero');
+    process.exit(1);
+  }
+  if (!reason || !reason.trim()) {
+    console.error('ledger raise: need a reason — who agreed to spend more, and on what');
+    process.exit(1);
+  }
+  const approval = approvalSeq !== undefined ? usableApproval(runDir, approvalSeq, 'raise') : null;
+  chain.append(runDir, 'raise', { tokens, reason: reason.trim(), ...(approval ? { approvalSeq: approval.seq, approvedVia: approval.payload.channel } : {}) });
+  const { tokensUsed, maxRunTokens } = tokenCeiling(runDir);
+  console.log(`ledger: token ceiling raised by ${tokens} — ${tokensUsed} of ${maxRunTokens === null ? 'no ceiling' : maxRunTokens} used`);
+}
+
 function cmdClear(runDir, glob, reason, approvalSeq) {
   requireChain(runDir);
   requireOpen(runDir, 'clear');
@@ -1047,15 +1103,7 @@ function cmdClear(runDir, glob, reason, approvalSeq) {
   }
   let approval = null;
   if (approvalSeq !== undefined) {
-    approval = chain.ofKind(runDir, 'approval').find((r) => r.seq === Number(approvalSeq));
-    if (!approval) {
-      console.error(`ledger clear: seq ${approvalSeq} is not a recorded approval`);
-      process.exit(1);
-    }
-    if (approval.payload.forgeable) {
-      console.error(`ledger clear: the approval at seq ${approvalSeq} came on ${approval.payload.channel}, which the agent itself could have posted on; it cannot back a clearance`);
-      process.exit(1);
-    }
+    approval = usableApproval(runDir, approvalSeq, 'clearance');
     if (!String(approval.payload.question).includes(glob)) {
       console.error(`ledger clear: the approval at seq ${approvalSeq} asked "${approval.payload.question}", which does not name ${glob}`);
       process.exit(1);
@@ -1663,6 +1711,7 @@ function main() {
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
         '       ledger.js keygen | export <runDir> --out <file> [--worktree <path>]\n' +
         '       ledger.js approval <runDir> --question <q> --choice <n> --channel <c> --sender <s> --nonce <x> [--forgeable]\n' +
+        '       ledger.js raise <runDir> --tokens <n> "<reason>" [--approval <seq>]\n' +
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
         '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
@@ -1702,6 +1751,8 @@ function main() {
       return cmdClear(runDir, rest[0], rest.slice(1).join(' '), approvalSeq);
     case 'approval':
       return cmdApproval(runDir, approvalArgs);
+    case 'raise':
+      return cmdRaise(runDir, tokens, rest.join(' '), approvalSeq);
     case 'revise':
       return cmdRevise(runDir, rest[0], revisionReason);
     case 'outcome':

@@ -1202,3 +1202,47 @@ test('a dispatch on a tier the profile did not name for its role is reported by 
     rmDir(root);
   }
 });
+
+// --- the token ceiling, and phone answers that back one act while fresh ---
+
+test('the token ceiling counts recorded tokens, and only a sealed raise with a reason lifts it', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, dispatchPolicy: { maxRunTokens: 1000 } });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    ledger(root, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '2', 'ok', '--tokens', '600']).status, 0);
+    let status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.tokensUsed, 600);
+    assert.strictEqual(status.maxRunTokens, 1000);
+    assert.strictEqual(ledger(root, ['raise', runDir, '--tokens', '500']).status, 1, 'a raise needs a reason');
+    assert.strictEqual(ledger(root, ['raise', runDir, '--tokens', 'lots', 'more please']).status, 1);
+    assert.strictEqual(ledger(root, ['raise', runDir, '--tokens', '500', 'Rehan agreed: finish C3']).status, 0);
+    status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+    assert.strictEqual(status.maxRunTokens, 1500);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a phone approval backs one act, and only while it is fresh', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, riskPaths: ['pubspec.yaml', 'lib/auth/**'] });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    const approve = (q) => ledger(root, ['approval', runDir, '--question', q, '--choice', '1', '--channel', 'slack', '--sender', 'U1', '--nonce', 'N1']);
+    assert.strictEqual(approve('Clear pubspec.yaml and lib/auth/**?').status, 0);
+    const seq = String(chain.last(runDir, 'approval').seq);
+    assert.strictEqual(ledger(root, ['clear', runDir, 'pubspec.yaml', 'from the phone', '--approval', seq]).status, 0);
+    const again = ledger(root, ['clear', runDir, 'lib/auth/**', 'from the phone', '--approval', seq]);
+    assert.strictEqual(again.status, 1);
+    assert.match(again.stderr, /one answer, one act/);
+
+    const cfg = path.join(root, '.agents', 'ticket-loop.config.json');
+    fs.writeFileSync(cfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfg, 'utf8')), approvalMinutes: 0 }));
+    assert.strictEqual(approve('Clear lib/auth/**?').status, 0);
+    const stale = ledger(root, ['clear', runDir, 'lib/auth/**', 'from the phone', '--approval', String(chain.last(runDir, 'approval').seq)]);
+    assert.strictEqual(stale.status, 1);
+    assert.match(stale.stderr, /older than 0 min/);
+  } finally {
+    rmDir(root);
+  }
+});

@@ -119,6 +119,8 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `qaScope.smallDiffLines` | a committed diff at or under this many changed lines (default 60) touching no `riskPaths` gets a *focused* QA read (changed files + their consumers + the contract) instead of a codebase sweep; `0` = always sweep. Scope never shrinks verdict authority, and risk-path touches always get the full read |
 | `hooks.postEdit` / `hooks.stopGate` | what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile. `stopGate` also takes `baseRef` (the branch point committed slices are diffed against), `worktrees` (`all`/`ticket`/`cwd`), `requireMatchingTest` (block source changes no test covers), and `maxCommandChars` (targeted test files run in batches under this command length; the default keeps Windows under cmd.exe's limit) |
 | `dispatchPolicy` | `minSliceLines` (default 50) and `promptBudgetChars` (default 32000) are advisory and reported by `ledger.js cost`. `stallMinutes` (default 30) is how long a dispatch may stay out without returning before `status`, `verify` and the next dispatch call it STALLED |
+| `dispatchPolicy.maxRunTokens` | optional token ceiling per run (default none). At 80 percent the next dispatch is warned; at 100 percent `dispatch_guard` refuses it and messages the person; `ledger.js raise <runDir> --tokens <n> "<reason>"`, given on a person's word, lifts it. The org policy can cap it |
+| `approvalMinutes` | how long a phone answer stays usable to back a clearance or raise (default 60); each answer backs one act |
 | `staleRunHours` | how long an open run may sit idle before the hooks call it ABANDONED when another session meets it (default 24). The gates keep enforcing either way; this only decides the wording |
 | `attribution.commitTrailer` | repo policy on AI attribution: a trailer string appended to every worktree commit (for teams that require disclosure), or `null` (default) for clean commits with none. The implementer is also barred from AI-style narration comments — new code must be indistinguishable from the code around it |
 
@@ -454,6 +456,13 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   sealed as an `approval`, and `ledger.js clear --approval <seq>` accepts it only when it came on
   a channel the agent could not post on itself and named the glob being cleared. `notify.js test`
   checks every channel; `doctor.js` warns when nothing can reach you.
+- **Spending and reviewing are bounded, not advised** — with `dispatchPolicy.maxRunTokens` set,
+  the dispatch hook warns at 80 percent and refuses the next dispatch at the ceiling, messaging
+  the person; only a sealed `ledger.js raise` with a reason lifts it. Tokens are known when a
+  dispatch's outcome is recorded, so a run can overshoot by at most the one dispatch in flight,
+  never more. After three BLOCK verdicts the hook refuses a fourth judge, so a review loop nobody
+  steers stops and asks. A phone approval backs exactly one clearance or raise, within
+  `approvalMinutes`.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing

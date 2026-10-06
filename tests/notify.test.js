@@ -277,3 +277,16 @@ test('without a configured Slack user a bot message is still never an answer', a
   assert.strictEqual(r.choice, 2);
   assert.strictEqual(r.sealable, false);
 });
+
+test('a hook notification with a key is sent once, then held back for its repeat window', async (t) => {
+  const { base, seen } = await fakeServices(t);
+  const file = writeConfig(t, [{ type: 'webhook', url: `${base}/hook` }]);
+  const root = mkTmpDir('tl-once');
+  t.after(() => rmDir(root));
+  process.env.TICKET_LOOP_NOTIFY = file;
+  t.after(() => delete process.env.TICKET_LOOP_NOTIFY);
+  const lib = require(path.join(HOOKS_DIR, 'hook_lib.js'));
+  assert.strictEqual((await lib.notifyOnce(root, 'ceiling:T-1', 60000, 'stopped at the ceiling')).sent, 1);
+  assert.strictEqual((await lib.notifyOnce(root, 'ceiling:T-1', 60000, 'stopped at the ceiling')).sent, 0);
+  assert.strictEqual(seen.length, 1);
+});
