@@ -160,9 +160,9 @@ function foreignRunNote(status, sessionId, runDir, staleHours) {
 }
 
 function describeOpenDispatch(o) {
-  const state = o.returned
-    ? 'returned, outcome unrecorded'
-    : `never returned, open ${o.minutesOpen} min${o.stalled ? ' — STALLED' : ''}`;
+  const state = o.stalled
+    ? `no outcome and no sign of life for ${o.minutesQuiet} min — STALLED`
+    : `still out (${o.minutesOpen} min), no outcome yet`;
   return `seq ${o.seqs[0]} (${o.label || 'unlabelled'}): ${state}`;
 }
 
@@ -171,7 +171,7 @@ function describeOpenDispatch(o) {
 // plugin, so every edit and every stop runs both.
 const HARNESS_HOOK_FILES = [
   'stop_gate.js', 'freeze_guard.js', 'dispatch_guard.js', 'post_edit.js', 'dart_post_edit.js',
-  'read_hint.js', 'subagent_return.js', 'session_start.js', 'guard_policy.js', 'hook_lib.js', 'hygiene.js',
+  'read_hint.js', 'subagent_return.js', 'session_start.js', 'notify_hook.js', 'guard_policy.js', 'hook_lib.js', 'hygiene.js',
 ];
 
 function settingsHookCommands(file) {

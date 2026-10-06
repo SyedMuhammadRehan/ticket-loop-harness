@@ -34,6 +34,13 @@
         ]
       }
     ],
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/notify_hook.js\"", "timeout": 20 }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
@@ -51,7 +58,8 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stop_gate.js\"", "timeout": 600 }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stop_gate.js\"", "timeout": 600 },
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/notify_hook.js\"", "timeout": 20 }
         ]
       }
     ]

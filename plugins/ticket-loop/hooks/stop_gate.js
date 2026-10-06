@@ -504,13 +504,19 @@ function openDispatchFailures(root, runs, sessionId, staleHours) {
     }
     const foreign = lib.foreignRunNote(res.status, sessionId, runDir, staleHours);
     if (foreign) notes.push(`stop_gate: ${foreign}`);
-    if (res.status.open.length === 0) continue;
+    // A turn may end while background agents work; only one gone quiet past the threshold, or
+    // whose result was never recorded, is a gap. Close refuses every open dispatch regardless.
+    const stalled = res.status.open.filter((o) => o.stalled);
+    const working = res.status.open.filter((o) => !o.stalled);
+    if (working.length) {
+      notes.push(`stop_gate: ${working.length} dispatch(es) in ${path.basename(runDir)} still out, no outcome yet — waiting on them is fine`);
+    }
+    if (stalled.length === 0) continue;
     failures.push({
       message:
-        `stop_gate: ${res.status.open.length} dispatch(es) in ${path.basename(runDir)} have no outcome — ` +
-        `a "done" claim cannot stand over work whose result was never recorded:\n` +
-        res.status.open.map((o) => `  - ${lib.describeOpenDispatch(o)}`).join('\n') +
-        `\n  Record each: ledger.js outcome ${runDir} <seq> ok|died [note] — died if it produced nothing.`,
+        `stop_gate: ${stalled.length} dispatch(es) in ${path.basename(runDir)} have no outcome and no sign of life:\n` +
+        stalled.map((o) => `  - ${lib.describeOpenDispatch(o)}`).join('\n') +
+        `\n  If it finished, record what it produced; if it is dead: ledger.js outcome ${runDir} <seq> died [note].`,
     });
   }
   return { failures, notes };

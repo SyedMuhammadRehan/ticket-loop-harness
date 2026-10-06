@@ -428,7 +428,7 @@ test('clean trees pass without running anything; escape valve releases after 3 b
 // A Stop mid-run is a "done" claim. A dispatch whose result was never recorded is work the claim
 // says nothing about, and it is what a stalled worker and a forgotten outcome both look like.
 
-test('a dispatch with no outcome blocks the "done" claim until it is recorded', () => {
+test('a turn may end while agents work, but a dispatch gone quiet past the threshold blocks it', () => {
   const env = setupRepo();
   try {
     const runDir = path.join(env.main, '.agents', 'ticket-runs', 'T-1');
@@ -437,9 +437,15 @@ test('a dispatch with no outcome blocks the "done" claim until it is recorded', 
     assert.strictEqual(gate(env.main).status, 0, 'a run with no dispatches has nothing open');
 
     assert.strictEqual(ledger(env.main, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']).status, 0);
+    const waiting = gate(env.main);
+    assert.strictEqual(waiting.status, 0, waiting.stderr);
+    assert.match(waiting.stderr, /still out, no outcome yet/);
+
+    const profile = path.join(env.main, '.agents', 'ticket-loop.config.json');
+    fs.writeFileSync(profile, JSON.stringify({ ...JSON.parse(fs.readFileSync(profile, 'utf8')), dispatchPolicy: { stallMinutes: 0 } }));
     const blocked = gate(env.main);
     assert.strictEqual(blocked.status, 2, blocked.stderr);
-    assert.ok(blocked.stderr.includes('no outcome') && blocked.stderr.includes('seq 2'), blocked.stderr);
+    assert.ok(blocked.stderr.includes('no sign of life') && blocked.stderr.includes('seq 2'), blocked.stderr);
 
     assert.strictEqual(ledger(env.main, ['outcome', runDir, '2', 'died', 'session limit']).status, 0);
     assert.strictEqual(gate(env.main).status, 0, 'a recorded death is an outcome');

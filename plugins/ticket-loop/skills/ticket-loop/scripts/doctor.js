@@ -44,6 +44,10 @@ function profileFindings(root, add) {
     return cfg;
   }
   if (!cfg.verify || !cfg.verify.test) add('problem', 'the profile has no verify.test', 'set the command that runs this repo\'s tests');
+  const n = cfg._meta.notify;
+  if (n && n.error) add('problem', `the notify config cannot be used: ${n.error}`, 'fix ~/.claude/ticket-loop/notify.json; notify.js test sends a test message');
+  else if (!n || !n.configured) add('note', 'no notify channel is set, so a run that gets stuck while you are away cannot tell you', 'add one in ~/.claude/ticket-loop/notify.json (see notify.js); notify.js test checks it');
+  else if (!n.canReply) add('note', `notify reaches you on ${n.channels.join(', ')} but none of them can carry your answer back`, 'add ntfy, or a Telegram, Slack or Discord bot, to answer from your phone');
   for (const w of cfg._meta.warnings || []) add(/STALE SKILL|invalid|stopGate|^POLICY/i.test(w) ? 'problem' : 'note', w, null);
   return cfg;
 }

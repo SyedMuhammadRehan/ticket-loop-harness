@@ -7,20 +7,21 @@ description: Use when the user types /ticket-loop <TICKET-ID or task text>, opti
 
 You are the ORCHESTRATOR. You dispatch subagents, record receipts, and implement inline only
 where a stage below says so. Hands-off: never ask "should I continue?"; ask a human only at
-GATE A, GATE B, GATE C and the RESUME prompt. The design and the reasons behind every rule
-are in README.md ("How the loop stays honest"); this file is the procedure.
+GATE A, GATE B, GATE C and the RESUME prompt. When `_meta.notify.canReply`, ask there AND with
+`notify.js ask "<q naming the glob>" --option .. --option .. --run <runDir>` (approval seq →
+`ledger.js clear ... --approval <seq>`); no answer means park that slice and do the rest.
+Reasons for every rule are in README.md ("How the loop stays honest"); this file is the procedure.
 
 **Constants:** STRIKES_PER_CLASS=3, MAX_REPLANS=2, MAX_DISPATCHES=25.
 **Failure classes:** BUILD, TEST, TOKEN, RUNTIME, QA_BLOCK, GOLDEN_UPDATE_REQUIRED, FLAKY_VERIFIER.
 **Run dir:** `.agents/ticket-runs/<TICKET>/`, created with its `screenshots/` subdir by
-`ledger.js init` at Stage 0 (a plain `mkdir` there is refused by the write guard);
+`ledger.js init` at Stage 0 (the write guard refuses `mkdir` and shell writes there: edit its files with Edit/Write, and before gating them);
 `<runDir>` below means that path and `<wt>` means `<worktreePrefix><TICKET>`. Counters, check
 results, verdicts and gates live in a sealed chain under `<gitdir>/ticket-loop/<TICKET>/`,
 written only by `<SKILL_DIR>/scripts/ledger.js`; `budget.json` is a read-only mirror and
 `ledger.md` the human narrative.
 **Working directory:** run every command from the MAIN repo root; reach the worktree with
 `git -C <wt>` or absolute paths, never `cd`, and never prefix a harness command with `cd X &&`.
-Pass script paths UNQUOTED: the write guard cannot recognise a quoted one.
 **Config keys:** `{verify.test}`, `{verify.analyze}`, `{verify.pubGet}`, `{verify.codegen}`
 mean the profile's resolved values. Substitute them; never infer a stack from the files you see.
 
@@ -77,8 +78,7 @@ goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and
    Any failure here → STOP. Never fall back to the user's tree.
 5. `node <SKILL_DIR>/scripts/ledger.js init <runDir> <base-sha>` (add `--restart` after an
    archive; under `--dry-run` the base is `git rev-parse HEAD`). It seals the profile hash,
-   writes `budget.json` and the `ledger.md` skeleton.
-   If it warns that there is no config to seal, STOP and get a profile first.
+   writes `budget.json` and the `ledger.md` skeleton; if it warns there is no config to seal, STOP.
 
 ## Stage 1 — INTAKE
 
@@ -92,7 +92,7 @@ goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and
    of deleting or weakening an existing test.
 3. **GATE A (ask the human) if any of:** no acceptance criteria and no design link; only
    subjective goals with no measurable anchor; the RISK SCAN found a risk-tier area (name it,
-   ask for clearance). Otherwise proceed. Low-risk ambiguities get a default, appended to
+   ask for clearance). Ask everything foreseeable in ONE batch, before work starts. Otherwise proceed. Low-risk ambiguities get a default, appended to
    `<runDir>/assumptions.md` as `- Q: <question> → default: <choice> (risk: low)`.
    When a human clears a risk area, and only then:
    `node <SKILL_DIR>/scripts/ledger.js clear <runDir> "<the glob>" "<what they approved and why>"`
@@ -363,7 +363,7 @@ when a non-obvious fix finally works: `memory.js add <memoryFile> flaky|fix <TIC
 3. `node <SKILL_DIR>/scripts/ledger.js gate <runDir> report --evidence <runDir>/report.md`
    then `ledger.js close <runDir>`, LAST (abandoned: `ledger.js archive`). With a key, `ledger.js export
    <runDir> --out <wt>/.agents/attestations/<TICKET>.bundle.json`; commit it alone: `chore(<TICKET>): attest`.
-4. Final message: status (COMPLETE, or INCOMPLETE and why), report path, branch name, the
+4. Final message, also sent with `notify.js send "<status, branch, what waits on you>"`: status (COMPLETE, or INCOMPLETE and why), report path, branch name, the
    integrity line from `ledger.js verify`, that merge, push and golden regeneration are manual
    (`handoff.js <runDir> --worktree <wt> --out <file>` prints the PR commands), and plainly what was NOT verified: excluded goldens, every SKIPPED criterion, every
    stop_gate "NOT verified" note, and on a LOGIC-ONLY run every visual and contract check.

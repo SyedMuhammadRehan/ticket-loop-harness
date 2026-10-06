@@ -25,6 +25,7 @@
 //   ledger.js returned <runDir>                    the subagent tool returned (SubagentStop hook)
 //   ledger.js verify <runDir>                      chain integrity + tamper report
 //   ledger.js keygen                               create this machine's Ed25519 signing key
+//   ledger.js approval <runDir> --question .. --choice n ..   a person's answer from a notify channel
 //   ledger.js export <runDir> --out <file>         signed bundle of a closed run, for verify_bundle.js
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
@@ -713,24 +714,29 @@ function stallMinutes() {
 // came back; a dispatch that has neither returned nor been recorded past the stall threshold
 // is STALLED. Only the orchestrator can say what a returned dispatch produced, so a return
 // without an outcome stays open until it does.
+// A `returned` record is a sign of life, not a finish: SubagentStop fires for a background
+// agent shortly after it starts, long before its result arrives. So an open dispatch is
+// judged by how long it has gone without one, from its last mark or, with none, its launch.
 function openDispatches(runDir, now = Date.now()) {
   const atOf = new Map(chain.records(runDir).map((r) => [r.seq, r.at]));
   const outcomes = new Set(chain.ofKind(runDir, 'outcome').map((r) => r.payload.dispatchSeq));
-  const returns = new Set(chain.ofKind(runDir, 'returned').map((r) => r.payload.dispatchSeq));
+  const lastSeen = new Map();
+  for (const r of chain.ofKind(runDir, 'returned')) lastSeen.set(r.payload.dispatchSeq, r.at);
   const stallMs = stallMinutes() * 60000;
   return dispatchPairs(runDir)
     .filter((d) => !d.seqs.some((seq) => outcomes.has(seq)))
     .map((d) => {
       const at = atOf.get(d.seqs[0]);
-      const openMs = Math.max(0, now - Date.parse(at));
-      const returned = d.seqs.some((seq) => returns.has(seq));
+      const seenAt = d.seqs.map((seq) => lastSeen.get(seq)).filter(Boolean).sort().pop() || null;
+      const quietMs = Math.max(0, now - Date.parse(seenAt || at));
       return {
         seqs: d.seqs,
         label: d.label,
         at,
-        minutesOpen: Math.round(openMs / 60000),
-        returned,
-        stalled: !returned && openMs >= stallMs,
+        minutesOpen: Math.round(Math.max(0, now - Date.parse(at)) / 60000),
+        seenAt,
+        minutesQuiet: Math.round(quietMs / 60000),
+        stalled: quietMs >= stallMs,
       };
     });
 }
@@ -738,20 +744,22 @@ function openDispatches(runDir, now = Date.now()) {
 function describeOpen(o) {
   const seq = o.seqs[0];
   const label = o.label || 'unlabelled';
-  if (o.returned) return `dispatch seq ${seq} (${label}) returned with no outcome recorded — what it produced is not in the record`;
-  if (o.stalled) return `dispatch seq ${seq} (${label}) never returned and has been open ${o.minutesOpen} min — STALLED; record it as died if it is dead`;
-  return `dispatch seq ${seq} (${label}) never returned (open ${o.minutesOpen} min) — no outcome recorded`;
+  if (o.stalled) return `dispatch seq ${seq} (${label}) has no outcome and no sign of life for ${o.minutesQuiet} min — STALLED; record it as died if it is dead`;
+  return `dispatch seq ${seq} (${label}) has no outcome recorded (out ${o.minutesOpen} min) — wait for it, or record what it produced`;
 }
 
-// The SubagentStop hook cannot tell which dispatch a returning agent was, so the mark goes to
-// the oldest one still out. Parallel dispatches that return out of order swap labels, never
-// counts; the outcome the orchestrator records afterwards names its seq itself.
+// Marks the dispatch an agent belongs to: the one an earlier mark from the same agent named,
+// or else the oldest one never marked. Parallel launches can swap labels, never counts; the
+// outcome the orchestrator records names its seq itself.
 function cmdReturned(runDir, opts) {
   requireChain(runDir);
   requireOpen(runDir, 'returned');
-  const target = openDispatches(runDir).find((o) => !o.returned);
+  const open = openDispatches(runDir);
+  const agentId = opts && opts.agentId;
+  const known = agentId ? chain.ofKind(runDir, 'returned').find((r) => r.payload.agentId === agentId) : null;
+  const target = known ? open.find((o) => o.seqs.includes(known.payload.dispatchSeq)) : open.find((o) => !o.seenAt);
   if (!target) {
-    console.log('ledger: no dispatch is out — nothing to mark as returned');
+    console.log('ledger: no dispatch is out — nothing to mark');
     return;
   }
   const messageChars = Number(opts && opts.messageChars);
@@ -762,7 +770,7 @@ function cmdReturned(runDir, opts) {
     agentType: (opts && opts.agentType) || null,
     messageChars: Number.isFinite(messageChars) && messageChars >= 0 ? messageChars : null,
   });
-  console.log(`ledger: dispatch seq ${target.seqs[0]} returned — record its outcome`);
+  console.log(`ledger: dispatch seq ${target.seqs[0]} seen — its outcome is recorded when its result arrives`);
 }
 
 function tokenStats(runDir) {
@@ -990,7 +998,31 @@ function cmdArchive(runDir) {
 // chain, so the report shows exactly what was cleared and why. The orchestrator is told never
 // to run this without asking a human; that part is not mechanical, and the receipt is what
 // makes skipping it visible afterwards.
-function cmdClear(runDir, glob, reason) {
+// A person's answer, as notify.js received it: the question, the option chosen, the channel and
+// sender it came from, and the one-time code it carried. `forgeable` marks a channel the agent
+// itself could have posted on; such an answer is recorded but cannot back a clearance.
+function cmdApproval(runDir, a) {
+  requireChain(runDir);
+  requireOpen(runDir, 'approval');
+  const choice = Number(a.choice);
+  const missing = ['question', 'channel', 'sender', 'nonce'].filter((k) => !a[k] || !String(a[k]).trim());
+  if (missing.length || !Number.isInteger(choice) || choice < 1) {
+    console.error(`ledger approval: need --question, --choice <n>, --channel, --sender and --nonce${missing.length ? ` (missing ${missing.join(', ')})` : ''}`);
+    process.exit(1);
+  }
+  chain.append(runDir, 'approval', {
+    question: a.question,
+    choice,
+    choiceText: a.choiceText || null,
+    channel: a.channel,
+    sender: a.sender,
+    nonce: a.nonce,
+    forgeable: !!a.forgeable,
+  });
+  console.log(`ledger: approval recorded (seq ${chain.last(runDir, 'approval').seq}) — choice ${choice} from ${a.channel}`);
+}
+
+function cmdClear(runDir, glob, reason, approvalSeq) {
   requireChain(runDir);
   requireOpen(runDir, 'clear');
   if (!glob) {
@@ -1013,7 +1045,23 @@ function cmdClear(runDir, glob, reason) {
     console.error('ledger clear: need a reason — what did the human approve, and why is it safe?');
     process.exit(1);
   }
-  chain.append(runDir, 'clearance', { glob, reason: reason.trim() });
+  let approval = null;
+  if (approvalSeq !== undefined) {
+    approval = chain.ofKind(runDir, 'approval').find((r) => r.seq === Number(approvalSeq));
+    if (!approval) {
+      console.error(`ledger clear: seq ${approvalSeq} is not a recorded approval`);
+      process.exit(1);
+    }
+    if (approval.payload.forgeable) {
+      console.error(`ledger clear: the approval at seq ${approvalSeq} came on ${approval.payload.channel}, which the agent itself could have posted on; it cannot back a clearance`);
+      process.exit(1);
+    }
+    if (!String(approval.payload.question).includes(glob)) {
+      console.error(`ledger clear: the approval at seq ${approvalSeq} asked "${approval.payload.question}", which does not name ${glob}`);
+      process.exit(1);
+    }
+  }
+  chain.append(runDir, 'clearance', { glob, reason: reason.trim(), ...(approval ? { approvalSeq: approval.seq, approvedVia: approval.payload.channel } : {}) });
   mirrorClearances(runDir);
   console.log(`ledger: cleared "${glob}" — recorded in the chain and mirrored for the hooks`);
 }
@@ -1580,6 +1628,18 @@ function main() {
   const agentType = takeFlag(argv, '--type')[0];
   const messageChars = takeFlag(argv, '--message-chars')[0];
   const session = takeFlag(argv, '--session')[0];
+  const forgeable = argv.includes('--forgeable');
+  if (forgeable) argv.splice(argv.indexOf('--forgeable'), 1);
+  const approvalArgs = {
+    question: takeFlag(argv, '--question')[0],
+    choice: takeFlag(argv, '--choice')[0],
+    choiceText: takeFlag(argv, '--choice-text')[0],
+    channel: takeFlag(argv, '--channel')[0],
+    sender: takeFlag(argv, '--sender')[0],
+    nonce: takeFlag(argv, '--nonce')[0],
+    forgeable,
+  };
+  const approvalSeq = takeFlag(argv, '--approval')[0];
   const model = takeFlag(argv, '--model')[0];
   const outFile = takeFlag(argv, '--out')[0];
   const sliceFiles = takeFlag(argv, '--files');
@@ -1602,6 +1662,7 @@ function main() {
         '       ledger.js verdict <runDir> <verdict> [--inputs <file>]...\n' +
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
         '       ledger.js keygen | export <runDir> --out <file> [--worktree <path>]\n' +
+        '       ledger.js approval <runDir> --question <q> --choice <n> --channel <c> --sender <s> --nonce <x> [--forgeable]\n' +
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
         '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
@@ -1638,7 +1699,9 @@ function main() {
     case 'qascope':
       return cmdQaScope(runDir, worktree, baseRef);
     case 'clear':
-      return cmdClear(runDir, rest[0], rest.slice(1).join(' '));
+      return cmdClear(runDir, rest[0], rest.slice(1).join(' '), approvalSeq);
+    case 'approval':
+      return cmdApproval(runDir, approvalArgs);
     case 'revise':
       return cmdRevise(runDir, rest[0], revisionReason);
     case 'outcome':

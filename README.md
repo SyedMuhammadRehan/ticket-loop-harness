@@ -64,8 +64,9 @@ plugins/ticket-loop/
     stop_gate.js                     #   Stop: verify main repo + every worktree, vs the BRANCH POINT
     hygiene.js                       #   what the stop gate reads in the ADDED lines: debug artefacts, secrets
     read_hint.js                     #   PreToolUse(Read|Grep): a long file's outline as context, run-active only
-    subagent_return.js               #   SubagentStop: marks a dispatch as returned, so a stall and a forgotten outcome differ
+    subagent_return.js               #   SubagentStop: marks a dispatch as seen alive, so a stall can be told from work in progress
     session_start.js                 #   SessionStart: names an open run or a stale pre-plugin hook copy, silent otherwise
+    notify_hook.js                   #   Notification + Stop: messages the person when a run stalls, silent outside a run
   agents/
     ticket-loop-qa.md                # the adversarial QA judge — granted no Write or Edit, pinned at high effort
   skills/qa-check/
@@ -94,6 +95,7 @@ plugins/ticket-loop/
       ci_check.js                    # the merge check CI runs on a pull request (see docs/ci.md)
       handoff.js                     # a closed run's pull request description and the commands to open it; pushes nothing
       policy.js                      # the org policy: a floor under every repo's profile
+      notify.js                      # reach the person on every channel they set up; ask, and seal the answer
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
 tests/                               # node:test suite for the scripts + hooks (node tests/run.js)
@@ -376,12 +378,14 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   does nothing outside a run; whether the model then reads a range instead of the file is its
   call, but the information arrives at the moment the choice is made.
 
-- **A dispatch is never left unaccounted for** — a `SubagentStop` hook, `subagent_return.js`,
-  marks each dispatch as returned the moment the subagent tool comes back. A dispatch with no
-  recorded outcome is OPEN: `ledger.js status` lists it, `verify` reports it, the next dispatch is
-  told about it, the stop gate refuses the "done" claim and `close` refuses the run until it is
-  recorded as `ok` or `died`. One that never returned past `dispatchPolicy.stallMinutes` is
-  reported as STALLED, so a hung worker and a forgotten outcome read differently.
+- **A dispatch is never left unaccounted for** — a dispatch with no recorded outcome is OPEN:
+  `ledger.js status` lists it, `verify` reports it, and `close` refuses the run until it is
+  recorded as `ok` or `died`. A `SubagentStop` hook, `subagent_return.js`, marks each dispatch
+  as seen alive; that is a sign of life, never a finish, because Claude Code fires it for a
+  background agent soon after launch. One with no sign of life past
+  `dispatchPolicy.stallMinutes` is STALLED: the next dispatch is told, and the stop gate refuses
+  to end the turn over it. A turn may end while agents are still working. The dispatch hook
+  also refuses a prompt that still holds an unfilled `{PLACEHOLDER}` from its template.
 - **One judge, one verdict; one dispatch, one outcome** — `ledger.js verdict` refuses a second
   seal on the dispatch that already sealed one, so a re-review has to be a new dispatch. An outcome
   settles both records of a hook-and-script pair, and the died count counts dispatches. `verify`
@@ -437,6 +441,19 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   models. A profile naming a model the policy does not allow stops preflight, a dispatch on one is
   reported by `verify` (and so fails the merge check), an unreadable policy starts no run, and the
   policy is sealed at init and frozen mid-run, so relaxing it partway shows as TAMPERED.
+- **The person is reachable wherever they are** — channels live in a user-level
+  `~/.claude/ticket-loop/notify.json` (or `TICKET_LOOP_NOTIFY`), never in the repo: ntfy (which can
+  also forward to email), Telegram, WhatsApp, Slack, Discord, and a plain webhook for Teams,
+  Google Chat or Mattermost. Every message goes to every channel, so one blocked in a country or
+  failing on the day silences none. While a run is open, `notify_hook.js` messages the person when
+  the session waits on a permission prompt or a question, or stops mid-run, once per quiet spell.
+  `notify.js ask` sends a numbered question with a one-time code and reads the answer back on the
+  channels our code can poll with no server: ntfy, and a Telegram, Slack or Discord bot (so a
+  country that blocks one still has another). An answer counts only with that code, from the
+  configured chat or user, before the deadline, never from a bot, and no answer is never a yes. With `--run` the answer is
+  sealed as an `approval`, and `ledger.js clear --approval <seq>` accepts it only when it came on
+  a channel the agent could not post on itself and named the glob being cleared. `notify.js test`
+  checks every channel; `doctor.js` warns when nothing can reach you.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing
@@ -549,6 +566,12 @@ Named limits, so they are not mistaken for guarantees:
   that the signing machine behaved. `ci_check.js` narrows this: CI reruns the tests and
   countersigns with a key the developer's machine never held. What it cannot rerun is the QA
   judgement itself, so the verdict in a bundle is still the signing machine's word.
+- **A reply channel is only as private as its secret.** Anyone holding the Telegram chat, or
+  knowing the ntfy topic, can answer. Telegram answers, and Slack or Discord answers from the
+  configured `userId`, can back a clearance because the agent cannot post as you there; ntfy
+  answers never can. WhatsApp, Slack and Discord webhooks, and plain webhooks, only send:
+  receiving on them needs a server this plugin does not run. A Discord bot reads message text
+  only with the Message Content intent enabled in its developer settings.
 - **The org policy reaches a machine only if it is put there.** The harness enforces the file it
   finds; distributing it, and noticing a machine without it, is the organisation's tooling.
 - **The merge check binds only if the platform requires it.** Branch protection that makes the

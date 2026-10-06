@@ -35,10 +35,12 @@ review were interactions between two rows below, which the code alone did not ma
 | 10 | Editing the mirror cannot raise the cap | `ledger.js` → `caps` | `ledger.test.js` :: `editing budget.json cannot raise the cap or reset the count` | budget.json is a mirror; the chain governs |
 | 11 | Archive + re-init cannot reset the count | `ledger.js` → `cmdInit` | `ledger.test.js` :: `archive + re-init cannot silently reset the budget` | Moving the run dir used to be a free budget reset |
 | 12 | Writing report.md does not release the budget | `dispatch_guard.js` → `activeRuns` | `dispatch_guard.test.js` :: `writing report.md does NOT release the budget — only a sealed close does` | The loop's own deliverable must not be its off switch |
-| 64 | A dispatch with no outcome blocks the "done" claim | `stop_gate.js` → `openDispatchFailures` | `stop_gate.test.js` :: `a dispatch with no outcome blocks the "done" claim until it is recorded` | A stalled worker and a forgotten outcome are both invisible until something refuses to proceed over them |
+| 64 | A dispatch gone quiet past the threshold blocks the turn; one still working does not | `stop_gate.js` → `openDispatchFailures` | `stop_gate.test.js` :: `a turn may end while agents work, but a dispatch gone quiet past the threshold blocks it` | A stalled worker is invisible until something refuses to proceed over it; a background agent at work must not be |
 | 65 | A run cannot close over an open dispatch | `ledger.js` → `openDispatches` | `ledger.test.js` :: `a dispatch with no outcome is listed as open, and close refuses until it is resolved` | Close releases the gates; whatever is unaccounted for then never will be |
 | 66 | A subagent's return is recorded without the orchestrator | `subagent_return.js` → `recordReturn` | `subagent_return.test.js` :: `a subagent return is recorded against the oldest dispatch still out, with the agent named` | Only the mark tells a stall from an unrecorded result |
-| 67 | An unresolved dispatch is named before the next slot is spent | `dispatch_guard.js` → `unresolvedContext` | `dispatch_guard.test.js` :: `the next dispatch is told about a return with no outcome, and not about a fresh label` | Between dispatches nothing else runs where the orchestrator would see it |
+| 67 | Only a stalled dispatch is named at the next dispatch | `dispatch_guard.js` → `unresolvedContext` | `dispatch_guard.test.js` :: `the next dispatch says nothing about agents still working, even ones already seen` | Telling the orchestrator to record an outcome for working agents pushes it to invent one |
+| 106 | A prompt with an unfilled template placeholder is refused | `dispatch_guard.js` → `unfilledPlaceholders` | `dispatch_guard.test.js` :: `a prompt with an unfilled template placeholder is refused and not counted` | A literal {RUN_DIR} reached a judge in a field run and nothing noticed |
+| 107 | A sign of life is never read as a finish | `ledger.js` → `openDispatches` | `ledger.test.js` :: `a sign of life is not a finish: a marked dispatch still working is never reported as stalled` | SubagentStop fires for a background agent soon after launch, long before its result |
 | 70 | One judge, one verdict | `ledger.js` → `cmdVerdict` | `ledger.test.js` :: `a judge dispatch seals one verdict; a second seal on the same dispatch is refused` | The last of several seals would govern silently |
 | 71 | An outcome settles a dispatch, not one of its two records | `ledger.js` → `cmdOutcome` | `ledger.test.js` :: `an outcome settles both records of one dispatch, and died counts dispatches, not records` | A pair recorded twice doubles the waste the report shows |
 | 72 | A session dispatching into a run it did not start is told so | `dispatch_guard.js` → `dispatchContext` | `dispatch_guard.test.js` :: `a dispatch into a run this session did not start is told so, and a run of its own is not` | An abandoned run arms every gate in the repo with nothing saying why |
@@ -69,6 +71,12 @@ review were interactions between two rows below, which the code alone did not ma
 | 97 | A risk path only the org names is fenced by the hooks | `hook_lib.js` → `loadConfig` | `policy.test.js` :: `a risk path only the org policy names is fenced by the hooks during a run` | Preflight applying the floor while the guard reads the bare profile would fence nothing |
 | 98 | A dispatch on a model the org does not allow is reported | `ledger.js` → `modelProblems` | `policy.test.js` :: `a dispatch on a model the org policy does not allow is reported by verify` | The integrity check is what the merge check reads, so the violation reaches CI |
 | 99 | The policy is sealed at init and an unreadable one starts no run | `ledger.js` → `cmdInit` | `policy.test.js` :: `the policy is sealed when a run starts, so relaxing it mid-run is TAMPERED` | A floor relaxed mid-run governed nothing |
+| 100 | A message reaches every configured channel and one failure silences none | `notify.js` → `send` | `notify.test.js` :: `a message reaches every channel, each in its own shape, and one failure silences none` | Where one service is blocked, the person must still be reachable on another |
+| 101 | An answer counts only with the question's code, from the configured chat, before the deadline | `notify.js` → `parseAnswer` | `notify.test.js` :: `an answer counts only with the code of its question and from the configured chat` | A stale or unrelated message is not consent |
+| 102 | Silence is never a yes | `notify.js` → `ask` | `notify.test.js` :: `no answer before the deadline is no answer, never a yes` | A run that proceeds on a timeout acts on an answer nobody gave |
+| 103 | Only an answer the agent could not have forged backs a clearance, and only for the glob it named | `ledger.js` → `cmdApproval` | `notify.test.js` :: `an answer is sealed into the run, and only an unforgeable one naming the glob backs a clearance` | An ntfy topic accepts posts from anyone who knows it, the agent included |
+| 104 | A session that stalls mid-run tells the person on its own | `notify_hook.js` → `messageFor` | `notify.test.js` :: `a session that stalls on a permission prompt mid-run messages the person, once, and never outside a run` | The person away from the laptop otherwise assumes the work is finishing |
+| 105 | A Slack or Discord answer counts only from a person, never a bot, and seals only from the configured user | `notify.js` → `pollSlack` | `notify.test.js` :: `without a configured Slack user a bot message is still never an answer` | Where Telegram is blocked, a bot channel must carry the same guarantee: the agent holds the bot token, and a bot cannot post as the person |
 
 ## Stage receipts
 
@@ -168,7 +176,8 @@ review were interactions between two rows below, which the code alone did not ma
 These have no row above because no code enforces them. They live in README's "Yours to
 uphold" and must stay there rather than migrating into this table:
 
-- whether a human was really asked before a clearance was recorded
+- whether a human was really asked before a clearance was recorded, unless the clearance carries
+  an `--approval` from an unforgeable notify channel (rows 103 and 105)
 - GATE B (a design that contradicts the ticket)
 - whether a revision reason is true
 - whether a `died` dispatch outcome was reported at all
