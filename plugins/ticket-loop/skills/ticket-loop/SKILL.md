@@ -27,17 +27,11 @@ mean the profile's resolved values. Substitute them; never infer a stack from th
 
 ## What is mechanical, and what is yours
 
-Hooks and scripts enforce: the dispatch and re-plan caps; the freeze; writes to `done.md`,
-`*.approved.md`, `closed.json` and the chain; the profile and hook sources while a run is
-active; edits under a `riskPaths` glob until a clearance for that glob is sealed; every stage
-gate costing the artifact it names; a check result naming its method, with `asserted` never
-backing a PASS; a QA verdict sealing the contract it judged; the run staying active until
-`ledger.js close` succeeds.
-
-Yours, and visible in the report when missed: running `ledger.js verify` and pasting its real
-output; GATE B; the strike count per class; honest failure classification; keeping
-`done-additions.md` additive; recording a dispatch that died; never recording a clearance a
-human did not give. A skipped stage records no gate; note it in `ledger.md` and the report.
+Hooks and scripts enforce the caps, the freeze, the risk-path fence, the gates, the sealed
+record and publishing; README.md lists each. Yours, and visible in the report when missed:
+pasting `ledger.js verify` verbatim; GATE B; honest failure classes; keeping additions
+additive; recording dead dispatches; never recording a clearance, raise or consent a human did
+not give. A skipped stage records no gate; note it in `ledger.md` and the report.
 
 **Editing a document after a receipt sealed it:** record it first, on every such edit:
 `node <SKILL_DIR>/scripts/ledger.js revise <runDir> <file> --reason "<what changed and why>"`
@@ -77,7 +71,9 @@ goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and
    and only `install` means run `{verify.pubGet}`; then `{verify.codegen}` (skip null values).
    Any failure here → STOP. Never fall back to the user's tree.
 5. `node <SKILL_DIR>/scripts/ledger.js init <runDir> <base-sha>` (add `--restart` after an
-   archive; under `--dry-run` the base is `git rev-parse HEAD`). It seals the profile hash,
+   archive; under `--dry-run` the base is `git rev-parse HEAD`). If `publish.allowed` is not empty, ask the person
+   each allowed act SEPARATELY (push the branch? open the PR/MR? update the ticket?) and record the answers:
+   `ledger.js consent <runDir> --push yes|no --pr yes|no --ticket yes|no "<who answered>"`. It seals the profile hash,
    writes `budget.json` and the `ledger.md` skeleton; if it warns there is no config to seal, STOP.
 
 ## Stage 1 — INTAKE
@@ -258,7 +254,7 @@ slice. Deleting or weakening an existing test has no glob: re-check every return
 re-run a slice that does it. After each green slice:
 `git -C <wt> add -A -- . ':(exclude)test/golden' && git -C <wt> commit -m "wip(<TICKET>): <slice> green"`
 with `attribution.commitTrailer` as a second `-m` when it is a string, and no attribution of
-any kind when null. Commits happen only in the worktree; never push, never touch main.
+any kind when null. Commits happen only in the worktree; never push or touch main (publishing is Stage 11).
 
 ## Stage 8 — VERIFY
 
@@ -357,13 +353,14 @@ when a non-obvious fix finally works: `memory.js add <memoryFile> flaky|fix <TIC
    work and `Integrity:` the history; report them separately. `revisions` in the output are
    recorded edits, listed with their reasons.
 2. With `--update-jira`, post the Summary as a comment via the configured source (Atlassian MCP,
-   `gh issue comment`, `glab issue note`, Trello MCP); skip for `manual`. Never transition
-   ticket status. If `memoryFile` is set, add reusable lessons with `memory.js add` and list
-   them in the report.
+   `gh issue comment`, `glab issue note`, Trello MCP); skip for `manual`. Transition ticket
+   status only through step 3's `--act ticket`. If `memoryFile` is set, add reusable lessons with
+   `memory.js add` and list them in the report.
 3. `node <SKILL_DIR>/scripts/ledger.js gate <runDir> report --evidence <runDir>/report.md`
    then `ledger.js close <runDir>`, LAST (abandoned: `ledger.js archive`). With a key, `ledger.js export
-   <runDir> --out <wt>/.agents/attestations/<TICKET>.bundle.json`; commit it alone: `chore(<TICKET>): attest`.
+   <runDir> --out <wt>/.agents/attestations/<TICKET>.bundle.json`; commit it alone: `chore(<TICKET>): attest`. Then,
+   for each act consented to, in order push, pr, ticket: `node <SKILL_DIR>/scripts/publish.js <runDir> --worktree <wt> --act <act>`.
 4. Final message, also sent with `notify.js send "<status, branch, what waits on you>"`: status (COMPLETE, or INCOMPLETE and why), report path, branch name, the
-   integrity line from `ledger.js verify`, that merge, push and golden regeneration are manual
-   (`handoff.js <runDir> --worktree <wt> --out <file>` prints the PR commands), and plainly what was NOT verified: excluded goldens, every SKIPPED criterion, every
+   integrity line from `ledger.js verify`, what `publish.js` did or refused (else `handoff.js` prints the PR
+   commands), that merge and golden regeneration are manual, and plainly what was NOT verified: excluded goldens, every SKIPPED criterion, every
    stop_gate "NOT verified" note, and on a LOGIC-ONLY run every visual and contract check.

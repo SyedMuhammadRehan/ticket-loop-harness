@@ -80,8 +80,8 @@ const PROTECTED_REFS = [
 // `$` ( ) and backtick are excluded because $(...) / `...` execute inside an otherwise
 // perfectly sanctioned-looking command line.
 const SANCTIONED_COMMAND =
-  /^\s*("[^"]*node(\.exe)?"|node(\.exe)?)\s+[^;&|<>$`()%!\r\n]*\b(freeze_done|validate_done|ledger|chain|survey)\.js\b[^;&|<>$`()%!\r\n]*$/;
-const HARNESS_SCRIPT = /\b(freeze_done|validate_done|ledger|chain|survey)\.js\b/;
+  /^\s*("[^"]*node(\.exe)?"|node(\.exe)?)\s+[^;&|<>$`()%!\r\n]*\b(freeze_done|validate_done|ledger|chain|survey|publish)\.js\b[^;&|<>$`()%!\r\n]*$/;
+const HARNESS_SCRIPT = /\b(freeze_done|validate_done|ledger|chain|survey|publish)\.js\b/;
 
 // --- read-only recognition ------------------------------------------------------------
 
@@ -170,6 +170,7 @@ const PUBLISHING = [
   { re: /\bgit\b[^|;&\n]*\bmerge(?!-)\b/, what: 'git merge — merging is the human decision this loop exists to inform' },
   { re: /\bgit\b[^|;&\n]*\brebase\b/, what: 'git rebase — rewriting history mid-run breaks the base the receipts are anchored to' },
   { re: /\bgh\b[^|;&\n]*\bpr\b[^|;&\n]*\b(merge|create)\b/, what: 'gh pr — opening or merging a PR publishes work the run has not finished proving' },
+  { re: /\bglab\b[^|;&\n]*\bmr\b[^|;&\n]*\b(merge|create)\b/, what: 'glab mr — opening or merging an MR publishes work the run has not finished proving' },
 ];
 
 // `2>/dev/null`, `>NUL`, `2>&1` write nothing and appear in almost every inspection command,

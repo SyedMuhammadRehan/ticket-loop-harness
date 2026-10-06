@@ -27,6 +27,7 @@
 //   ledger.js keygen                               create this machine's Ed25519 signing key
 //   ledger.js approval <runDir> --question .. --choice n ..   a person's answer from a notify channel
 //   ledger.js raise <runDir> --tokens <n> <reason> [--approval <seq>]  a person lifts the token ceiling
+//   ledger.js consent <runDir> --push yes|no --pr yes|no --ticket yes|no "<who said so>"  per-run publish answers
 //   ledger.js export <runDir> --out <file>         signed bundle of a closed run, for verify_bundle.js
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
@@ -1055,9 +1056,50 @@ function usableApproval(runDir, approvalSeq, what) {
   if (Date.now() - Date.parse(approval.at) > minutes * 60000) {
     fail(`the approval at seq ${approvalSeq} is older than ${minutes} min; ask again`);
   }
-  const spent = [...chain.ofKind(runDir, 'clearance'), ...chain.ofKind(runDir, 'raise')].find((r) => r.payload.approvalSeq === approval.seq);
+  const spent = [...chain.ofKind(runDir, 'clearance'), ...chain.ofKind(runDir, 'raise'), ...chain.ofKind(runDir, 'consent')].find((r) => r.payload.approvalSeq === approval.seq);
   if (spent) fail(`the approval at seq ${approvalSeq} already backed the ${spent.kind} at seq ${spent.seq}; one answer, one act`);
   return approval;
+}
+
+const PUBLISH_ACTS = ['push', 'pr', 'ticket'];
+
+// What the profile, under the org policy, lets a run publish. An act missing here cannot be
+// consented to, so no answer given mid-run can widen what the repo allows.
+function publishAllowed() {
+  const list = ((readConfig().publish || {}).allowed) || [];
+  return PUBLISH_ACTS.filter((a) => Array.isArray(list) && list.includes(a));
+}
+
+// The person's answers to the three publish questions, asked once at the start of a run. Each act
+// is answered on its own; anything not answered yes is a no.
+function cmdConsent(runDir, answers, reason, approvalSeq) {
+  requireChain(runDir);
+  requireOpen(runDir, 'consent');
+  if (chain.ofKind(runDir, 'consent').length) {
+    console.error('ledger consent: this run already recorded its publish answers; they are asked once, at the start');
+    process.exit(1);
+  }
+  if (!reason || !reason.trim()) {
+    console.error('ledger consent: need a reason — who answered, and where');
+    process.exit(1);
+  }
+  const allowed = publishAllowed();
+  const acts = {};
+  for (const act of PUBLISH_ACTS) {
+    const raw = String(answers[act] || 'no').toLowerCase();
+    if (!['yes', 'no'].includes(raw)) {
+      console.error(`ledger consent: --${act} must be yes or no`);
+      process.exit(1);
+    }
+    if (raw === 'yes' && !allowed.includes(act)) {
+      console.error(`ledger consent: the profile does not allow "${act}" (publish.allowed is [${allowed.join(', ')}]); a run cannot be given more than the repo allows`);
+      process.exit(1);
+    }
+    acts[act] = raw === 'yes';
+  }
+  const approval = approvalSeq !== undefined ? usableApproval(runDir, approvalSeq, 'consent') : null;
+  chain.append(runDir, 'consent', { acts, reason: reason.trim(), ...(approval ? { approvalSeq: approval.seq, approvedVia: approval.payload.channel } : {}) });
+  console.log(`ledger: publish consent recorded — ${PUBLISH_ACTS.map((a) => `${a} ${acts[a] ? 'yes' : 'no'}`).join(', ')}`);
 }
 
 function cmdRaise(runDir, tokensArg, reason, approvalSeq) {
@@ -1688,6 +1730,7 @@ function main() {
     forgeable,
   };
   const approvalSeq = takeFlag(argv, '--approval')[0];
+  const consentAnswers = { push: takeFlag(argv, '--push')[0], pr: takeFlag(argv, '--pr')[0], ticket: takeFlag(argv, '--ticket')[0] };
   const model = takeFlag(argv, '--model')[0];
   const outFile = takeFlag(argv, '--out')[0];
   const sliceFiles = takeFlag(argv, '--files');
@@ -1712,6 +1755,7 @@ function main() {
         '       ledger.js keygen | export <runDir> --out <file> [--worktree <path>]\n' +
         '       ledger.js approval <runDir> --question <q> --choice <n> --channel <c> --sender <s> --nonce <x> [--forgeable]\n' +
         '       ledger.js raise <runDir> --tokens <n> "<reason>" [--approval <seq>]\n' +
+        '       ledger.js consent <runDir> --push yes|no --pr yes|no --ticket yes|no "<who answered>" [--approval <seq>]\n' +
         '       ledger.js cost <runDir> [--worktree <path>] | clear <runDir> <glob> <reason>\n' +
         '       ledger.js revise <runDir> <file> --reason "<why>"\n' +
         '       ledger.js outcome <runDir> <dispatchSeq> <ok|died> [note] [--tokens <n>] [--ms <n>]\n' +
@@ -1751,6 +1795,8 @@ function main() {
       return cmdClear(runDir, rest[0], rest.slice(1).join(' '), approvalSeq);
     case 'approval':
       return cmdApproval(runDir, approvalArgs);
+    case 'consent':
+      return cmdConsent(runDir, consentAnswers, rest.join(' '), approvalSeq);
     case 'raise':
       return cmdRaise(runDir, tokens, rest.join(' '), approvalSeq);
     case 'revise':
@@ -1774,4 +1820,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { counters, caps, dispatchCount, openDispatches, closedPath, STAGES, VERDICTS, LEDGER_PROTOCOL };
+module.exports = { counters, caps, dispatchCount, openDispatches, closedPath, integrityReport, readConfig, publishAllowed, PUBLISH_ACTS, STAGES, VERDICTS, LEDGER_PROTOCOL };
