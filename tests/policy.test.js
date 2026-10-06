@@ -107,3 +107,15 @@ test('without a policy nothing changes', (t) => {
   assert.strictEqual(cfg._meta.policy, null);
   assert.ok(!cfg._meta.warnings.some((w) => w.startsWith('POLICY')));
 });
+
+test('the org policy caps the token ceiling and a profile may only set a lower one', (t) => {
+  const { env } = withPolicy(t, { dispatchPolicy: { maxRunTokens: 400000 } });
+  const loose = mkRun({ verify: { test: 'x' } });
+  const tight = mkRun({ verify: { test: 'x' }, dispatchPolicy: { maxRunTokens: 250000 } });
+  t.after(() => {
+    rmDir(loose.root);
+    rmDir(tight.root);
+  });
+  assert.strictEqual(JSON.parse(runScript(LOAD_CONFIG, [], { cwd: loose.root, env }).stdout).dispatchPolicy.maxRunTokens, 400000);
+  assert.strictEqual(JSON.parse(runScript(LOAD_CONFIG, [], { cwd: tight.root, env }).stdout).dispatchPolicy.maxRunTokens, 250000);
+});

@@ -52,7 +52,11 @@ const DEFAULTS = {
     minSliceLines: 50,
     promptBudgetChars: 32000,
     stallMinutes: 30,
+    // Tokens a run may spend before the next dispatch is refused; null = no ceiling.
+    maxRunTokens: null,
   },
+  // How long a phone answer stays usable to back a clearance or a raise.
+  approvalMinutes: 60,
   // A run untouched for this long, by a session that never wrote to it, is named as abandoned
   // by the hooks it still arms. They keep enforcing; the number only decides when they say so.
   staleRunHours: 24,
@@ -232,6 +236,15 @@ function resolve() {
       warnings.push(`invalid dispatchPolicy.${key} "${v}" — must be an integer >= ${min}; forcing ${DEFAULTS.dispatchPolicy[key]}`);
       cfg.dispatchPolicy[key] = DEFAULTS.dispatchPolicy[key];
     }
+  }
+  const ceiling = cfg.dispatchPolicy.maxRunTokens;
+  if (ceiling !== null && (!Number.isInteger(ceiling) || ceiling < 1)) {
+    warnings.push(`invalid dispatchPolicy.maxRunTokens "${ceiling}" — must be a whole number above zero or null; forcing null (no ceiling)`);
+    cfg.dispatchPolicy.maxRunTokens = null;
+  }
+  if (!Number.isInteger(cfg.approvalMinutes) || cfg.approvalMinutes < 0) {
+    warnings.push(`invalid approvalMinutes "${cfg.approvalMinutes}" — must be an integer >= 0; forcing ${DEFAULTS.approvalMinutes}`);
+    cfg.approvalMinutes = DEFAULTS.approvalMinutes;
   }
   if (!Number.isInteger(cfg.staleRunHours) || cfg.staleRunHours < 0) {
     warnings.push(`invalid staleRunHours "${cfg.staleRunHours}" — must be an integer >= 0; forcing ${DEFAULTS.staleRunHours}`);

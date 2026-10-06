@@ -222,6 +222,45 @@ function staleCopies(root, home = os.homedir()) {
   return found;
 }
 
+const NOTIFY_STATE = path.join('.claude', 'hooks', 'state', 'notify-state.json');
+let notifyLib;
+
+// Send through the person's notify channels unless the same key was sent within repeatMs. Never
+// throws: a hook that cannot notify still has to do its own job.
+async function notifyOnce(root, key, repeatMs, text) {
+  if (notifyLib === undefined) {
+    try {
+      notifyLib = require(path.join(__dirname, '..', 'skills', 'ticket-loop', 'scripts', 'notify.js'));
+    } catch {
+      notifyLib = null;
+    }
+  }
+  if (!notifyLib) return { sent: 0, note: 'notify.js is not beside these hooks' };
+  const file = path.join(root, NOTIFY_STATE);
+  let state = {};
+  try {
+    state = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    state = {};
+  }
+  if (Date.now() - (state[key] || 0) < repeatMs) return { sent: 0, note: 'sent recently' };
+  let result;
+  try {
+    result = await notifyLib.send(text);
+  } catch (err) {
+    return { sent: 0, error: err.message };
+  }
+  if (result.sent) {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ ...state, [key]: Date.now() }));
+    } catch (err) {
+      result.stateError = err.message;
+    }
+  }
+  return result;
+}
+
 function readStdinJson() {
   try {
     let raw = fs.readFileSync(0, 'utf8');
@@ -247,6 +286,7 @@ module.exports = {
   activeRuns,
   findLedger,
   runStatus,
+  notifyOnce,
   staleCopies,
   HARNESS_HOOK_FILES,
   foreignRunNote,

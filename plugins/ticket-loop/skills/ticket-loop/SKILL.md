@@ -231,7 +231,7 @@ prompt's ladder, and the same ledger entry, when it is test-only or a one-file c
 under `dispatchPolicy.minSliceLines` (default 50). Dispatch when the slice is feature-sized,
 needs a fresh context, or is the QA judge. **Before EVERY dispatch** (survey, implementer,
 fixer, QA): `node <SKILL_DIR>/scripts/ledger.js dispatch <runDir> "<kind>: <slice-or-check> [<model>]"`
-Exit 2 means the budget is exhausted: do not dispatch; go to Stage 11 as INCOMPLETE. The
+Exit 2 means the budget, the token ceiling or the QA cap is spent: do not dispatch; go to Stage 11 as INCOMPLETE unless the person raises it. The
 `dispatch_guard` hook counts the tool call either way; this call labels it for the report.
 **When a dispatch returns**, seal what it cost, using the total tokens and duration the Agent
 tool reports on completion and never an estimate:

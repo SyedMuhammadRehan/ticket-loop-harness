@@ -407,3 +407,39 @@ test('the hook records the model the Agent tool was handed, and null for the ses
     rmDir(root);
   }
 });
+
+// --- the token ceiling and the QA cap are refusals at the dispatch, not advice ---
+
+test('a run at its token ceiling is refused its next dispatch, warned at 80 percent, and freed by a raise', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, dispatchPolicy: { maxRunTokens: 1000 } });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(dispatch(root).status, 0);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '2', 'ok', '--tokens', '850']).status, 0);
+    const warned = dispatch(root);
+    assert.strictEqual(warned.status, 0);
+    assert.match(hasContext(warned), /850 of the run's 1000-token ceiling is spent/);
+    assert.strictEqual(ledger(root, ['outcome', runDir, '4', 'ok', '--tokens', '200']).status, 0);
+    const refused = dispatch(root);
+    assert.strictEqual(refused.status, 2, refused.stderr);
+    assert.match(refused.stderr, /1050 of its 1000-token ceiling/);
+    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 2, 'the refused dispatch was not counted');
+    assert.strictEqual(ledger(root, ['raise', runDir, '--tokens', '500', 'agreed to finish C4']).status, 0);
+    assert.strictEqual(dispatch(root).status, 0);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('after three BLOCK verdicts a fourth judge is refused, while other work still dispatches', () => {
+  const { root, runDir } = setup();
+  try {
+    for (let i = 0; i < 3; i++) chain.append(runDir, 'verdict', { verdict: 'BLOCK', inputs: [], dispatchSeq: 1, dispatchSource: 'hook' });
+    const judge = dispatch(root, { subagent_type: 'ticket-loop:ticket-loop-qa', description: 'QA round 4' });
+    assert.strictEqual(judge.status, 2, judge.stderr);
+    assert.match(judge.stderr, /3 QA verdicts in this run were BLOCK/);
+    assert.strictEqual(dispatch(root, { subagent_type: 'general-purpose', description: 'fix C2' }).status, 0);
+  } finally {
+    rmDir(root);
+  }
+});
