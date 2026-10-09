@@ -95,6 +95,7 @@ plugins/ticket-loop/
       ci_check.js                    # the merge check CI runs on a pull request (see docs/ci.md)
       handoff.js                     # a closed run's pull request description and the commands to open it; pushes nothing
       policy.js                      # the org policy: a floor under every repo's profile
+      publish.js                     # push the ticket branch, open the PR/MR, update the ticket — only on consent
       notify.js                      # reach the person on every channel they set up; ask, and seal the answer
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
@@ -120,6 +121,7 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `hooks.postEdit` / `hooks.stopGate` | what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile. `stopGate` also takes `baseRef` (the branch point committed slices are diffed against), `worktrees` (`all`/`ticket`/`cwd`), `requireMatchingTest` (block source changes no test covers), and `maxCommandChars` (targeted test files run in batches under this command length; the default keeps Windows under cmd.exe's limit) |
 | `dispatchPolicy` | `minSliceLines` (default 50) and `promptBudgetChars` (default 32000) are advisory and reported by `ledger.js cost`. `stallMinutes` (default 30) is how long a dispatch may stay out without returning before `status`, `verify` and the next dispatch call it STALLED |
 | `dispatchPolicy.maxRunTokens` | optional token ceiling per run (default none). At 80 percent the next dispatch is warned; at 100 percent `dispatch_guard` refuses it and messages the person; `ledger.js raise <runDir> --tokens <n> "<reason>"`, given on a person's word, lifts it. The org policy can cap it |
+| `publish.allowed` / `publish.platform` | what a finished run may publish: any of `push` (the ticket branch only), `pr` (open the PR/MR), `ticket` (comment and move to review). Empty by default, so the loop hands off and publishes nothing. Each allowed act is asked separately at the start of every run. `platform` names GitHub or GitLab for a self-hosted remote whose URL does not say which |
 | `approvalMinutes` | how long a phone answer stays usable to back a clearance or raise (default 60); each answer backs one act |
 | `staleRunHours` | how long an open run may sit idle before the hooks call it ABANDONED when another session meets it (default 24). The gates keep enforcing either way; this only decides the wording |
 | `attribution.commitTrailer` | repo policy on AI attribution: a trailer string appended to every worktree commit (for teams that require disclosure), or `null` (default) for clean commits with none. The implementer is also barred from AI-style narration comments — new code must be indistinguishable from the code around it |
@@ -430,6 +432,14 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   swap its test command. With `TICKET_LOOP_SIGNING_KEY` in CI it countersigns what it ran. Make
   it a required status check and nothing merges around it; [docs/ci.md](docs/ci.md) has the
   GitHub, GitLab and Bitbucket jobs.
+- **Publishing is opt-in, per act, per run** — with `publish.allowed` set, the loop asks the person
+  at the start of each run, one question per act, whether it may push the ticket branch, open
+  the PR/MR, and update the ticket, and seals the answers (`ledger.js consent`). After close,
+  `publish.js` does each consented act only if the run's sealed record passed: a passing QA
+  verdict, every frozen criterion PASS by command, integrity intact, the worktree clean and on
+  the ticket branch. It pushes nothing but `ticket/<ID>`, never force-pushes, never merges, and
+  the guard still refuses raw `git push`, `gh pr create` and `glab mr create` during a run.
+  Consent cannot exceed the profile, and the org policy can cut the profile's list.
 - **A finished branch is handed off, not published** — `handoff.js` writes a closed run's pull
   request description from its report and attestation (verdict, integrity, attested head, the
   signing key and how to verify it), reads the platform from the remote, and prints the commands
@@ -581,6 +591,9 @@ Named limits, so they are not mistaken for guarantees:
   answers never can. WhatsApp, Slack and Discord webhooks, and plain webhooks, only send:
   receiving on them needs a server this plugin does not run. A Discord bot reads message text
   only with the Message Content intent enabled in its developer settings.
+- **After close, publishing is a convention as well as a script.** The guard fences `git push`
+  only while a run is open; once it closes, `publish.js` is the documented path and its log
+  sits in `published.json`, but nothing stops a person or agent pushing by hand.
 - **The org policy reaches a machine only if it is put there.** The harness enforces the file it
   finds; distributing it, and noticing a machine without it, is the organisation's tooling.
 - **The merge check binds only if the platform requires it.** Branch protection that makes the

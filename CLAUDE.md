@@ -97,4 +97,6 @@ no install at all.
 ## Git
 
 Branch from `main`, PR back, conventional commit prefixes. Never push or merge without being
-asked. The harness itself never pushes — neither should work on it.
+asked. The harness publishes only through `publish.js`: an act the repo's `publish.allowed`
+permits, that the person said yes to at the start of that run, for a run whose sealed record
+passed. It never merges. Work on the harness itself is never pushed without being asked.

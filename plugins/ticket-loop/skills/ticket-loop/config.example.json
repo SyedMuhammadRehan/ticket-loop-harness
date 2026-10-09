@@ -30,6 +30,8 @@
     "//dispatchPolicy": "A subagent costs its whole prompt before it works, so small slices are cheaper inline. minSliceLines: below this many expected changed lines, do the slice inline rather than dispatching (test-only slices always inline). promptBudgetChars: prompts above this are reported as over-budget by 'ledger.js cost'. Both are advisory and reported afterwards — nothing at dispatch time can know how large a change will turn out. stallMinutes: a dispatch out this long without returning is reported as STALLED by status, verify and the next dispatch.",
     "dispatchPolicy": { "minSliceLines": 50, "promptBudgetChars": 32000, "stallMinutes": 30 },
     "staleRunHours": 24,
+    "//publish": "What a finished run may publish, each act asked separately at the start of every run: push (the ticket branch only), pr (open the PR/MR), ticket (comment and move to review). Empty = hand off only. platform: github or gitlab when a self-hosted remote's URL does not say.",
+    "publish": { "allowed": [] },
     "attribution": {
       "//": "commitTrailer: string to append to every worktree commit (for repos that REQUIRE disclosure), or null for clean commits with no AI attribution. Repo policy decides — the default is null.",
       "commitTrailer": null

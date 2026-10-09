@@ -8,6 +8,7 @@
 //   requireMatchingTest    forces hooks.stopGate.requireMatchingTest on
 //   attribution.commitTrailer  forces the trailer string onto every worktree commit
 //   dispatchPolicy.maxRunTokens  caps the tokens one run may spend
+//   publish.allowed        the most a repo may publish; a profile's list is cut down to it
 //
 // A violation is not repaired silently: changing a model behind the user's back would leave the
 // run on a tier nobody chose. It is reported, and preflight stops on it.
@@ -89,6 +90,12 @@ function applyPolicy(cfg, loaded) {
       out.dispatchPolicy = { ...(out.dispatchPolicy || {}), maxRunTokens: tokenCap };
       applied.push(`dispatchPolicy.maxRunTokens capped at ${tokenCap}`);
     }
+  }
+  if (p.publish && Array.isArray(p.publish.allowed)) {
+    const own = (out.publish && Array.isArray(out.publish.allowed)) ? out.publish.allowed : [];
+    const kept = own.filter((a) => p.publish.allowed.includes(a));
+    if (kept.length !== own.length) applied.push(`publish.allowed cut to [${kept.join(', ')}]`);
+    out.publish = { ...(out.publish || {}), allowed: kept };
   }
   if (p.requireMatchingTest === true && out.hooks && out.hooks.stopGate && out.hooks.stopGate.requireMatchingTest !== true) {
     out.hooks = { ...out.hooks, stopGate: { ...out.hooks.stopGate, requireMatchingTest: true } };

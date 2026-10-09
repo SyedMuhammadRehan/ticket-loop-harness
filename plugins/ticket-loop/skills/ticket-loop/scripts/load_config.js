@@ -57,6 +57,11 @@ const DEFAULTS = {
   },
   // How long a phone answer stays usable to back a clearance or a raise.
   approvalMinutes: 60,
+  // What a finished run may publish, and only on the person's per-run consent: push the ticket
+  // branch, open the PR/MR, update the ticket. Empty = the loop hands off and publishes nothing.
+  publish: {
+    allowed: [],
+  },
   // A run untouched for this long, by a session that never wrote to it, is named as abandoned
   // by the hooks it still arms. They keep enforcing; the number only decides when they say so.
   staleRunHours: 24,
@@ -241,6 +246,15 @@ function resolve() {
   if (ceiling !== null && (!Number.isInteger(ceiling) || ceiling < 1)) {
     warnings.push(`invalid dispatchPolicy.maxRunTokens "${ceiling}" — must be a whole number above zero or null; forcing null (no ceiling)`);
     cfg.dispatchPolicy.maxRunTokens = null;
+  }
+  const acts = Array.isArray(cfg.publish.allowed) ? cfg.publish.allowed : [];
+  const unknown = acts.filter((a) => !['push', 'pr', 'ticket'].includes(a));
+  if (!Array.isArray(cfg.publish.allowed) || unknown.length) {
+    warnings.push(`invalid publish.allowed ${JSON.stringify(cfg.publish.allowed)} — only "push", "pr" and "ticket" are acts; unknown ones are dropped`);
+    cfg.publish.allowed = acts.filter((a) => ['push', 'pr', 'ticket'].includes(a));
+  }
+  if (cfg.publish.allowed.includes('pr') && !cfg.publish.allowed.includes('push')) {
+    warnings.push('publish.allowed has "pr" without "push": a PR needs the branch on the remote, so "pr" can never be used');
   }
   if (!Number.isInteger(cfg.approvalMinutes) || cfg.approvalMinutes < 0) {
     warnings.push(`invalid approvalMinutes "${cfg.approvalMinutes}" — must be an integer >= 0; forcing ${DEFAULTS.approvalMinutes}`);
