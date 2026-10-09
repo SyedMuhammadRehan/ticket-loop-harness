@@ -1246,3 +1246,49 @@ test('a phone approval backs one act, and only while it is fresh', () => {
     rmDir(root);
   }
 });
+
+// --- a run starts from the profile's base branch ---
+
+test('init refuses a base that is not the tip of the base branch unless a reason is given', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, hooks: { stopGate: { extensions: ['.js'], baseRef: 'main' } } });
+  try {
+    fs.rmSync(path.join(root, '.git'), { recursive: true, force: true });
+    const g = (...args) => {
+      const r = require('node:child_process').spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+      assert.strictEqual(r.status, 0, r.stderr);
+      return r.stdout.trim();
+    };
+    g('init', '-q', '-b', 'main');
+    g('config', 'user.email', 't@t');
+    g('config', 'user.name', 't');
+    fs.writeFileSync(path.join(root, 'a.txt'), '1\n');
+    g('add', 'a.txt');
+    g('commit', '-qm', 'base');
+    const mainTip = g('rev-parse', 'HEAD');
+    g('checkout', '-q', '-b', 'refactor/other-work');
+    fs.writeFileSync(path.join(root, 'a.txt'), '2\n');
+    g('commit', '-qam', 'unrelated work');
+    const otherTip = g('rev-parse', 'HEAD');
+
+    const wrong = ledger(root, ['init', runDir, otherTip]);
+    assert.strictEqual(wrong.status, 1, wrong.stderr);
+    assert.match(wrong.stderr, /not the tip of the profile's base branch main/);
+    assert.ok(!chain.exists(runDir), 'nothing is initialised on a wrong base');
+
+    const reasoned = ledger(root, ['init', runDir, otherTip, '--off-base', 'stacked on CON-816, merged first']);
+    assert.strictEqual(reasoned.status, 0, reasoned.stderr);
+    assert.strictEqual(chain.first(runDir, 'init').payload.offBase, 'stacked on CON-816, merged first');
+
+    const { root: root2, runDir: runDir2 } = mkRun({ verify: { test: 'x' }, hooks: { stopGate: { extensions: ['.js'], baseRef: 'main' } } });
+    try {
+      fs.rmSync(path.join(root2, '.git'), { recursive: true, force: true });
+      fs.cpSync(path.join(root, '.git'), path.join(root2, '.git'), { recursive: true });
+      fs.rmSync(path.join(root2, '.git', 'ticket-loop'), { recursive: true, force: true });
+      assert.strictEqual(ledger(root2, ['init', runDir2, mainTip]).status, 0, 'the tip of the base branch is accepted');
+    } finally {
+      rmDir(root2);
+    }
+  } finally {
+    rmDir(root);
+  }
+});

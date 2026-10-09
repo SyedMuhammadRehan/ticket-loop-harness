@@ -6,7 +6,7 @@
 // nothing, and `verify` reports the disagreement. The caps themselves are recorded in the
 // chain's init receipt, so raising them by editing a file no longer works.
 //
-//   ledger.js init <runDir> [baseSha] [--restart]  create the chain (refuses to reset)
+//   ledger.js init <runDir> [baseSha] [--restart] [--off-base "<why>"]  create the chain (refuses to reset)
 //   ledger.js dispatch <runDir> [label]            +1 dispatch; exit 2 at the cap
 //   ledger.js replan <runDir> [reason]             +1 re-plan;  exit 2 at the cap
 //   ledger.js gate <runDir> <stage> [--evidence f] record that a stage completed
@@ -285,7 +285,31 @@ function requireOpen(runDir, what) {
   process.exit(1);
 }
 
+// A run's base is the tip of the profile's base branch. Branching from whatever the session was
+// on carried a field run's unrelated commits into its ticket branch and its recorded base.
+// Null when the base is right, cannot be judged (no base ref, or git cannot resolve one), or a
+// person gave a reason to start elsewhere.
+function baseProblem(baseSha, offBase) {
+  if (offBase || !baseSha) return null;
+  const ref = ((readConfig().hooks || {}).stopGate || {}).baseRef;
+  if (!ref) return null;
+  const tip = gitLines('.', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  const given = gitLines('.', ['rev-parse', '--verify', '--quiet', `${baseSha}^{commit}`]);
+  if (!tip || !tip[0] || !given || !given[0]) return null;
+  if (tip[0].trim() === given[0].trim()) return null;
+  return (
+    `base ${String(baseSha).slice(0, 12)} is not the tip of the profile's base branch ${ref} (${tip[0].trim().slice(0, 12)}).\n` +
+    `  Create the worktree from it: git worktree add <wt> -b ticket/<TICKET> ${ref}\n` +
+    `  If this ticket must start elsewhere, say why: --off-base "<reason>".`
+  );
+}
+
 function cmdInit(runDir, baseSha, opts) {
+  const wrongBase = baseProblem(baseSha, opts.offBase);
+  if (wrongBase) {
+    console.error(`ledger init: ${wrongBase}`);
+    process.exit(1);
+  }
   // The run dir is a protected namespace: the write guard refuses a plain mkdir under it, so
   // the subdirectories the playbook expects have to come from a sanctioned invocation.
   fs.mkdirSync(path.join(runDir, 'screenshots'), { recursive: true });
@@ -348,6 +372,7 @@ function cmdInit(runDir, baseSha, opts) {
   const { inGit } = chain.resolveChainDir(runDir);
   chain.append(runDir, 'init', {
     baseSha: baseSha || null,
+    ...(opts.offBase ? { offBase: opts.offBase } : {}),
     maxDispatches: MAX_DISPATCHES,
     maxReplans: MAX_REPLANS,
     evidence: configSealed,
@@ -1704,6 +1729,7 @@ function main() {
   const argv = process.argv.slice(2);
   const restart = argv.includes('--restart');
   if (restart) argv.splice(argv.indexOf('--restart'), 1);
+  const offBase = takeFlag(argv, '--off-base')[0];
   const source = takeFlag(argv, '--source')[0];
   const promptChars = takeFlag(argv, '--prompt-chars')[0];
   const checkMethod = takeFlag(argv, '--by')[0];
@@ -1768,7 +1794,7 @@ function main() {
 
   switch (cmd) {
     case 'init':
-      return cmdInit(runDir, rest[0], { restart });
+      return cmdInit(runDir, rest[0], { restart, offBase });
     case 'dispatch':
       return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session, model });
     case 'replan':
