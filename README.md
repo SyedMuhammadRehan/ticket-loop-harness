@@ -96,6 +96,7 @@ plugins/ticket-loop/
       handoff.js                     # a closed run's pull request description and the commands to open it; pushes nothing
       policy.js                      # the org policy: a floor under every repo's profile
       publish.js                     # push the ticket branch, open the PR/MR, update the ticket — only on consent
+      run_in.js                      # run a check command with the worktree as its directory, any stack
       notify.js                      # reach the person on every channel they set up; ask, and seal the answer
     config.example.json              # profiles for Flutter / Python / Go — copy ONE
 settings.example.json                # manual hook registration + an OPTIONAL permissions deny list
@@ -473,6 +474,11 @@ guardrail you *believe* in but that is only a sentence in a prompt is worse than
   never more. After three BLOCK verdicts the hook refuses a fourth judge, so a review loop nobody
   steers stops and asks. A phone approval backs exactly one clearance or raise, within
   `approvalMinutes`.
+- **A run starts from the right place, and checks run in it** — the worktree is created from the
+  profile's base branch, and `ledger.js init` refuses a base commit that is not that branch's tip
+  unless the person gives `--off-base "<why>"`, so a session sitting on another branch cannot carry
+  its commits into the ticket branch. Every check runs through `run_in.js <wt> <command>`, so tools
+  that resolve their config from the working directory see the worktree on every stack.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
   under `hooks.stopGate.maxCommandChars`, every file once, stopping at the first batch that
   fails. A command the platform refuses to start is reported as NOT verified, like a missing
