@@ -1108,6 +1108,71 @@ function commandResult(runDir, criterion, claimed, opts) {
   return ran;
 }
 
+// What the worktree held when a command ran: HEAD, the uncommitted diff, and the untracked files.
+// A red run and the pass that follows it must differ here, or no code changed between them.
+function treeOf(cwd) {
+  const run = (args) => spawnSync('git', ['-C', cwd, ...args], { maxBuffer: 256 * 1024 * 1024, timeout: 60000 });
+  const head = run(['rev-parse', 'HEAD']);
+  if (head.status !== 0) return null;
+  const hash = crypto.createHash('sha256');
+  hash.update(head.stdout);
+  hash.update(run(['diff', 'HEAD', '--binary']).stdout || '');
+  const untracked = String(run(['ls-files', '-o', '--exclude-standard', '-z']).stdout || '').split('\0').filter(Boolean).sort();
+  for (const f of untracked) {
+    hash.update(`\0${f}\0`);
+    try {
+      hash.update(fs.readFileSync(path.join(cwd, f)));
+    } catch {
+      hash.update('unreadable');
+    }
+  }
+  return hash.digest('hex');
+}
+
+// Tests first, as a receipt: the criterion's frozen command, run by the ledger before the
+// implementation, sealed only when it fails. A test that already passes proves nothing about the
+// change it was written for.
+function cmdRed(runDir, id, opts = {}) {
+  requireChain(runDir);
+  requireOpen(runDir, 'red');
+  const refuse = (why) => {
+    console.error(`ledger red: refusing ${id} — ${why}`);
+    process.exit(1);
+  };
+  const criterion = frozenCriterion(runDir, id);
+  if (!criterion) refuse(`not a criterion of the frozen contract (${FROZEN_CONTRACT.join(', ')} in ${runDir})`);
+  if (criterion.kind !== 'test') refuse(`it is a (${criterion.kind}) criterion; a red run is for (test) criteria`);
+  if (!criterion.run || NON_COMMAND_RUNNERS.test(criterion.run)) refuse(`the frozen contract gives it no shell command to run`);
+  if (!opts.cwd || !fs.existsSync(opts.cwd) || !fs.statSync(opts.cwd).isDirectory()) {
+    refuse(`--cwd <dir> must name the worktree the test runs in${opts.cwd ? `; ${opts.cwd} is not one` : ''}`);
+  }
+  let timeoutMs = DEFAULT_CHECK_TIMEOUT_MS;
+  if (opts.timeoutMs !== undefined) {
+    if (!/^\d+$/.test(String(opts.timeoutMs)) || Number(opts.timeoutMs) <= 0) refuse(`--timeout-ms must be a whole number above zero, got "${opts.timeoutMs}"`);
+    timeoutMs = Number(opts.timeoutMs);
+  }
+  const ran = runCriterion(criterion.run, opts.cwd, timeoutMs);
+  if (ran.timedOut || ran.exitCode === null) refuse(`"${ran.command}" did not finish with an exit code, so it showed no failure`);
+  if (ran.exitCode === 0) {
+    refuse(
+      `"${ran.command}" already passes before the implementation. Either the criterion already holds ` +
+        `(rung 1: say so in the slice return) or the test does not exercise the change.`
+    );
+  }
+  const rec = chain.append(runDir, 'red', { id: criterion.id, ...ran, tree: treeOf(opts.cwd) });
+  console.log(`ledger: red run for ${criterion.id} sealed (seq ${rec.seq}): "${ran.command}" exited ${ran.exitCode} — now implement`);
+}
+
+// Proven when a red run for the criterion precedes its latest PASS by command and the worktree
+// changed in between.
+function testFirstOf(criterion, lastCheck, reds) {
+  if (criterion.kind !== 'test') return null;
+  const passed = lastCheck && lastCheck.payload.result === 'PASS' && lastCheck.payload.tree;
+  if (!passed) return 'missing';
+  const proof = reds.some((r) => r.payload.id === criterion.id && r.seq < lastCheck.seq && r.payload.tree && r.payload.tree !== lastCheck.payload.tree);
+  return proof ? 'proven' : 'missing';
+}
+
 function cmdCheck(runDir, id, result, method, note, opts = {}) {
   requireChain(runDir);
   requireOpen(runDir, 'check');
@@ -1151,7 +1216,7 @@ function cmdCheck(runDir, id, result, method, note, opts = {}) {
     );
     process.exit(1);
   }
-  const ran = by === 'command' ? commandResult(runDir, criterion, normalized, opts) : null;
+  const ran = by === 'command' ? { ...commandResult(runDir, criterion, normalized, opts), tree: treeOf(opts.cwd) } : null;
   chain.append(runDir, 'check', { id: criterion.id, result: normalized, by, kind, note: note || null, ...(ran || {}) });
   const history = chain.ofKind(runDir, 'check').filter((r) => r.payload.id === criterion.id).map((r) => r.payload.result);
   console.log(
@@ -2010,15 +2075,19 @@ function integrityReport(runDir) {
 function completeness(runDir) {
   const verdict = (chain.last(runDir, 'verdict') || { payload: {} }).payload.verdict || null;
   const checks = chain.ofKind(runDir, 'check');
+  const reds = chain.ofKind(runDir, 'red');
   const criteria = frozenCriteria(runDir).map((c) => {
     const last = checks.filter((r) => r.payload.id === c.id).pop();
-    return { id: c.id, result: last ? last.payload.result : 'unchecked', by: last ? last.payload.by : null };
+    const testFirst = testFirstOf(c, last, reds);
+    return { id: c.id, result: last ? last.payload.result : 'unchecked', by: last ? last.payload.by : null, ...(testFirst ? { testFirst } : {}) };
   });
+  const requireTestFirst = readConfig(runDir).requireTestFirst === true;
   const passed =
     PASSING_VERDICTS.includes(verdict) &&
     criteria.length > 0 &&
-    criteria.every((c) => c.result === 'PASS' && c.by !== 'asserted');
-  return { verdict, frozenCriteria: criteria.length, criteria, passed };
+    criteria.every((c) => c.result === 'PASS' && c.by !== 'asserted') &&
+    (!requireTestFirst || criteria.every((c) => c.testFirst !== 'missing'));
+  return { verdict, frozenCriteria: criteria.length, criteria, requireTestFirst, passed };
 }
 
 function cmdVerify(runDir) {
@@ -2181,6 +2250,7 @@ function main() {
       'usage: ledger.js init <runDir> [baseSha] [--restart] | dispatch <runDir> [label] | replan <runDir> [reason]\n' +
         '       ledger.js qascope <runDir> | qascope --base <ref> [--worktree <path>]\n' +
         '       ledger.js gate <runDir> <stage> [--evidence <file>]... | require <runDir> <stage>\n' +
+        '       ledger.js red <runDir> <id> --cwd <worktree>  (before implementing: the test must fail)\n' +
         '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> --by <command|observed|human|asserted> [note]\n' +
         '                 --by command also takes --cwd <dir> [--timeout-ms <n>]: the ledger runs the frozen run: command\n' +
         '       ledger.js verdict <runDir> <verdict> [--inputs <file>]...\n' +
@@ -2210,6 +2280,8 @@ function main() {
       return cmdGate(runDir, rest[0], evidence);
     case 'require':
       return cmdRequire(runDir, rest[0]);
+    case 'red':
+      return cmdRed(runDir, rest[0], { cwd: checkCwd, timeoutMs });
     case 'check':
       return cmdCheck(runDir, rest[0], rest[1], checkMethod, rest.slice(2).join(' '), { cwd: checkCwd, timeoutMs });
     case 'verdict':

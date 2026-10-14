@@ -231,7 +231,7 @@ test('verify says whether the run passed: an intact record of failure or of noth
     ok(bare.root, ['close', bare.runDir]);
     const onlyReport = JSON.parse(ledger(bare.root, ['verify', bare.runDir]).stdout);
     assert.strictEqual(onlyReport.intact, true, 'close stays permissive');
-    assert.deepStrictEqual(onlyReport.completeness, { verdict: null, frozenCriteria: 0, criteria: [], passed: false });
+    assert.deepStrictEqual(onlyReport.completeness, { verdict: null, frozenCriteria: 0, criteria: [], requireTestFirst: false, passed: false });
 
     const report = JSON.parse(ledger(failed.root, ['verify', failed.runDir]).stdout);
     assert.strictEqual(report.intact, true);

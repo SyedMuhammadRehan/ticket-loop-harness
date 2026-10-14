@@ -150,3 +150,11 @@ test('a sealed policy deleted mid-run is reported as TAMPERED', (t) => {
   const problems = JSON.parse(res.stdout).problems;
   assert.ok(problems.some((p) => p.startsWith('TAMPERED') && p.includes('policy.json') && p.includes('missing')), problems.join('\n'));
 });
+
+test('the org policy forces tests-first on, and a profile cannot turn it off', () => {
+  const policy = require(path.join(SCRIPTS_DIR, 'policy.js'));
+  const { cfg, applied } = policy.applyPolicy({ requireTestFirst: false }, { policy: { requireTestFirst: true } });
+  assert.strictEqual(cfg.requireTestFirst, true);
+  assert.ok(applied.includes('requireTestFirst forced on'), JSON.stringify(applied));
+  assert.strictEqual(policy.applyPolicy({}, null).cfg.requireTestFirst, undefined, 'with no policy the profile decides');
+});

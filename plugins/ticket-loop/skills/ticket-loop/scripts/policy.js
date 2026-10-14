@@ -6,6 +6,7 @@
 //   allowedModels          { role: [model, ...] } — a profile naming another model is a violation
 //   qaScope.maxSmallDiffLines  caps the diff size a focused QA read may cover
 //   requireMatchingTest    forces hooks.stopGate.requireMatchingTest on
+//   requireTestFirst       forces requireTestFirst on: a run passes only with a red run per test criterion
 //   attribution.commitTrailer  forces the trailer string onto every worktree commit
 //   dispatchPolicy.maxRunTokens  caps the tokens one run may spend
 //   publish.allowed        the most a repo may publish; a profile's list is cut down to it
@@ -100,6 +101,10 @@ function applyPolicy(cfg, loaded) {
   if (p.requireMatchingTest === true && out.hooks && out.hooks.stopGate && out.hooks.stopGate.requireMatchingTest !== true) {
     out.hooks = { ...out.hooks, stopGate: { ...out.hooks.stopGate, requireMatchingTest: true } };
     applied.push('hooks.stopGate.requireMatchingTest forced on');
+  }
+  if (p.requireTestFirst === true && out.requireTestFirst !== true) {
+    out.requireTestFirst = true;
+    applied.push('requireTestFirst forced on');
   }
   if (p.attribution && typeof p.attribution.commitTrailer === 'string') {
     out.attribution = { ...(out.attribution || {}), commitTrailer: p.attribution.commitTrailer };

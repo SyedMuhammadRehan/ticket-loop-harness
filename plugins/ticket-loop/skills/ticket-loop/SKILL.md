@@ -224,7 +224,7 @@ One slice per AC, or per criterion when finer, in `approach.md`'s `## Slice orde
 Stage 9 lists every changed file outside all declared scopes; needing one is allowed and
 recorded, not hidden.
 
-**Inline or dispatch.** Do a slice yourself, with the same TDD discipline, the implementer
+**Inline or dispatch.** Do a slice yourself, with the same TDD discipline and red run, the implementer
 prompt's ladder, and the same ledger entry, when it is test-only or a one-file change expected
 under `dispatchPolicy.minSliceLines` (default 50). Dispatch when the slice is feature-sized,
 needs a fresh context, or is the QA judge. **Before EVERY dispatch** (survey, implementer,
@@ -236,7 +236,7 @@ or the QA cap; this call labels it for the report.
 tool reports on completion and never an estimate:
 `node <SKILL_DIR>/scripts/ledger.js outcome <runDir> <seq> ok "<note>" --tokens <n> --ms <n>`
 
-**Implementer dispatch:** `prompts/implementer.md`, filling `{TICKET}`, `{WORKTREE_PATH}`,
+**Implementer dispatch:** `prompts/implementer.md`, filling `{TICKET}`, `{WORKTREE_PATH}`, `{RUN_DIR}`, `{SCRIPTS_DIR}`,
 `{SLICE}` (the criterion text), `{SLICE_ID}` (e.g. C3), `{DONE_LIST}` (done.md plus
 done-additions.md), `{DESIGN_EXCERPT}`, `{CODEBASE_MAP}` (the outline lines for the slice's
 files, re-run when HEAD moved past the stamp, plus the map lines that bear on THIS slice) and

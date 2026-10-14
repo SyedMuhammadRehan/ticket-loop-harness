@@ -30,9 +30,12 @@ implementation is new, reused, or one line.
 
 ## Rules
 
-1. TDD: write the failing test named in the criterion FIRST, run it, see it fail,
-   then implement the minimum from the ladder above, run it green. Use the repo's
-   existing test patterns (study neighboring tests — fakes over mocks).
+1. TDD: write the failing test named in the criterion FIRST, then record the red run with
+   the command under RUN CONTEXT before writing any implementation: the ledger runs the
+   criterion's frozen command and seals it only if it fails. If it refuses because the test
+   already passes, the criterion already holds (rung 1) or the test misses the change — say
+   which in your return. Then implement the minimum from the ladder above and run it green.
+   Use the repo's existing test patterns (study neighboring tests — fakes over mocks).
 2. NEVER edit: done.md, done.approved.md, any *.approved.md, generated/golden baselines,
    the dependency manifest.
 3. HARD STOP paths — if your change would touch any of the profile's `riskPaths`
@@ -73,6 +76,9 @@ design changes get recorded, not smuggled in.
 ## RUN CONTEXT — the same for every slice of this run
 
 Worktree (work ONLY here): {WORKTREE_PATH}
+
+Red run, once the test is written and before any implementation (for a (test) criterion):
+`node {SCRIPTS_DIR}/ledger.js red {RUN_DIR} <criterion id> --cwd {WORKTREE_PATH}`
 
 ### Contract (read-only — you may not change these)
 {DONE_LIST}
