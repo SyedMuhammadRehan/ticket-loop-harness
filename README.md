@@ -176,6 +176,30 @@ Full steps, the manual (non-plugin) install, and the one thing to test first are
 - Optional MCP servers: a ticket source (e.g. Jira), a design source (e.g. Figma), and a
   browser driver (e.g. Playwright) for runtime checks. Each degrades gracefully if absent.
 
+## Dashboard — every run at a glance
+
+`ledger.js status`, `cost` and `verify` answer for one run at a time. The dashboard reads every
+run in one or more repos through those same readers and puts them on one page:
+
+```
+node <plugin>/skills/ticket-loop/scripts/dashboard.js [repo...]              # writes an HTML file, prints its path
+node <plugin>/skills/ticket-loop/scripts/dashboard.js [repo...] --serve 8090 # live on http://127.0.0.1:8090/, refreshes every 5 s
+node <plugin>/skills/ticket-loop/scripts/dashboard.js [repo...] --json       # the same data for other tools
+```
+
+Per repo: runs, open, passed, tampered or unreadable, orphaned, stalled agents, dispatches and
+tokens. Per run: state (open, closed, archived, orphaned, or a run dir with no chain on this
+machine), integrity and outcome side by side, the verdict and BLOCK count, each criterion and how
+it was proven, dispatch and token use against their caps, tokens by role, every dispatch with its
+model, prompt size, outcome and time, and the receipt timeline.
+
+It is read-only: it records nothing, never reads a run dir that has no chain on this machine, and
+reads each run in its own process so one unreadable run cannot take down the page. Recorded
+strings are escaped, because labels are whatever the orchestrator typed. `--serve` listens on
+loopback only. What it does not do: it is per machine, so a team-wide view means collecting each
+machine's `--json` yourself; and `verify` judges a closed run against today's profile, so a
+profile edited after a run closed shows that run as TAMPERED.
+
 ## Cross-run memory
 
 The loop doesn't start cold every time. `memoryFile` points at a committed markdown store with

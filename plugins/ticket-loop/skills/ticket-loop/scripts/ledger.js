@@ -2184,6 +2184,8 @@ module.exports = {
   isClosed,
   integrityReport,
   completeness,
+  tokenStats,
+  dispatchPairs,
   readConfig,
   publishAllowed,
   PUBLISH_ACTS,
