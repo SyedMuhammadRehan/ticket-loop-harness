@@ -144,3 +144,19 @@ test('the freeze seals the contract, so a later edit surfaces as TAMPERED', () =
     rmDir(root);
   }
 });
+
+// The additions file is contract from the freeze on; before any verdict seals it, only the
+// freeze's own receipt can show a criterion was removed or weakened there.
+test('the freeze seals done-additions.md, so a hand edit before any verdict is TAMPERED', () => {
+  const { root, runDir } = setup();
+  try {
+    validate(root, runDir);
+    assert.strictEqual(freeze(root, runDir).status, 0);
+    fs.appendFileSync(path.join(runDir, 'done-additions.md'), '- [ ] C9 (test): typed by hand | run: pytest\n');
+    const res = ledger(root, ['verify', runDir]);
+    assert.strictEqual(res.status, 4, res.stdout);
+    assert.match(res.stdout, /TAMPERED: .*done-additions\.md/);
+  } finally {
+    rmDir(root);
+  }
+});
