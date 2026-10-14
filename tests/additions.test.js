@@ -6,7 +6,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mkRun, rmDir, ledger, settleDispatches } = require('./helpers.js');
+const { mkRun, rmDir, ledger, settleDispatches, SCRIPTS_DIR } = require('./helpers.js');
+const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
 
 const CRITERION = '- [ ] C9 (test): when the sort is removed, the system shall fail this test | run: node tests/run.js sort';
 
@@ -18,8 +19,10 @@ function judgedRun() {
   fs.writeFileSync(path.join(runDir, 'done.md'), '# Done\n## Criteria\n- [ ] C1 (test): x | run: node tests/run.js\n');
   fs.writeFileSync(approved, '# Done\n## Criteria\n- [ ] C1 (test): x | run: node tests/run.js\n');
   fs.writeFileSync(additions, '# Additions\n');
+  // The freeze gate seals only a validated draft.
+  chain.append(runDir, 'validate', { file: 'done.draft.md', sha256: chain.sha256File(path.join(runDir, 'done.md')) });
   assert.strictEqual(ledger(root, ['gate', runDir, 'freeze', '--evidence', path.join(runDir, 'done.md')]).status, 0);
-  assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: contract [full]', '--source', 'hook']).status, 0);
+  assert.strictEqual(ledger(root, ['dispatch', runDir, 'ticket-loop:ticket-loop-qa: contract [full]', '--source', 'hook']).status, 0);
   const verdict = ledger(root, ['verdict', runDir, 'BLOCK', '--inputs', approved, '--inputs', additions]);
   assert.strictEqual(verdict.status, 0, verdict.stderr);
   settleDispatches(root, runDir);

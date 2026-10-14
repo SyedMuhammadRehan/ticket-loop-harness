@@ -82,7 +82,7 @@ test('a dispatch on a model the org policy does not allow is reported by verify'
   assert.strictEqual(ledger(['init', runDir, 'abc']).status, 0);
   ledger(['dispatch', runDir, 'qa: contract [full]']);
   ledger(['dispatch', runDir, 'qa: contract [full]', '--source', 'hook', '--model', 'haiku']);
-  settleDispatches(root, runDir);
+  settleDispatches(root, runDir, env);
   const report = JSON.parse(ledger(['verify', runDir]).stdout);
   assert.ok(report.problems.some((p) => /\(qa\) ran on haiku but the org policy allows only inherit, opus/.test(p)), report.problems.join('\n'));
 });
@@ -118,4 +118,35 @@ test('the org policy caps the token ceiling and a profile may only set a lower o
   });
   assert.strictEqual(JSON.parse(runScript(LOAD_CONFIG, [], { cwd: loose.root, env }).stdout).dispatchPolicy.maxRunTokens, 400000);
   assert.strictEqual(JSON.parse(runScript(LOAD_CONFIG, [], { cwd: tight.root, env }).stdout).dispatchPolicy.maxRunTokens, 250000);
+});
+
+// The run is governed by the policy file sealed at init. Pointing the environment at another
+// file, or at none, would otherwise lift the floor for every command after it.
+test('a run under a sealed policy refuses a policy path changed mid-run, naming both', (t) => {
+  const { file, env } = withPolicy(t, { dispatchPolicy: { maxRunTokens: 1000 }, publish: { allowed: [] } });
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, publish: { allowed: ['push'] } });
+  t.after(() => rmDir(root));
+  const ledger = (args, e = env) => runScript(LEDGER, args, { cwd: root, env: e });
+  assert.strictEqual(ledger(['init', runDir, 'abc']).status, 0);
+  assert.strictEqual(JSON.parse(ledger(['status', runDir]).stdout).maxRunTokens, 1000);
+
+  const elsewhere = { TICKET_LOOP_POLICY: path.join(path.dirname(file), 'missing.json') };
+  for (const args of [['status', runDir], ['dispatch', runDir, 'implementer: C1'], ['consent', runDir, '--push', 'yes', 'asked'], ['verify', runDir]]) {
+    const res = ledger(args, elsewhere);
+    assert.strictEqual(res.status, 1, `${args[0]} must refuse: ${res.stdout}`);
+    assert.ok(res.stderr.includes(file) && res.stderr.includes('missing.json'), res.stderr);
+  }
+  assert.strictEqual(JSON.parse(ledger(['status', runDir]).stdout).dispatches, 0, 'nothing was recorded under the other path');
+});
+
+test('a sealed policy deleted mid-run is reported as TAMPERED', (t) => {
+  const { file, env } = withPolicy(t, ORG);
+  const { root, runDir } = mkRun({ verify: { test: 'x' } });
+  t.after(() => rmDir(root));
+  assert.strictEqual(runScript(LEDGER, ['init', runDir, 'abc'], { cwd: root, env }).status, 0);
+  fs.rmSync(file);
+  const res = runScript(LEDGER, ['verify', runDir], { cwd: root, env });
+  assert.strictEqual(res.status, 4, res.stdout);
+  const problems = JSON.parse(res.stdout).problems;
+  assert.ok(problems.some((p) => p.startsWith('TAMPERED') && p.includes('policy.json') && p.includes('missing')), problems.join('\n'));
 });

@@ -3,41 +3,60 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mkRun, rmDir, ledger, settleDispatches, chainDirFor, runScript, HOOKS_DIR, SCRIPTS_DIR } = require('./helpers.js');
+const {
+  mkRun,
+  rmDir,
+  ledger,
+  settleDispatches,
+  chainDirFor,
+  runScript,
+  HOOKS_DIR,
+  SCRIPTS_DIR,
+  RUNNABLE_CONFIG,
+  PASSES,
+  FLIPS,
+  draftOf,
+  freezeRun,
+  judge,
+} = require('./helpers.js');
 const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
 
-const DRAFT =
-  '# Done\n## Criteria\n- [ ] C1 (test): behaviour holds | run: x tests\n' +
-  '- [ ] C2 (analyzer): clean | run: y .\n## Tokens\n- none\n## Out of scope\n- the offline banner\n';
+const DRAFT = draftOf();
 
-// A run driven all the way to `close`, which is the only thing that writes closed.json.
-function closedRun() {
-  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
-  assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
+// A run driven to the report gate, every step asserted, with the judge's dispatch seq.
+function reportedRun() {
+  const { root, runDir } = mkRun(RUNNABLE_CONFIG);
+  const ok = (args) => {
+    const res = ledger(root, args);
+    assert.strictEqual(res.status, 0, `ledger ${args[0]}: ${res.stderr}`);
+  };
+  ok(['init', runDir, 'base1']);
   const write = (name, body) => {
     const p = path.join(runDir, name);
     fs.writeFileSync(p, body);
     return p;
   };
   const brief = write('ticket-brief.md', '# brief\n');
-  ledger(root, ['gate', runDir, 'intake', '--evidence', brief]);
-  write('done.draft.md', DRAFT);
-  runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
-  runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root });
-  ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command']);
-  ledger(root, ['gate', runDir, 'verify', '--evidence', brief]);
-  ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
-  ledger(root, [
-    'verdict', runDir, 'APPROVE',
-    '--inputs', path.join(runDir, `done${'.approved'}.md`),
-    '--inputs', path.join(runDir, 'done-additions.md'),
-  ]);
-  ledger(root, ['gate', runDir, 'qa', '--evidence', brief]);
+  ok(['gate', runDir, 'intake', '--evidence', brief]);
+  freezeRun(root, runDir, DRAFT);
+  ok(['check', runDir, 'C1', 'PASS', '--by', 'command', '--cwd', root]);
+  ok(['check', runDir, 'C2', 'PASS', '--by', 'command', '--cwd', root]);
+  ok(['gate', runDir, 'verify', '--evidence', brief]);
+  const verdict = judge(root, runDir, 'APPROVE');
+  assert.strictEqual(verdict.status, 0, verdict.stderr);
+  const qaSeq = chain.last(runDir, 'verdict').payload.dispatchSeq;
+  ok(['gate', runDir, 'qa', '--evidence', brief]);
   const report = write('report.md', '# Report\n');
-  ledger(root, ['gate', runDir, 'report', '--evidence', report]);
-  settleDispatches(root, runDir);
-  assert.strictEqual(ledger(root, ['close', runDir]).status, 0);
-  return { root, runDir, report };
+  ok(['gate', runDir, 'report', '--evidence', report]);
+  return { root, runDir, qaSeq, report };
+}
+
+// A run driven all the way to `close`, which is the only thing that writes closed.json.
+function closedRun() {
+  const run = reportedRun();
+  settleDispatches(run.root, run.runDir);
+  assert.strictEqual(ledger(run.root, ['close', run.runDir]).status, 0);
+  return run;
 }
 
 function init(base) {
@@ -253,32 +272,33 @@ test('evidence sealed by a gate is reported as TAMPERED when it changes afterwar
 test('check records a per-criterion history, which is what a FLAKY claim must cite', () => {
   const { root, runDir } = init();
   try {
-    ledger(root, ['check', runDir, 'C3', 'FAIL', '--by', 'command', 'token mismatch']);
-    ledger(root, ['check', runDir, 'C3', 'PASS', '--by', 'command']);
-    const res = ledger(root, ['check', runDir, 'C3', 'FAIL', '--by', 'command']);
+    freezeRun(root, runDir, draftOf(FLIPS));
+    const check = (result) => ledger(root, ['check', runDir, 'C1', result, '--by', 'command', '--cwd', root, 'token mismatch']);
+    assert.strictEqual(check('FAIL').status, 0);
+    fs.writeFileSync(path.join(root, 'pass.flag'), '');
+    assert.strictEqual(check('PASS').status, 0);
+    fs.rmSync(path.join(root, 'pass.flag'));
+    const res = check('FAIL');
     assert.ok(res.stdout.includes('FAIL → PASS → FAIL'), res.stdout);
-    assert.strictEqual(ledger(root, ['check', runDir, 'C3', 'MAYBE', '--by', 'command']).status, 1);
+    assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'MAYBE', '--by', 'command', '--cwd', root]).status, 1);
   } finally {
     rmDir(root);
   }
 });
 
-// Reach the state a real run is in when the judge reports: frozen contract, then the judge
-// dispatched. Both are preconditions for a verdict now.
+// Reach the state a real run is in when the judge reports: a validated contract, frozen.
 function frozenRun() {
   const { root, runDir } = init();
-  const approved = path.join(runDir, 'done.approved.md');
-  fs.writeFileSync(approved, '# Done\n');
-  fs.writeFileSync(path.join(runDir, 'done.md'), '# Done\n');
-  assert.strictEqual(ledger(root, ['gate', runDir, 'freeze', '--evidence', path.join(runDir, 'done.md')]).status, 0);
-  return { root, runDir, approved };
+  freezeRun(root, runDir, DRAFT);
+  return { root, runDir, approved: path.join(runDir, 'done.approved.md'), additions: path.join(runDir, 'done-additions.md') };
 }
 
+const JUDGE = 'ticket-loop:ticket-loop-qa: adversarial review';
+
 test('verdict is recorded with the contract it judged, and rejects unknown verdicts', () => {
-  const { root, runDir, approved } = frozenRun();
+  const { root, runDir } = frozenRun();
   try {
-    assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: adversarial review']).status, 0);
-    const ok = ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]);
+    const ok = judge(root, runDir, 'APPROVE', JUDGE);
     assert.strictEqual(ok.status, 0, ok.stderr);
     assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).verdict, 'APPROVE');
     assert.strictEqual(ledger(root, ['verdict', runDir, 'LGTM']).status, 1);
@@ -287,22 +307,34 @@ test('verdict is recorded with the contract it judged, and rejects unknown verdi
   }
 });
 
+// The contract is this run's done.approved.md and, once the freeze has created it,
+// done-additions.md, each by path: a copy of either from elsewhere names a different contract.
 test('a verdict that seals no contract is refused', () => {
-  const { root, runDir } = frozenRun();
+  const { root, runDir, approved, additions } = frozenRun();
   try {
-    ledger(root, ['dispatch', runDir, 'qa']);
+    ledger(root, ['dispatch', runDir, JUDGE, '--source', 'hook']);
     const bare = ledger(root, ['verdict', runDir, 'APPROVE']);
     assert.strictEqual(bare.status, 1, bare.stderr);
     assert.ok(bare.stderr.includes('does not seal the frozen contract'), bare.stderr);
+
+    const elsewhere = path.join(root, 'done.approved.md');
+    fs.copyFileSync(approved, elsewhere);
+    const copy = ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', elsewhere, '--inputs', additions]);
+    assert.strictEqual(copy.status, 1, 'a copy of the contract outside the run dir is not the contract');
+
+    const noAdditions = ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]);
+    assert.strictEqual(noAdditions.status, 1, 'done-additions.md is contract once it exists');
+    assert.ok(noAdditions.stderr.includes('done-additions.md'), noAdditions.stderr);
+    assert.strictEqual(chain.ofKind(runDir, 'verdict').length, 0);
   } finally {
     rmDir(root);
   }
 });
 
 test('a verdict with no subagent dispatched after the freeze is refused', () => {
-  const { root, runDir, approved } = frozenRun();
+  const { root, runDir, approved, additions } = frozenRun();
   try {
-    const res = ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]);
+    const res = ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved, '--inputs', additions]);
     assert.strictEqual(res.status, 3, res.stderr);
     assert.ok(res.stderr.includes('no fresh-context judge can have run'), res.stderr);
   } finally {
@@ -310,13 +342,14 @@ test('a verdict with no subagent dispatched after the freeze is refused', () => 
   }
 });
 
-// The whole point of fixing the free receipt: an APPROVE the orchestrator recorded itself,
-// without the hook counting a dispatch, must not read as a clean run.
+// A chain sealed before only a hook-recorded judge could back a verdict: an APPROVE whose
+// dispatch the hook never counted must not read as a clean run.
 test('verify flags a verdict whose dispatch was not counted by the hook', () => {
   const { root, runDir, approved } = frozenRun();
   try {
     ledger(root, ['dispatch', runDir, 'qa']); // script-sourced, i.e. self-reported
-    assert.strictEqual(ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]).status, 0);
+    const seq = chain.last(runDir, 'dispatch').seq;
+    chain.append(runDir, 'verdict', { verdict: 'APPROVE', inputs: chain.hashEvidence([approved]), dispatchSeq: seq, dispatchSource: 'script' });
     const res = ledger(root, ['verify', runDir]);
     assert.strictEqual(res.status, 4);
     const report = JSON.parse(res.stdout);
@@ -344,13 +377,33 @@ test('every stage gate must attach the artifact the stage produces', () => {
     const wrong = ledger(root, ['gate', runDir, 'intake', '--evidence', path.join(runDir, 'notes.md')]);
     assert.strictEqual(wrong.status, 1, wrong.stderr);
     assert.ok(wrong.stderr.includes('ticket-brief.md'), wrong.stderr);
+
+    // The artifact's name is not enough: it must be this run's file, and hold something.
+    const junk = path.join(root, 'junk');
+    fs.mkdirSync(junk);
+    fs.writeFileSync(path.join(junk, 'ticket-brief.md'), '# a brief from elsewhere\n');
+    fs.writeFileSync(path.join(runDir, 'ticket-brief.md'), '# the run brief, not attached\n');
+    const outside = ledger(root, ['gate', runDir, 'intake', '--evidence', path.join(junk, 'ticket-brief.md')]);
+    assert.strictEqual(outside.status, 1, 'a file of the right name outside the run dir is not the stage product');
+    assert.match(outside.stderr, /from this run dir/);
+    fs.writeFileSync(path.join(runDir, 'ticket-brief.md'), '');
+    const empty = ledger(root, ['gate', runDir, 'intake', '--evidence', path.join(runDir, 'ticket-brief.md')]);
+    assert.strictEqual(empty.status, 1, 'an empty artifact is a stage that produced nothing');
+    assert.match(empty.stderr, /empty/);
+
+    // A freeze needs the draft validate_done accepted, not any done.md.
+    fs.writeFileSync(path.join(runDir, 'done.md'), '# Done\n- [x] C1 (test): fine | run: true\n');
+    const unvalidated = ledger(root, ['gate', runDir, 'freeze', '--evidence', path.join(runDir, 'done.md')]);
+    assert.strictEqual(unvalidated.status, 1, unvalidated.stderr);
+    assert.match(unvalidated.stderr, /validate receipt/);
+    assert.strictEqual(chain.ofKind(runDir, 'gate').length, 0, 'none of these was recorded');
   } finally {
     rmDir(root);
   }
 });
 
 test('receipt-backed stages are bound to the record they claim, not to a file', () => {
-  const { root, runDir } = init();
+  const { root, runDir } = frozenRun();
   try {
     const qa = ledger(root, ['gate', runDir, 'qa']);
     assert.strictEqual(qa.status, 1, qa.stderr);
@@ -361,7 +414,7 @@ test('receipt-backed stages are bound to the record they claim, not to a file', 
     assert.ok(verify.stderr.includes('no sealed "check" record'), verify.stderr);
 
     // Recording a real check unlocks the verify gate, and nothing else does.
-    assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command']).status, 0);
+    assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command', '--cwd', root]).status, 0);
     assert.strictEqual(ledger(root, ['gate', runDir, 'verify']).status, 0);
   } finally {
     rmDir(root);
@@ -669,7 +722,7 @@ test('revise refuses a thin reason, an unsealed file, and an unchanged file', ()
 // The additive half of the contract is contract too: a revision receipt over it would turn
 // "a criterion was removed after the judge read it" into a recorded, clean-verifying edit.
 test('revise refuses the additive contract', () => {
-  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
+  const { root, runDir } = mkRun(RUNNABLE_CONFIG);
   assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
   fs.writeFileSync(path.join(runDir, 'done.draft.md'), DRAFT);
   runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
@@ -739,7 +792,7 @@ test('an untouched closed run verifies clean', () => {
 // against the FROZEN contract's own criterion kinds rather than a second list.
 
 function runWithCriteria(criteria) {
-  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
+  const { root, runDir } = mkRun(RUNNABLE_CONFIG);
   assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
   fs.writeFileSync(
     path.join(runDir, `done${'.approved'}.md`),
@@ -748,10 +801,12 @@ function runWithCriteria(criteria) {
   return { root, runDir };
 }
 
+const C1 = `- [ ] C1 (test): behaviour holds | run: ${PASSES}`;
+
 test('check records the method that established the result', () => {
-  const { root, runDir } = runWithCriteria('- [ ] C1 (test): behaviour holds | run: x tests');
+  const { root, runDir } = runWithCriteria(C1);
   try {
-    const res = ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command']);
+    const res = ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command', '--cwd', root]);
     assert.strictEqual(res.status, 0, res.stderr);
     const cost = JSON.parse(ledger(root, ['cost', runDir]).stdout);
     assert.deepStrictEqual(cost.evidence, { command: 1, observed: 0, human: 0, asserted: 0 });
@@ -761,7 +816,7 @@ test('check records the method that established the result', () => {
 });
 
 test('check refuses a result with no method named', () => {
-  const { root, runDir } = runWithCriteria('- [ ] C1 (test): behaviour holds | run: x tests');
+  const { root, runDir } = runWithCriteria(C1);
   try {
     const res = ledger(root, ['check', runDir, 'C1', 'PASS']);
     assert.strictEqual(res.status, 1, res.stdout);
@@ -774,7 +829,7 @@ test('check refuses a result with no method named', () => {
 // The rule the whole axis exists for: concluding something works, without running or watching
 // anything, cannot be a PASS. It can be a SKIPPED — that is what SKIPPED is for.
 test('an asserted PASS is refused; an asserted SKIPPED is accepted', () => {
-  const { root, runDir } = runWithCriteria('- [ ] C1 (test): behaviour holds | run: x tests');
+  const { root, runDir } = runWithCriteria(C1);
   try {
     const bad = ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'asserted']);
     assert.strictEqual(bad.status, 1, bad.stdout);
@@ -799,7 +854,7 @@ test('a manual criterion cannot be passed by a command', () => {
 });
 
 test('an unknown method is refused', () => {
-  const { root, runDir } = runWithCriteria('- [ ] C1 (test): behaviour holds | run: x tests');
+  const { root, runDir } = runWithCriteria(C1);
   try {
     assert.strictEqual(ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'vibes']).status, 1);
   } finally {
@@ -912,7 +967,7 @@ test('outcome refuses a token count or duration that is not a whole number', () 
   const { root, runDir } = init();
   try {
     assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1']).status, 0);
-    for (const bad of [['--tokens', '-5'], ['--tokens', 'lots'], ['--tokens', '12.5'], ['--ms', '-1'], ['--ms', 'soon']]) {
+    for (const bad of [['--tokens', '-5'], ['--tokens', 'lots'], ['--tokens', '12.5'], ['--tokens', '0'], ['--ms', '-1'], ['--ms', 'soon']]) {
       const res = ledger(root, ['outcome', runDir, '2', 'ok', ...bad]);
       assert.strictEqual(res.status, 1, `should refuse ${bad.join(' ')}: ${res.stderr}`);
     }
@@ -967,35 +1022,6 @@ test('a hook-only dispatch, with no playbook call before it, stays its own unmea
 // the SubagentStop hook. Only the orchestrator can say what came back. Until it does, the
 // dispatch is OPEN, and an open dispatch is what a stalled worker and a forgotten outcome both
 // look like from outside.
-
-// A run driven to the report gate with the dispatch seqs it made, so close can be tried.
-function reportedRun() {
-  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
-  assert.strictEqual(ledger(root, ['init', runDir, 'base1']).status, 0);
-  const write = (name, body) => {
-    const p = path.join(runDir, name);
-    fs.writeFileSync(p, body);
-    return p;
-  };
-  const brief = write('ticket-brief.md', '# brief\n');
-  ledger(root, ['gate', runDir, 'intake', '--evidence', brief]);
-  write('done.draft.md', DRAFT);
-  runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
-  runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root });
-  ledger(root, ['check', runDir, 'C1', 'PASS', '--by', 'command']);
-  ledger(root, ['gate', runDir, 'verify', '--evidence', brief]);
-  ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
-  const qaSeq = chain.last(runDir, 'dispatch').seq;
-  ledger(root, [
-    'verdict', runDir, 'APPROVE',
-    '--inputs', path.join(runDir, `done${'.approved'}.md`),
-    '--inputs', path.join(runDir, 'done-additions.md'),
-  ]);
-  ledger(root, ['gate', runDir, 'qa', '--evidence', brief]);
-  const report = write('report.md', '# Report\n');
-  ledger(root, ['gate', runDir, 'report', '--evidence', report]);
-  return { root, runDir, qaSeq };
-}
 
 test('a dispatch with no outcome is listed as open, and close refuses until it is resolved', () => {
   const { root, runDir, qaSeq } = reportedRun();
@@ -1103,26 +1129,23 @@ test('returned with nothing open records nothing and does not fail', () => {
 // --- one record per event: a verdict per judge, an outcome per dispatch ---
 
 test('a judge dispatch seals one verdict; a second seal on the same dispatch is refused', () => {
-  const { root, runDir, approved } = frozenRun();
+  const { root, runDir, approved, additions } = frozenRun();
   try {
-    ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
-    assert.strictEqual(ledger(root, ['verdict', runDir, 'APPROVE_WITH_COMMENTS', '--inputs', approved]).status, 0);
-    const again = ledger(root, ['verdict', runDir, 'BLOCK', '--inputs', approved]);
+    assert.strictEqual(judge(root, runDir, 'APPROVE_WITH_COMMENTS', JUDGE).status, 0);
+    const again = ledger(root, ['verdict', runDir, 'BLOCK', '--inputs', approved, '--inputs', additions]);
     assert.strictEqual(again.status, 1, again.stderr);
     assert.ok(again.stderr.includes('already sealed APPROVE_WITH_COMMENTS'), again.stderr);
     assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).verdict, 'APPROVE_WITH_COMMENTS');
-    ledger(root, ['dispatch', runDir, 'qa: delta', '--source', 'hook']);
-    assert.strictEqual(ledger(root, ['verdict', runDir, 'BLOCK', '--inputs', approved]).status, 0, 'a re-review is a new dispatch');
+    assert.strictEqual(judge(root, runDir, 'BLOCK', 'ticket-loop:ticket-loop-qa: delta').status, 0, 'a re-review is a new dispatch');
   } finally {
     rmDir(root);
   }
 });
 
 test('verify names a dispatch that sealed several verdicts', () => {
-  const { root, runDir, approved } = frozenRun();
+  const { root, runDir } = frozenRun();
   try {
-    ledger(root, ['dispatch', runDir, 'qa', '--source', 'hook']);
-    assert.strictEqual(ledger(root, ['verdict', runDir, 'APPROVE', '--inputs', approved]).status, 0);
+    assert.strictEqual(judge(root, runDir, 'APPROVE', JUDGE).status, 0);
     // A chain sealed before the refusal existed.
     const first = chain.last(runDir, 'verdict');
     chain.append(runDir, 'verdict', { ...first.payload, verdict: 'BLOCK' });

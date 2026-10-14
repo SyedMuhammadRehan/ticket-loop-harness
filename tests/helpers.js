@@ -71,16 +71,54 @@ function ledger(root, args) {
 // Record an `ok` outcome for every dispatch still open, the way an orchestrator does when each
 // returns. Fixtures that dispatch and then close or verify need this, because an open dispatch
 // is itself a reported problem.
-function settleDispatches(root, runDir) {
-  const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
+function settleDispatches(root, runDir, env) {
+  const run = (args) => runScript(path.join(SCRIPTS_DIR, 'ledger.js'), args, { cwd: root, env });
+  const status = JSON.parse(run(['status', runDir]).stdout);
   for (const o of status.open) {
-    const res = ledger(root, ['outcome', runDir, String(o.seqs[0]), 'ok']);
+    const res = run(['outcome', runDir, String(o.seqs[0]), 'ok']);
     if (res.status !== 0) throw new Error(`settle failed for seq ${o.seqs[0]}: ${res.stderr}`);
   }
 }
 
 function chainDirFor(root, ticket = 'T-1') {
   return path.join(root, '.git', 'ticket-loop', ticket);
+}
+
+// A contract whose criteria really run, because `check --by command` executes the frozen run:
+// line. The profile's verify commands are `node ...`, which is what validate_done compares the
+// first token against.
+const RUNNABLE_CONFIG = { verify: { test: 'node tests.js', analyze: 'node lint.js' } };
+const PASSES = 'node -e "process.exit(0)"';
+const FAILS = 'node -e "process.exit(1)"';
+// Passes once pass.flag exists in the directory it runs in.
+const FLIPS = `node -e "process.exit(require('fs').existsSync('pass.flag')?0:1)"`;
+
+function draftOf(c1 = PASSES, c2 = PASSES) {
+  return (
+    `# Done\n## Criteria\n- [ ] C1 (test): behaviour holds | run: ${c1}\n` +
+    `- [ ] C2 (analyzer): clean | run: ${c2}\n## Tokens\n- none\n## Out of scope\n- the offline banner\n`
+  );
+}
+
+// Validate and freeze a draft the way the playbook does; the freeze gate needs both receipts.
+function freezeRun(root, runDir, draft = draftOf()) {
+  fs.writeFileSync(path.join(runDir, 'done.draft.md'), draft);
+  for (const script of ['validate_done.js', 'freeze_done.js']) {
+    const res = runScript(path.join(SCRIPTS_DIR, script), [runDir], { cwd: root });
+    if (res.status !== 0) throw new Error(`${script} failed: ${res.stderr}`);
+  }
+}
+
+// The QA judge as the dispatch hook records it, then the verdict it seals over the frozen
+// contract. Returns the verdict command's result.
+function judge(root, runDir, verdict = 'APPROVE', label = 'ticket-loop:ticket-loop-qa: contract [full]') {
+  const d = ledger(root, ['dispatch', runDir, label, '--source', 'hook']);
+  if (d.status !== 0) throw new Error(`judge dispatch failed: ${d.stderr}`);
+  const inputs = ['done.approved.md', 'done-additions.md']
+    .map((f) => path.join(runDir, f))
+    .filter((f) => fs.existsSync(f))
+    .flatMap((f) => ['--inputs', f]);
+  return ledger(root, ['verdict', runDir, verdict, ...inputs]);
 }
 
 module.exports = {
@@ -95,4 +133,11 @@ module.exports = {
   ledger,
   settleDispatches,
   chainDirFor,
+  RUNNABLE_CONFIG,
+  PASSES,
+  FAILS,
+  FLIPS,
+  draftOf,
+  freezeRun,
+  judge,
 };

@@ -7,20 +7,20 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { SCRIPTS_DIR, HOOKS_DIR, mkRun, rmDir, runScript, ledger, settleDispatches } = require('./helpers.js');
+const { SCRIPTS_DIR, HOOKS_DIR, mkRun, rmDir, runScript, ledger, settleDispatches, RUNNABLE_CONFIG, PASSES, FLIPS } = require('./helpers.js');
 
 const VALIDATE = path.join(SCRIPTS_DIR, 'validate_done.js');
 const FREEZE = path.join(SCRIPTS_DIR, 'freeze_done.js');
 const GUARD = path.join(HOOKS_DIR, 'freeze_guard.js');
 const DISPATCH = path.join(HOOKS_DIR, 'dispatch_guard.js');
 
-const CONFIG = { verify: { test: 'pytest -q', analyze: 'ruff check .' } };
+const CONFIG = RUNNABLE_CONFIG;
 
 const DRAFT = `# Done — T-1
 ## Criteria
-- [ ] C1 (test): repository maps 404/500 to a typed ProfileError | run: pytest tests/test_profile_repo.py
-- [ ] C2 (test): the screen renders the friendly error state | run: pytest tests/test_profile_screen.py
-- [ ] C3 (analyzer): zero analyzer errors | run: ruff check .
+- [ ] C1 (test): repository maps 404/500 to a typed ProfileError | run: ${PASSES}
+- [ ] C2 (test): the screen renders the friendly error state | run: ${FLIPS}
+- [ ] C3 (analyzer): zero analyzer errors | run: ${PASSES}
 ## Out of scope
 - offline/no-network banner (separate ticket)
 `;
@@ -44,11 +44,12 @@ const APPROACH = `# Approach — T-1
 
 const guard = (root, toolInput) =>
   runScript(GUARD, [], { input: JSON.stringify({ tool_input: toolInput, cwd: root }), cwd: root });
-const dispatch = (root) =>
+const dispatch = (root, toolInput = { subagent_type: 'implementer', description: 'slice' }) =>
   runScript(DISPATCH, [], {
-    input: JSON.stringify({ tool_input: { subagent_type: 'implementer', description: 'slice' }, cwd: root }),
+    input: JSON.stringify({ tool_input: toolInput, cwd: root }),
     cwd: root,
   });
+const JUDGE = { subagent_type: 'ticket-loop:ticket-loop-qa', description: 'contract [full]' };
 
 test('a run that follows the playbook completes with an intact, fully-receipted chain', () => {
   const { root, runDir } = mkRun(CONFIG);
@@ -89,15 +90,16 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
     for (let i = 0; i < 3; i++) assert.strictEqual(dispatch(root).status, 0);
     settleDispatches(root, runDir);
 
-    // Stage 8 — verify, recording each check
-    ok(['check', runDir, 'C1', 'PASS', '--by', 'command', '5/5']);
-    ok(['check', runDir, 'C2', 'FAIL', '--by', 'command', 'wrong copy']);
-    ok(['check', runDir, 'C2', 'PASS', '--by', 'command', 'fixed on attempt 2']);
+    // Stage 8 — verify: the ledger runs each criterion's frozen command and records its exit
+    ok(['check', runDir, 'C1', 'PASS', '--by', 'command', '--cwd', root, '5/5']);
+    ok(['check', runDir, 'C2', 'FAIL', '--by', 'command', '--cwd', root, 'wrong copy']);
+    fs.writeFileSync(path.join(root, 'pass.flag'), '');
+    ok(['check', runDir, 'C2', 'PASS', '--by', 'command', '--cwd', root, 'fixed on attempt 2']);
     ok(['check', runDir, 'C3', 'PASS', '--by', 'observed']);
     ok(['gate', runDir, 'verify']);
 
     // Stage 9 — QA seals its own verdict over the contract it read
-    assert.strictEqual(dispatch(root).status, 0);
+    assert.strictEqual(dispatch(root, JUDGE).status, 0);
     assert.strictEqual(
       ledger(root, [
         'verdict', runDir, 'APPROVE_WITH_COMMENTS',
@@ -118,6 +120,7 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
     const report = JSON.parse(verify.stdout);
     assert.strictEqual(report.intact, true);
     assert.deepStrictEqual(report.problems, []);
+    assert.strictEqual(report.completeness.passed, true);
 
     const status = JSON.parse(ledger(root, ['status', runDir]).stdout);
     assert.strictEqual(status.dispatches, 4);
@@ -198,6 +201,13 @@ test('the lazy path is refused at every step a shortcut would be taken', () => {
 
     const forgedVerdict = ledger(root, ['verdict', runDir, 'APPROVE']);
     assert.strictEqual(forgedVerdict.status, 1, 'a verdict sealing no contract must be refused');
+    // The implementers dispatched after the freeze are subagents too, but not the judge.
+    const selfApproved = ledger(root, [
+      'verdict', runDir, 'APPROVE',
+      '--inputs', path.join(runDir, 'done.approved.md'),
+      '--inputs', path.join(runDir, 'done-additions.md'),
+    ]);
+    assert.strictEqual(selfApproved.status, 3, 'an implementer dispatch must not back a verdict the orchestrator types');
     assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).verdict, null);
 
     // Shortcut 7: end the run early to get out from under the gates.

@@ -37,6 +37,10 @@ const LOCK_WAIT_MS = 15000;
 // Longer than any single append could take; shorter than a human notices. A lock older than
 // this belonged to a process that was killed.
 const LOCK_STALE_MS = 60000;
+// How long verify re-reads a chain whose only fault is its head anchor: far longer than one
+// append's critical section, short enough that a real truncation is reported promptly.
+const HEAD_RETRIES = 10;
+const HEAD_RETRY_MS = 20;
 
 function findGitDir(start) {
   let dir = path.resolve(start);
@@ -135,13 +139,15 @@ function sha256File(file) {
 }
 
 // { file, sha256 } for each readable path; missing files are recorded as such so a
-// receipt can never imply evidence that was not there.
+// receipt can never imply evidence that was not there. The path is sealed absolute: a relative
+// one names a different file from every other working directory.
 function hashEvidence(files) {
   return (files || []).map((f) => {
+    const file = path.resolve(String(f)).replace(/\\/g, '/');
     try {
-      return { file: String(f).replace(/\\/g, '/'), sha256: sha256File(f) };
+      return { file, sha256: sha256File(f) };
     } catch {
-      return { file: String(f).replace(/\\/g, '/'), sha256: null, missing: true };
+      return { file, sha256: null, missing: true };
     }
   });
 }
@@ -217,6 +223,13 @@ function isStale(lock) {
   }
 }
 
+// A plain file at the lock's name fails every mkdir with EEXIST just as a directory does, and
+// rmdir cannot remove it. A directory with debris inside is not broken; it is waited out.
+function breakLock(lock) {
+  if (fs.statSync(lock).isDirectory()) fs.rmdirSync(lock);
+  else fs.unlinkSync(lock);
+}
+
 function withLock(runDir, fn, waitMs = LOCK_WAIT_MS) {
   const lock = path.join(resolveChainDir(runDir).dir, LOCK_NAME);
   const deadline = Date.now() + waitMs;
@@ -233,7 +246,7 @@ function withLock(runDir, fn, waitMs = LOCK_WAIT_MS) {
         // A break that fails (debris inside the lock, an ACL) falls through to the
         // deadline: retrying it forever would spin without ever reaching the timeout.
         try {
-          fs.rmdirSync(lock);
+          breakLock(lock);
           continue;
         } catch {}
       }
@@ -292,8 +305,24 @@ function appendUnlocked(runDir, kind, payload) {
 
 // Walk the chain: recompute every seal and check every prev-link.
 // { ok, records, problems[] } — problems is empty iff the history is intact.
+//
+// Readers take no lock, so one can land between a writer's record append and its head write
+// and see the anchor one record behind. That state lasts as long as the writer's critical
+// section; a truncation lasts forever. So a result whose only problems are the anchor's is
+// read again for a moment before it is believed.
 function verify(runDir) {
+  let result = verifyOnce(runDir);
+  for (let i = 0; i < HEAD_RETRIES && !result.ok && result.anchorOnly; i++) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, HEAD_RETRY_MS);
+    result = verifyOnce(runDir);
+  }
+  const { anchorOnly, ...out } = result;
+  return out;
+}
+
+function verifyOnce(runDir) {
   const problems = [];
+  const anchor = [];
   if (!exists(runDir)) return { ok: false, records: [], problems: ['no receipt chain found'] };
   const key = readKey(runDir);
   if (!key) return { ok: false, records: [], problems: ['receipt chain key is missing'] };
@@ -321,13 +350,13 @@ function verify(runDir) {
 
   const head = readHead(runDir);
   if (!head) {
-    problems.push('chain head anchor (head.json) is missing — truncation of the history cannot be ruled out');
+    anchor.push('chain head anchor (head.json) is missing — truncation of the history cannot be ruled out');
   } else {
     const { mac, ...body } = head;
     if (mac !== headSeal(key, body)) {
-      problems.push('chain head anchor seal does not match — the anchor itself was edited');
+      anchor.push('chain head anchor seal does not match — the anchor itself was edited');
     } else if (head.records !== records.length || (head.lastSeal || null) !== prev) {
-      problems.push(
+      anchor.push(
         `chain TRUNCATED or an append was interrupted: the head anchor records ${head.records} record(s) ` +
           `ending ${(head.lastSeal || 'none').toString().slice(0, 12)}…, the file holds ${records.length} ` +
           `ending ${(prev || 'none').toString().slice(0, 12)}…. Treat as tampering unless you know a run crashed here.`
@@ -335,7 +364,13 @@ function verify(runDir) {
     }
   }
 
-  return { ok: problems.length === 0, records: records.filter((r) => !r.__unparsable), problems };
+  const all = [...problems, ...anchor];
+  return {
+    ok: all.length === 0,
+    records: records.filter((r) => !r.__unparsable),
+    problems: all,
+    anchorOnly: problems.length === 0 && anchor.length > 0,
+  };
 }
 
 function records(runDir) {
@@ -364,6 +399,7 @@ module.exports = {
   create,
   rotate,
   append,
+  appendUnlocked,
   withLock,
   isStale,
   LOCK_NAME,

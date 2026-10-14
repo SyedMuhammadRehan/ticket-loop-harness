@@ -95,6 +95,12 @@ function check(argv, cwd = process.cwd()) {
     if (!attestation.integrity || attestation.integrity.intact !== true) {
       failures.push(`the run's own integrity check reported problems: ${((attestation.integrity || {}).problems || []).join('; ') || 'none recorded'}`);
     }
+    // An intact record of criteria that failed is still a run that did not pass.
+    const done = attestation.completeness;
+    if (!done || done.passed !== true) {
+      const open = ((done && done.criteria) || []).filter((c) => c.result !== 'PASS' || c.by === 'asserted').map((c) => `${c.id} ${c.result}`);
+      failures.push(`the run's criteria did not all pass${open.length ? `: ${open.join(', ')}` : done ? '' : ' (the bundle records no completeness)'}`);
+    }
     const attested = attestation.headSha;
     if (!attested) {
       failures.push('the bundle names no head commit');
