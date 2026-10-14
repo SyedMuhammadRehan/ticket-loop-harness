@@ -18,31 +18,11 @@ const path = require('path');
 const policy = require('./guard_policy.js');
 const lib = require('./hook_lib.js');
 
-const RUNS_REL = path.join('.agents', 'ticket-runs');
 const LEDGER_TIMEOUT_MS = 15000;
 
-// A run is ACTIVE if a run dir has been initialized (budget.json exists) and not yet CLOSED
-// (no closed.json). Deliberately a filesystem heuristic and not a require() of the skill's
-// chain.js: in the manual install the hooks and scripts land in different trees.
-//
-// The signal must not be any file the loop writes as ordinary work — report.md as the "run
-// is over" marker would make the run's own deliverable the off switch for every gate, so a
-// plain Write would release the budget and the control-plane freeze. closed.json is written
-// only by `ledger.js close`, which requires a sealed report receipt, and this hook denies
-// writes to it.
-function activeRuns(root) {
-  const runsDir = path.join(root, RUNS_REL);
-  let entries;
-  try {
-    entries = fs.readdirSync(runsDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((e) => e.isDirectory() && !e.name.includes('._old_'))
-    .map((e) => path.join(runsDir, e.name))
-    .filter((dir) => fs.existsSync(path.join(dir, 'budget.json')) && !fs.existsSync(path.join(dir, 'closed.json')));
-}
+// The same run detection every hook uses, orphaned chains included: a guard that reads only the
+// run dirs is disarmed by deleting them.
+const { activeRuns } = lib;
 
 // The clearance mirror ledger.js writes. Read rather than shelled out to, because this hook
 // runs on every single edit; the chain remains authoritative and the mirror is hook-protected.

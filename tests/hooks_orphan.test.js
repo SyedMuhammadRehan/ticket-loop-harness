@@ -103,3 +103,29 @@ test('a return into an orphaned run is not recorded, and says so without blockin
     rmDir(root);
   }
 });
+
+test('an orphaned run keeps the write guard armed: the profile stays frozen and push stays refused', () => {
+  const { root } = orphaned();
+  try {
+    const guard = (tool_input, tool_name) =>
+      runScript(path.join(HOOKS_DIR, 'freeze_guard.js'), [], { cwd: root, input: JSON.stringify({ cwd: root, tool_name, tool_input }) });
+    const edit = guard({ file_path: path.join(root, '.agents', 'ticket-loop.config.json') }, 'Edit');
+    assert.strictEqual(edit.status, 2, `the profile must stay frozen over an orphaned run: ${edit.stderr}`);
+    const push = guard({ command: 'git push origin HEAD' }, 'Bash');
+    assert.strictEqual(push.status, 2, `push must stay refused over an orphaned run: ${push.stderr}`);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a close record at the end of a long chain is found without reading the whole file', () => {
+  const { root, runDir } = orphaned();
+  try {
+    for (let i = 0; i < 400; i++) chain.append(runDir, 'dispatch', { label: `general-purpose: ${'x'.repeat(40)}` });
+    assert.strictEqual(lib.runRecords(root).length, 1, 'still open before the close');
+    chain.append(runDir, 'close', { reportGateSeq: 1 });
+    assert.deepStrictEqual(lib.runRecords(root), [], 'the close at the tail ends it');
+  } finally {
+    rmDir(root);
+  }
+});

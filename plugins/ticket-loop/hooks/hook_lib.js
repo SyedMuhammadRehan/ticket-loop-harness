@@ -166,25 +166,39 @@ function orphanedRuns(root, runNames) {
   return out;
 }
 
+// The init record is the first line and a close is the last, so only the two ends are read: this
+// runs on every edit, and a chain grows with every dispatch. A record appended after the close
+// hides it, which reads as open — the safe direction.
+const CHAIN_END_BYTES = 8192;
+
 function chainLeftOpen(file) {
-  let text;
+  let fd;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const read = (start) => {
+      const buf = Buffer.alloc(Math.min(CHAIN_END_BYTES, size));
+      fs.readSync(fd, buf, 0, buf.length, start);
+      return buf.toString('utf8');
+    };
+    let init;
+    try {
+      init = JSON.parse(read(0).split('\n')[0]);
+    } catch {
+      return false;
+    }
+    if (!(init && init.kind === 'init' && init.payload && init.payload.closesInChain === true)) return false;
+    const lines = read(Math.max(0, size - CHAIN_END_BYTES)).split('\n').filter((l) => l.trim());
+    try {
+      return JSON.parse(lines[lines.length - 1]).kind !== 'close';
+    } catch {
+      return true;
+    }
   } catch {
     return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
-  let promised = false;
-  for (const line of text.split('\n')) {
-    let rec;
-    try {
-      rec = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (rec && rec.kind === 'close') return false;
-    if (rec && rec.kind === 'init' && rec.payload && rec.payload.closesInChain === true) promised = true;
-  }
-  return promised;
 }
 
 // Search the install layouts in order of specificity: plugin root, project-local skill,
