@@ -64,7 +64,7 @@ goes in with `ledger.js addition <runDir> "<criterion line>"`, which appends and
 4. Worktree (skip under `--dry-run`). If `git worktree list` shows `<wt>` or
    `git branch --list ticket/<TICKET>` is non-empty, ASK once: RESUME (keep everything, skip
    `init`, jump to Stage 8 to assess real state) or CLEAN RESTART (`git worktree remove <wt>`,
-   `git branch -D ticket/<TICKET>`, `node <SKILL_DIR>/scripts/ledger.js archive <runDir>`,
+   `node <SKILL_DIR>/scripts/ledger.js archive <runDir>`, `git branch -D ticket/<TICKET>`,
    then `init --restart` in step 5). Never auto-delete; if `worktree remove` refuses, show
    the dirty files and let the human decide. Then `git worktree add <wt> -b ticket/<TICKET> <baseRef>`
    from the profile's `hooks.stopGate.baseRef`, never the branch you are on; its tip is the base SHA;
