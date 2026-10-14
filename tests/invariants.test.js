@@ -83,6 +83,7 @@ test('every enforcement source is represented in the table', () => {
   // be listed: it would then pass this check even if every one of its rows were deleted.
   const EXEMPT = new Set([
     'memory.js', // cross-run notes, explicitly advisory
+    'dashboard.js', // read-only view over the chain, enforces nothing
   ]);
   const cited = new Set(rows.map((r) => r.file));
   for (const name of EXEMPT) assert.ok(!cited.has(name), `${name} has rows, so it must not be exempt`);
