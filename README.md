@@ -615,9 +615,10 @@ Named limits, so they are not mistaken for guarantees:
   check, so a receipt's clock is not evidence.
 - **Running the integrity check is still the loop's job.** Nothing forces `ledger.js verify` to
   run, or forces its real output into `report.md`. Read the Integrity section knowing that.
-- **Concurrent writes to the chain are not serialized.** Two dispatches racing can lose records
-  or break the chain — it fails loudly (exit 4) rather than miscounting silently, but a run that
-  dispatches subagents in parallel can end up unreportable.
+- **The chain lock is a lock directory, not a kernel lock.** Appends are serialized through it,
+  so parallel dispatches do not corrupt the chain. A writer that cannot take it within 15s fails
+  loudly (`CHAIN_LOCKED`) and its record is not written; a lock held past 60s is treated as
+  abandoned and broken, so a holder that slow could share the chain with the next writer.
 
 The whole enforcement layer is covered by a test suite (`node tests/run.js`), which
 includes the full corpus of bypasses found while attacking it, as regression cases — including a
