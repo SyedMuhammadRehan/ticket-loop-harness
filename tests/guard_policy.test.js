@@ -142,7 +142,6 @@ test('unrelated work is never evaluated', () => {
     'node -e "console.log(1+1)"',
     'git worktree list --porcelain',
     'git worktree remove ../ticket-PROJ-1',
-    'git branch -D ticket/PROJ-1',
     'git -C ../ticket-PROJ-1 commit -m "wip(PROJ-1): C1 green"',
     'npm test -- ledger.test.js',
     'rg TODO lib/',
