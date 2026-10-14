@@ -522,13 +522,19 @@ test('a turn may end while agents work, but a dispatch gone quiet past the thres
     assert.strictEqual(waiting.status, 0, waiting.stderr);
     assert.match(waiting.stderr, /still out, no outcome yet/);
 
+    // A run is governed by the profile it started under, so the stall is shown on a run that
+    // began with a zero threshold.
     const profile = path.join(env.main, '.agents', 'ticket-loop.config.json');
     fs.writeFileSync(profile, JSON.stringify({ ...JSON.parse(fs.readFileSync(profile, 'utf8')), dispatchPolicy: { stallMinutes: 0 } }));
+    const quiet = path.join(env.main, '.agents', 'ticket-runs', 'T-2');
+    fs.mkdirSync(quiet, { recursive: true });
+    assert.strictEqual(ledger(env.main, ['init', quiet, 'abc']).status, 0);
+    assert.strictEqual(ledger(env.main, ['dispatch', quiet, 'implementer: C1', '--source', 'hook']).status, 0);
     const blocked = gate(env.main);
     assert.strictEqual(blocked.status, 2, blocked.stderr);
     assert.ok(blocked.stderr.includes('no sign of life') && blocked.stderr.includes('seq 2'), blocked.stderr);
 
-    assert.strictEqual(ledger(env.main, ['outcome', runDir, '2', 'died', 'session limit']).status, 0);
+    assert.strictEqual(ledger(env.main, ['outcome', quiet, '2', 'died', 'session limit']).status, 0);
     assert.strictEqual(gate(env.main).status, 0, 'a recorded death is an outcome');
   } finally {
     teardown(env);

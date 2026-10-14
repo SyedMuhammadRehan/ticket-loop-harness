@@ -1259,10 +1259,16 @@ test('a phone approval backs one act, and only while it is fresh', () => {
     assert.strictEqual(again.status, 1);
     assert.match(again.stderr, /one answer, one act/);
 
+    // A run is governed by the profile it started under, so freshness is shown on a run that
+    // began with approvals expiring at once.
     const cfg = path.join(root, '.agents', 'ticket-loop.config.json');
     fs.writeFileSync(cfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfg, 'utf8')), approvalMinutes: 0 }));
-    assert.strictEqual(approve('Clear lib/auth/**?').status, 0);
-    const stale = ledger(root, ['clear', runDir, 'lib/auth/**', 'from the phone', '--approval', String(chain.last(runDir, 'approval').seq)]);
+    const strict = path.join(root, '.agents', 'ticket-runs', 'T-2');
+    fs.mkdirSync(strict, { recursive: true });
+    assert.strictEqual(ledger(root, ['init', strict, 'abc']).status, 0);
+    const approveStrict = ledger(root, ['approval', strict, '--question', 'Clear lib/auth/**?', '--choice', '1', '--channel', 'slack', '--sender', 'U1', '--nonce', 'N2']);
+    assert.strictEqual(approveStrict.status, 0);
+    const stale = ledger(root, ['clear', strict, 'lib/auth/**', 'from the phone', '--approval', String(chain.last(strict, 'approval').seq)]);
     assert.strictEqual(stale.status, 1);
     assert.match(stale.stderr, /older than 0 min/);
   } finally {

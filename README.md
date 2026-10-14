@@ -197,8 +197,7 @@ It is read-only: it records nothing, never reads a run dir that has no chain on 
 reads each run in its own process so one unreadable run cannot take down the page. Recorded
 strings are escaped, because labels are whatever the orchestrator typed. `--serve` listens on
 loopback only. What it does not do: it is per machine, so a team-wide view means collecting each
-machine's `--json` yourself; and `verify` judges a closed run against today's profile, so a
-profile edited after a run closed shows that run as TAMPERED.
+machine's `--json` yourself.
 
 ## Cross-run memory
 
@@ -352,7 +351,14 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
 - **The gates can't be disarmed mid-run** — while a run is active, the profile, every file of
   the installed plugin (hooks, scripts, prompts, the judge's definition, SKILL.md) and the hook
   state are read-only, and the stop gate **blocks** rather than going inert if the profile goes
-  missing or unparsable. The profile's hash is sealed at Stage 0.
+  missing or unparsable.
+- **A run is judged by the rules it ran under** — init seals the whole profile, and the ledger
+  reads that sealed copy for the run's caps, ceiling and models, so editing the file mid-run
+  changes nothing it enforces and shows as TAMPERED. `close` records what the profile and policy
+  hashed to as the run ended, so an edit after close is the repo moving on, not tampering, while
+  an edit made during the run stays TAMPERED even if the file is put back. A run from before
+  whole-profile sealing is given the copy committed in git as of its close, only when that copy
+  hashes to its seal.
 - **Deleting the run dir does not end the run** — a chain that has not recorded its close, with
   neither its run dir nor an archive of it, is an orphaned run and still arms every gate: the
   write guard stays on, dispatches are refused naming the chain, and a "done" claim is blocked.
