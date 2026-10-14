@@ -268,3 +268,15 @@ uphold" and must stay there rather than migrating into this table:
 | 170 | An edit made while the run was open stays TAMPERED, whatever the file says later | `ledger.js` → `closedRunControlPlane` | `ledger_profile.test.js` :: `a profile edited while the run was open is still TAMPERED after it closes` | Restoring the file after close must not hide an edit made during the run |
 | 171 | A run sealed before whole-profile sealing is given the profile committed as of its close, only when it hashes to the seal | `ledger.js` → `committedProfileAtClose` | `ledger_profile.test.js` :: `a run from before whole-profile sealing is judged by the profile committed as of its close` | Older runs carry only a hash; git holds the content they ran under |
 | 172 | A committed copy that does not match the seal recovers nothing | `ledger.js` → `committedProfileAtClose` | `ledger_profile.test.js` :: `a committed copy that does not match the seal recovers nothing, and the change is still reported` | Recovery must not launder a profile the run never ran under |
+
+## Tests first, as a receipt
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 173 | A red run is sealed only when the criterion's frozen command fails | `ledger.js` → `cmdRed` | `ledger_red.test.js` :: `a test that already passes before the implementation is refused as a red run` | A test that passes before the change proves nothing about it |
+| 174 | Only a (test) criterion with a shell command takes a red run | `ledger.js` → `cmdRed` | `ledger_red.test.js` :: `only a (test) criterion with a shell command takes a red run` | Tests-first is a claim about tests |
+| 175 | A pass by command fingerprints the worktree it ran against | `ledger.js` → `treeOf` | `ledger_red.test.js` :: `tests-first is proven by a red run, then a pass after the worktree changed` | Without it, a red and a pass cannot be told apart from two runs of the same code |
+| 176 | Tests-first is proven only by a red run before the pass, at a different worktree | `ledger.js` → `testFirstOf` | `ledger_red.test.js` :: `a pass with no red run before it, or with no change since, does not prove tests-first` | A red at the pass's own tree means no code changed in between |
+| 177 | A red run after the pass proves nothing | `ledger.js` → `testFirstOf` | `ledger_red.test.js` :: `a red run sealed after the pass proves nothing about the code that passed` | Breaking the code afterwards to manufacture a red is not tests-first |
+| 178 | With requireTestFirst, a run passes only when every test criterion has proven tests-first | `ledger.js` → `completeness` | `ledger_red.test.js` :: `with requireTestFirst, a run whose test criteria lack a red run has not passed` | Tests-first was a prompt line nothing recorded |
+| 179 | The org policy can force tests-first on, and a profile cannot turn it off | `policy.js` → `applyPolicy` | `policy.test.js` :: `the org policy forces tests-first on, and a profile cannot turn it off` | A rule each repo can opt out of is a suggestion |

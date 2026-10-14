@@ -245,6 +245,11 @@ function roleBars(tokens) {
     .join('')}</div>`;
 }
 
+function testFirstCell(state) {
+  if (!state) return '<span class="muted">—</span>';
+  return state === 'proven' ? '<span class="pill pass">red → green</span>' : '<span class="pill skipped">no red run</span>';
+}
+
 function runDetail(run, i) {
   const problems = run.error ? [run.error] : (run.integrity && run.integrity.problems) || [];
   const crit = run.completeness ? run.completeness.criteria : [];
@@ -255,7 +260,7 @@ function runDetail(run, i) {
 ${problems.length ? `<div class="problems"><strong>Problems</strong><ul>${problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}
 ${open.length ? `<div class="problems warnbox"><strong>Dispatches still out</strong><ul>${open.map((o) => `<li>seq ${esc(o.seqs[0])} ${esc(o.label || '')} — ${o.stalled ? `STALLED, quiet ${esc(o.minutesQuiet)} min` : `${esc(o.minutesOpen)} min`}</li>`).join('')}</ul></div>` : ''}
 <div class="grid2">
-<div><h3>Criteria</h3>${crit.length ? `<table><tr><th>ID</th><th>Result</th><th>How</th></tr>${crit.map((c) => `<tr><td>${esc(c.id)}</td><td><span class="pill ${esc(String(c.result).toLowerCase())}">${esc(c.result)}</span></td><td>${esc(c.by || '—')}</td></tr>`).join('')}</table>` : '<p class="muted">No frozen contract.</p>'}</div>
+<div><h3>Criteria</h3>${crit.length ? `<table><tr><th>ID</th><th>Result</th><th>How</th><th>Test first</th></tr>${crit.map((c) => `<tr><td>${esc(c.id)}</td><td><span class="pill ${esc(String(c.result).toLowerCase())}">${esc(c.result)}</span></td><td>${esc(c.by || '—')}</td><td>${testFirstCell(c.testFirst)}</td></tr>`).join('')}</table>` : '<p class="muted">No frozen contract.</p>'}</div>
 <div><h3>Tokens by role</h3>${roleBars(run.tokens)}${run.tokens ? `<p class="muted">counted ${num(run.tokens.counted)} · reported ${num(run.tokens.total)} · prompt floor ${num(run.tokens.floor)}</p>` : ''}</div>
 </div>
 <h3>Dispatches</h3>

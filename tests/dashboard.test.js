@@ -142,3 +142,16 @@ test('--serve answers on loopback only and refreshes itself', async () => {
     rmDir(root);
   }
 });
+
+test('each test criterion shows whether tests-first was proven', () => {
+  const { root } = finishedRun();
+  try {
+    const [run] = collect(root).repos[0].runs;
+    assert.strictEqual(run.completeness.criteria.find((c) => c.id === 'C1').testFirst, 'missing');
+    const out = path.join(root, 'dash.html');
+    assert.strictEqual(runScript(DASHBOARD, [root, '--out', out], { cwd: root }).status, 0);
+    assert.ok(fs.readFileSync(out, 'utf8').includes('no red run'));
+  } finally {
+    rmDir(root);
+  }
+});

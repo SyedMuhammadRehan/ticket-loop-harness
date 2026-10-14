@@ -268,6 +268,15 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   honest record is SKIPPED. A `(manual)` criterion can be passed only `--by human`, checked
   against the kind in the *frozen contract*. `ledger.js cost` reports the breakdown, so a report
   can say "eight by command, one by a person" instead of nine indistinguishable passes.
+- **Tests first is a receipt, not a prompt line** — once the test is written and before any
+  implementation, `ledger.js red <runDir> <C-id> --cwd <wt>` runs the (test) criterion's frozen
+  command and seals it only if it fails, with the output and a fingerprint of the worktree
+  (HEAD, the uncommitted diff, untracked files). Every pass by command is fingerprinted too.
+  `verify` marks a test criterion `testFirst: proven` only when a red run precedes its latest
+  pass and the worktree changed in between; a test that already passed, a red sealed after the
+  pass, or a red at the pass's own tree proves nothing. With `requireTestFirst: true` in the
+  profile, or forced by the org policy, a run without it has not passed. The dashboard shows it
+  per criterion.
 - **Intact is not passed** — `ledger.js verify` reports `completeness` beside integrity: the
   verdict, every frozen criterion's latest result, and `passed`, true only for a passing verdict
   with every criterion PASS by a method other than `asserted`. A run that recorded nothing, or
@@ -596,6 +605,9 @@ breaches, and that is judgement.
   the gate lets the fourth through, so a session that cannot go green is never wedged for good.
   It says on stderr that the run is NOT verified and messages the person once; the report must
   say so too.
+- **That the red run failed for the right reason.** The receipt proves the test failed before
+  the code changed and passed after; it cannot tell a failure on the missing behaviour from one
+  on a typo or an unrelated broken test. The output tail is sealed, so the judge can read why.
 - **What a repo's own profile runs when you edit.** `post_edit` runs the profile's `format` and
   `analyze` commands on every matching edit, run or no run, like any repo-owned task config. Open
   an untrusted repo's profile before you edit in it with the plugin enabled.
