@@ -3,11 +3,15 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const http = require('node:http');
+const { spawn, spawnSync } = require('node:child_process');
 const { HOOKS_DIR, mkTmpDir, rmDir, runScript, mkFakeRepo, ledger } = require('./helpers.js');
 
 const SCRIPT = path.join(HOOKS_DIR, 'stop_gate.js');
-const { parseWorktrees, mapTargets, batchTargets, looksLikeFlake, readState } = require(SCRIPT);
+const {
+  parseWorktrees, mapTargets, batchTargets, looksLikeFlake, readState, spawnTimeoutMs, verdictOf, verifyTree,
+  MIN_TEST_TIMEOUT_MS, HOOK_BUDGET_MS,
+} = require(SCRIPT);
 
 // --- unit: worktree parsing ---
 
@@ -138,13 +142,14 @@ function git(cwd, ...args) {
   return res.stdout;
 }
 
-// Mark a run ACTIVE the way the hooks detect it: an initialized run dir with no close marker.
-// Several "not verified" paths only speak up during a run, because a Stop mid-run is a "done"
-// claim and a Stop outside one is not.
+// Start a run the way the playbook does: an initialized run dir with its receipt chain under the
+// repo's git dir. Several "not verified" paths only speak up during a run, because a Stop mid-run
+// is a "done" claim and a Stop outside one is not.
 function markRunActive(main) {
   const runDir = path.join(main, '.agents', 'ticket-runs', 'T-1');
   fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'budget.json'), '{"dispatches":1}');
+  const res = ledger(main, ['init', runDir, 'abc']);
+  assert.strictEqual(res.status, 0, res.stderr);
   return runDir;
 }
 
@@ -259,6 +264,7 @@ test('worktrees: "cwd" narrows the scope back for repos that want it', () => {
 // the floor: without it, 50ms kills the test command and an honest pass is reported as RED.
 test('the timeout floor protects a green suite from a tiny timeoutMs', () => {
   const env = setupRepo({ stopGate: { extensions: ['.py'], mode: 'full', baseRef: 'main', timeoutMs: 50 } });
+  markRunActive(env.main);
   try {
     fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
     // No FAIL marker: the suite is green. It still costs a process spawn, which is well over
@@ -289,7 +295,55 @@ test('a tiny timeoutMs cannot disable the gate (it is floored)', () => {
   }
 });
 
-test('a missing test binary degrades honestly to NOT verified', () => {
+// The floor and the ceiling are each a line of arithmetic a refactor can drop; a fast machine
+// would not notice either through a real suite.
+test('the test timeout is floored, so a tiny timeoutMs cannot disable the gate', () => {
+  assert.strictEqual(spawnTimeoutMs(50, Infinity), MIN_TEST_TIMEOUT_MS);
+  assert.strictEqual(spawnTimeoutMs(0, Infinity), 240000, 'an unset timeout is the default');
+  assert.strictEqual(spawnTimeoutMs(Number.NaN, Infinity), 240000);
+  assert.strictEqual(spawnTimeoutMs(100000, Infinity), 100000);
+});
+
+test('the test timeout never outlasts the hook\'s own deadline', () => {
+  assert.ok(HOOK_BUDGET_MS < 600000, 'hooks.json kills the Stop hook at 600 s');
+  assert.strictEqual(spawnTimeoutMs(900000, 540000), 540000);
+  assert.strictEqual(spawnTimeoutMs(50, 1000), 1000, 'the deadline wins over the floor: a spent budget blocks');
+  assert.strictEqual(spawnTimeoutMs(240000, -5), 0, 'a spent deadline is 0, never a negative or unlimited timeout');
+});
+
+// On Windows a timeout kills cmd.exe, not the node it started, which holds the tree open until it
+// exits; the test waits it out before removing the tree.
+const SLOW_SUITE_MS = 4000;
+test('a suite slower than what is left of the hook\'s deadline blocks as not verified in time', async () => {
+  const env = setupRepo();
+  try {
+    fs.writeFileSync(path.join(env.wt, 'slow.js'), `setTimeout(() => process.exit(0), ${SLOW_SUITE_MS});\n`);
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
+    const conf = { extensions: ['.py'], mode: 'full', baseRef: 'main', timeoutMs: 600000 };
+    const soon = verifyTree(env.wt, conf, 'node slow.js', true, Date.now() + 1500);
+    assert.strictEqual(soon.ok, false, 'a green suite that outruns the deadline is not a pass');
+    assert.match(soon.tail, /time budget/);
+    const spent = verifyTree(env.wt, conf, 'node check.js', true, Date.now() - 1);
+    assert.strictEqual(spent.ok, false);
+    assert.match(spent.tail, /time budget/);
+  } finally {
+    await new Promise((r) => setTimeout(r, SLOW_SUITE_MS));
+    teardown(env);
+  }
+});
+
+test('only the spawn or the shell\'s own exit code says a test command could not start', () => {
+  assert.strictEqual(verdictOf({ status: 1, stdout: 'cat: fixture: No such file or directory' }), 'fail');
+  assert.strictEqual(verdictOf({ status: 1, stderr: "'x' is not recognized as an internal or external command" }), 'fail');
+  assert.strictEqual(verdictOf({ status: 127 }), 'unrunnable');
+  assert.strictEqual(verdictOf({ status: 9009 }), 'unrunnable');
+  assert.strictEqual(verdictOf({ status: null, error: Object.assign(new Error('spawn x ENOENT'), { code: 'ENOENT' }) }), 'unrunnable');
+  assert.strictEqual(verdictOf({ status: null, error: Object.assign(new Error('t'), { code: 'ETIMEDOUT' }) }), 'timeout');
+  assert.strictEqual(verdictOf({ status: null, capped: true, error: Object.assign(new Error('t'), { code: 'ETIMEDOUT' }) }), 'budget');
+  assert.strictEqual(verdictOf({ status: 0 }), 'pass');
+});
+
+test('a test command that cannot start blocks the "done" claim mid-run', () => {
   const env = setupRepo();
   markRunActive(env.main);
   try {
@@ -302,8 +356,32 @@ test('a missing test binary degrades honestly to NOT verified', () => {
     );
     fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
     const res = gate(env.main);
-    assert.strictEqual(res.status, 0);
-    assert.ok(res.stderr.includes('NOT verified'), res.stderr);
+    assert.strictEqual(res.status, 2, 'a suite that never ran has verified nothing');
+    assert.ok(res.stderr.includes('definitely-not-a-real-binary-xyz'), res.stderr);
+
+    // cmd.exe exits 1 for a missing binary, so the shell's not-found code is driven directly.
+    fs.writeFileSync(
+      path.join(env.main, '.agents', 'ticket-loop.config.json'),
+      JSON.stringify({
+        verify: { test: 'node -e process.exit(127)' },
+        hooks: { stopGate: { extensions: ['.py'], mode: 'full', baseRef: 'main' } },
+      })
+    );
+    const notFound = gate(env.main);
+    assert.strictEqual(notFound.status, 2, notFound.stderr);
+    assert.match(notFound.stderr, /could not start/);
+  } finally {
+    teardown(env);
+  }
+});
+
+test('a targeted test command whose binary is missing blocks too', () => {
+  const env = targetedRepo({ testCommand: 'definitely-not-a-real-binary-xyz {targets}' });
+  markRunActive(env.main);
+  try {
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 2, res.stderr);
+    if (process.platform !== 'win32') assert.match(res.stderr, /could not start/);
   } finally {
     teardown(env);
   }
@@ -367,17 +445,20 @@ test('a failing batch blocks like a failing suite', () => {
   }
 });
 
-test('a command line the platform refuses is reported as NOT verified, not as red tests', () => {
-  const env = targetedRepo({ testCommand: 'node refuse.js {targets}' });
-  markRunActive(env.main);
-  try {
-    fs.writeFileSync(path.join(env.wt, 'refuse.js'), "console.error('The command line is too long.'); process.exit(1);\n");
-    const res = gate(env.main);
-    assert.strictEqual(res.status, 0, res.stderr);
-    assert.ok(res.stderr.includes('NOT verified'), res.stderr);
-    assert.ok(!res.stderr.includes('tests FAILED'), res.stderr);
-  } finally {
-    teardown(env);
+// A red suite that prints a missing-file message must stay red: read from output text, "could
+// not start" would turn every such failure into a pass.
+test('a red suite whose output says "No such file or directory" still blocks', () => {
+  for (const said of ['No such file or directory', 'The command line is too long.', 'command not found']) {
+    const env = targetedRepo({ testCommand: 'node refuse.js {targets}' });
+    markRunActive(env.main);
+    try {
+      fs.writeFileSync(path.join(env.wt, 'refuse.js'), `console.error(${JSON.stringify(said)}); process.exit(1);\n`);
+      const res = gate(env.main);
+      assert.strictEqual(res.status, 2, `"${said}" in a red suite's output passed the gate:\n${res.stderr}`);
+      assert.ok(res.stderr.includes('tests FAILED'), res.stderr);
+    } finally {
+      teardown(env);
+    }
   }
 });
 
@@ -417,7 +498,7 @@ test('clean trees pass without running anything; escape valve releases after 3 b
     }
     const res = gate(env.main, { session_id: 's1', stop_hook_active: true });
     assert.strictEqual(res.status, 0);
-    assert.ok(res.stderr.includes('NOT green'));
+    assert.ok(res.stderr.includes('NOT verified') && res.stderr.includes('NOT a pass'), res.stderr);
   } finally {
     teardown(env);
   }
@@ -643,4 +724,79 @@ test('logging that was already there does not block a later change', () => {
   } finally {
     teardown(env);
   }
+});
+
+// --- a repo cannot run code by shipping a run -------------------------------------------
+//
+// A budget.json is a file any repo can commit; a receipt chain lives under this machine's git dir,
+// which no clone can write. Only a run with a chain may make the gate execute the profile.
+test('a run dir the repo committed, with no receipt chain here, runs no profile command and blocks', () => {
+  const env = setupRepo();
+  try {
+    fs.writeFileSync(
+      path.join(env.main, '.agents', 'ticket-loop.config.json'),
+      JSON.stringify({
+        verify: { test: 'node pwn.js' },
+        hooks: { stopGate: { extensions: ['.py'], mode: 'full', baseRef: 'main' } },
+      })
+    );
+    fs.writeFileSync(path.join(env.main, 'pwn.js'), "require('fs').writeFileSync('PWNED', 'x');\n");
+    const runDir = path.join(env.main, '.agents', 'ticket-runs', 'T-1');
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'budget.json'), '{"dispatches":0}');
+    fs.writeFileSync(path.join(env.main, 'src', 'app.py'), 'x = 2\n');
+
+    const res = gate(env.main);
+    assert.ok(!fs.existsSync(path.join(env.main, 'PWNED')), 'the repo\'s verify.test ran on a run this machine never started');
+    assert.strictEqual(res.status, 2, 'a run that cannot be verified is not a pass');
+    assert.match(res.stderr, /no receipt chain/);
+    assert.match(res.stderr, /NOT run/);
+  } finally {
+    teardown(env);
+  }
+});
+
+function runAsync(script, { cwd, env = {}, input }) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [script], { cwd, env: { ...process.env, ...env } });
+    let stderr = '';
+    child.stderr.on('data', (c) => (stderr += c));
+    child.on('close', (status) => resolve({ status, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+test('the escape valve tells the person the run is not verified, once', async (t) => {
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      bodies.push(body);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const env = setupRepo();
+  t.after(() => teardown(env));
+  const notifyFile = path.join(env.base, 'notify.json');
+  fs.writeFileSync(notifyFile, JSON.stringify({ channels: [{ type: 'webhook', url: `http://127.0.0.1:${server.address().port}/hook` }] }));
+  markRunActive(env.main);
+  fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 3\n');
+  fs.writeFileSync(path.join(env.wt, 'FAIL'), '');
+  const stop = (extra) =>
+    runAsync(SCRIPT, {
+      cwd: env.main,
+      env: { TICKET_LOOP_NOTIFY: notifyFile, CLAUDE_PLUGIN_ROOT: '', TICKET_LOOP_POLICY: path.join(env.base, 'no-policy.json') },
+      input: JSON.stringify({ session_id: 's1', ...extra }),
+    });
+  for (let i = 0; i < 3; i++) assert.strictEqual((await stop({})).status, 2);
+  assert.strictEqual(bodies.length, 0, 'a block is not news');
+  const released = await stop({ stop_hook_active: true });
+  assert.strictEqual(released.status, 0);
+  assert.strictEqual(bodies.length, 1, released.stderr);
+  assert.match(JSON.parse(bodies[0]).text, /NOT verified/);
+  assert.match(JSON.parse(bodies[0]).text, /NOT a pass/);
 });

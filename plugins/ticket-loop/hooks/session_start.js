@@ -12,10 +12,13 @@ const lib = require('./hook_lib.js');
 
 const LEDGER_TIMEOUT_MS = 10000;
 
-function runLines(root, runs, sessionId, staleHours) {
+function runLines(root, records, sessionId, staleHours) {
   const ledger = lib.findLedger(root);
-  return runs.map((runDir) => {
+  return records.map(({ dir: runDir, orphaned, chainDir }) => {
     const name = path.basename(runDir);
+    if (orphaned) {
+      return `ticket run ${name} has an open receipt chain (${chainDir}) but its run directory is gone; every gate stays armed until it is restored or ended with ledger.js archive ${runDir}`;
+    }
     const res = ledger ? lib.runStatus(ledger, runDir, root, LEDGER_TIMEOUT_MS) : {};
     if (!res.status) return `ticket run ${name} is open; while it is, every gate in this repo is armed`;
     const foreign = lib.foreignRunNote(res.status, sessionId, runDir, staleHours);
@@ -26,7 +29,7 @@ function runLines(root, runs, sessionId, staleHours) {
 
 function notice(input) {
   const root = lib.findRepoRoot(input.cwd || process.cwd());
-  const runs = lib.activeRuns(root);
+  const runs = lib.runRecords(root);
   const stale = lib.staleCopies(root);
   if (runs.length === 0 && stale.length === 0) return null;
 

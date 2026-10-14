@@ -96,3 +96,26 @@ test('malformed or empty input yields nothing rather than throwing', () => {
   }
   assert.deepStrictEqual(addedLines(null), []);
 });
+
+// Text sent off the machine: a notification may go to a public ntfy topic.
+test('redactSecrets removes credentials and keeps the words around them', () => {
+  const { redactSecrets } = require(path.join(HOOKS_DIR, 'hygiene.js'));
+  const cases = [
+    ['curl -H "Authorization: Bearer abc.def-ghi"', 'abc.def-ghi'],
+    ['curl -u x -H "Authorization: Basic dXNlcjpwYXNz"', 'dXNlcjpwYXNz'],
+    ['https://api.example.com/x?token=hunter2Horse&page=2', 'hunter2Horse'],
+    ['mysql --password=p4ss! -h db', 'p4ss!'],
+    ['gh auth login --with-token ghp_9fK2xQ7LmN4pR8sT1vW3yZ', 'ghp_9fK2xQ7LmN4pR8sT1vW3yZ'],
+    ['export CLIENT_SECRET="two words"', 'two words'],
+    ['git push https://me:s3cret@github.com/x/y.git', 's3cret'],
+    ['upload with key AKIAx9Qz3Lm8Rt2Wv7Yb5Nc1', 'AKIAx9Qz3Lm8Rt2Wv7Yb5Nc1'],
+  ];
+  for (const [text, secret] of cases) {
+    const out = redactSecrets(text);
+    assert.ok(!out.includes(secret), `${secret} survived: ${out}`);
+    assert.match(out, /<redacted>/);
+  }
+  const plain = 'Claude needs permission to run flutter test test/widgets/profile_screen_test.dart in .agents/ticket-runs/PROJ-128';
+  assert.strictEqual(redactSecrets(plain), plain, 'paths and commands are not secrets');
+  assert.strictEqual(redactSecrets('x'.repeat(50), 10).length, 10);
+});

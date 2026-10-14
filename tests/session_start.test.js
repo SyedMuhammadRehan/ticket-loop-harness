@@ -98,3 +98,10 @@ test('the stale-copy list names every hook file the plugin ships', () => {
     assert.ok(HARNESS_HOOK_FILES.includes(name), `${name} ships in hooks/ but a stale copy of it would not be detected`);
   }
 });
+
+// A name the plugin does not ship reports a repo's own file of that name as a stale harness copy.
+test('the stale-copy list names nothing the plugin does not ship', () => {
+  for (const name of HARNESS_HOOK_FILES) {
+    assert.ok(fs.existsSync(path.join(HOOKS_DIR, name)), `${name} is on the stale-copy list but the plugin ships no such hook`);
+  }
+});

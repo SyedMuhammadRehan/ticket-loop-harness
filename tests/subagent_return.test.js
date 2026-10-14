@@ -72,3 +72,19 @@ test('a return that cannot be recorded never blocks, but says so', () => {
     rmDir(root);
   }
 });
+
+test('a return whose input names no agent is still recorded, with nothing invented', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' } });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']).status, 0);
+    const res = hook(root, {});
+    assert.strictEqual(res.status, 0, res.stderr);
+    const mark = chain.last(runDir, 'returned');
+    assert.ok(mark, res.stderr);
+    assert.strictEqual(mark.payload.agentId, null);
+    assert.strictEqual(mark.payload.agentType, null);
+  } finally {
+    rmDir(root);
+  }
+});

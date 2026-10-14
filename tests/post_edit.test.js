@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { HOOKS_DIR, mkFakeRepo, rmDir, runScript } = require('./helpers.js');
+const { HOOKS_DIR, mkFakeRepo, mkTmpDir, rmDir, runScript } = require('./helpers.js');
 
 const SCRIPT = path.join(HOOKS_DIR, 'post_edit.js');
 const { shouldProcess, findBlockingLines } = require(SCRIPT);
@@ -117,5 +117,47 @@ test('configured hook blocks (exit 2) when analyze fails and no errorRegex is se
     assert.ok(res.stderr.includes('analyze failed'));
   } finally {
     rmDir(repo);
+  }
+});
+
+// The profile governs its own repo. A scratch file elsewhere, edited from a session in the repo,
+// is not its code: a field run blocked on a scratchpad file the repo's analyzer could not read.
+const FAILING = { hooks: { postEdit: { extensions: ['.txt'], analyze: 'node -e process.exit(1) {file}' } } };
+
+test('a file outside the repo is not analyzed by the repo\'s profile', () => {
+  const repo = mkFakeRepo(FAILING);
+  const scratch = mkTmpDir('tl-scratch');
+  try {
+    fs.writeFileSync(path.join(scratch, 'notes.txt'), 'scratch\n');
+    const outside = runScript(SCRIPT, [], {
+      cwd: repo,
+      input: JSON.stringify({ cwd: repo, tool_input: { file_path: path.join(scratch, 'notes.txt') } }),
+    });
+    assert.strictEqual(outside.status, 0, outside.stderr);
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hello\n');
+    const inside = runScript(SCRIPT, [], {
+      cwd: repo,
+      input: JSON.stringify({ cwd: repo, tool_input: { file_path: path.join(repo, 'a.txt') } }),
+    });
+    assert.strictEqual(inside.status, 2, 'the same failing analyze still blocks a file in the repo');
+  } finally {
+    rmDir(repo);
+    rmDir(scratch);
+  }
+});
+
+test('the profile is found from the session\'s cwd, not the hook process\'s', () => {
+  const repo = mkFakeRepo(FAILING);
+  const elsewhere = mkTmpDir('tl-elsewhere');
+  try {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hello\n');
+    const res = runScript(SCRIPT, [], {
+      cwd: elsewhere,
+      input: JSON.stringify({ cwd: repo, tool_input: { file_path: 'a.txt' } }),
+    });
+    assert.strictEqual(res.status, 2, res.stderr);
+  } finally {
+    rmDir(repo);
+    rmDir(elsewhere);
   }
 });

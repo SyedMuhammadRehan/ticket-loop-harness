@@ -8,6 +8,7 @@ const path = require('node:path');
 const { SCRIPTS_DIR, mkTmpDir, rmDir, runScript } = require('./helpers.js');
 
 const RUN_IN = path.join(SCRIPTS_DIR, 'run_in.js');
+const { commandLine } = require(RUN_IN);
 
 test('a command runs inside the given directory and its exit code comes back', () => {
   const wt = mkTmpDir('tl-wt');
@@ -34,5 +35,39 @@ test('a missing directory or command is a usage error, never a silent pass', () 
     assert.strictEqual(runScript(RUN_IN, [here], { cwd: here }).status, 2);
   } finally {
     rmDir(here);
+  }
+});
+
+// A profile command such as "dart format . && dart analyze" is one string; quoting it as one word
+// would ask the shell for a program by that whole name.
+test('one command word is the profile\'s command string and reaches the shell as written', () => {
+  const wt = mkTmpDir('tl-wt');
+  try {
+    fs.writeFileSync(path.join(wt, 'a.js'), "require('fs').writeFileSync('A', '1');\n");
+    fs.writeFileSync(path.join(wt, 'b.js'), "require('fs').writeFileSync('B', '1'); process.exit(4);\n");
+    const res = runScript(RUN_IN, [wt, 'node a.js && node b.js'], { cwd: wt });
+    assert.strictEqual(res.status, 4, res.stderr);
+    assert.ok(fs.existsSync(path.join(wt, 'A')) && fs.existsSync(path.join(wt, 'B')), 'both halves of && ran');
+    assert.strictEqual(commandLine(['a && b']), 'a && b');
+  } finally {
+    rmDir(wt);
+  }
+});
+
+// Each word must arrive as the one argument it was, metacharacters and quotes included, on the
+// shell this platform actually uses.
+test('several command words each reach the program as exactly one argument', () => {
+  const wt = mkTmpDir('tl-wt');
+  try {
+    fs.writeFileSync(path.join(wt, 'echo.js'), 'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
+    const words = ['say "hi & echo PWNED', "it's $HOME", 'trailing\\', 'plain'];
+    const res = runScript(RUN_IN, [wt, 'node', 'echo.js', ...words], { cwd: wt });
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.deepStrictEqual(JSON.parse(res.stdout), words);
+    assert.strictEqual(commandLine(['node', 'a b'], 'win32'), 'node "a b"');
+    assert.strictEqual(commandLine(['node', 'say "hi'], 'win32'), 'node "say ""hi"');
+    assert.strictEqual(commandLine(['node', "it's"], 'linux'), "node 'it'\\''s'");
+  } finally {
+    rmDir(wt);
   }
 });
