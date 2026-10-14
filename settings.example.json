@@ -46,12 +46,41 @@
         "hooks": [
           { "type": "command", "command": "node .claude/hooks/dispatch_guard.js", "timeout": 20 }
         ]
+      },
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/freeze_guard.js", "timeout": 15 },
+          { "type": "command", "command": "node .claude/hooks/read_hint.js", "timeout": 10 }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/notify_hook.js", "timeout": 20 }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/session_start.js", "timeout": 20 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/subagent_return.js", "timeout": 20 }
+        ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "node .claude/hooks/stop_gate.js", "timeout": 600 }
+          { "type": "command", "command": "node .claude/hooks/stop_gate.js", "timeout": 600 },
+          { "type": "command", "command": "node .claude/hooks/notify_hook.js", "timeout": 20 }
         ]
       }
     ]

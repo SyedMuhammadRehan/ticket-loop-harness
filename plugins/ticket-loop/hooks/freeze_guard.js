@@ -3,12 +3,13 @@
 // to the enforcement control plane. The decision logic lives in guard_policy.js; this file
 // is the I/O shell (read stdin, work out whether a run is active, exit 0 or 2).
 //
-// Surfaces covered: Edit/Write/NotebookEdit (file_path / notebook_path) and Bash/PowerShell
-// (command, default-deny — see guard_policy.js for why the old verb blocklist was replaced).
+// Surfaces covered: Edit/Write/NotebookEdit (file_path / notebook_path), Bash/PowerShell
+// (command, default-deny — see guard_policy.js), and Read/Grep, refused only on the chain and
+// signing keys.
 //
 // Residual gaps, stated rather than implied: an agent that can run arbitrary code CAN still
-// reach these files (it could read the chain key, or write through a tool surface this hook
-// does not see). What changed is that every such route now requires a deliberate, unusual
+// reach these files (a recursive search from an ancestor reads the chain key, and a tool
+// surface this hook does not see can write). What changed is that every such route now requires a deliberate, unusual
 // command that this hook denies by default, and `ledger.js verify` reports the result as
 // TAMPERED afterwards. Enforcement here is tamper-EVIDENT, not tamper-PROOF.
 'use strict';
@@ -81,10 +82,30 @@ function deny(message, arming = []) {
   process.exit(2);
 }
 
+// Where the real harness scripts live: beside these hooks in the plugin layout, and under the
+// plugin root Claude Code names. A sanctioned call must run one of these files, not a
+// lookalike that shares its name.
+function harnessDirs() {
+  const dirs = [path.join(__dirname, '..', 'skills', 'ticket-loop', 'scripts')];
+  if (process.env.CLAUDE_PLUGIN_ROOT) dirs.push(path.join(process.env.CLAUDE_PLUGIN_ROOT, 'skills', 'ticket-loop', 'scripts'));
+  return dirs;
+}
+
+// Reads are judged on the path alone: no run lookup, so every other Read costs nothing.
+const READ_TOOLS = new Set(['Read', 'Grep']);
+function judgeRead(input, toolInput) {
+  const target = input.tool_name === 'Grep' ? toolInput.path : toolInput.file_path;
+  if (typeof target !== 'string' || !target) process.exit(0);
+  const verdict = policy.secretPathVerdict(target, { directory: input.tool_name === 'Grep' });
+  if (verdict) deny(`${target} is ${verdict.reason}.`);
+  process.exit(0);
+}
+
 function main() {
   const input = lib.readStdinJson();
   if (!input) process.exit(0); // never let a malformed payload wedge the session
   const toolInput = input.tool_input || {};
+  if (READ_TOOLS.has(input.tool_name)) judgeRead(input, toolInput);
 
   const root = lib.findRepoRoot(input.cwd || process.cwd());
   const runs = activeRuns(root);
@@ -110,7 +131,14 @@ function main() {
   }
 
   if (typeof toolInput.command === 'string') {
-    const verdict = policy.commandVerdict(toolInput.command, { runActive });
+    const verdict = policy.commandVerdict(toolInput.command, {
+      runActive,
+      cwd: input.cwd || process.cwd(),
+      harnessDirs: harnessDirs(),
+      realpath: (p) => fs.realpathSync.native(p),
+      riskPaths: runActive ? config.riskPaths || [] : [],
+      cleared: runActive ? clearedGlobs(runs) : [],
+    });
     if (verdict) {
       deny(
         `${verdict.reason}.\n` +

@@ -6,7 +6,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { HOOKS_DIR, runScript, mkFakeRepo, rmDir, ledger } = require('./helpers.js');
+const os = require('node:os');
+const { HOOKS_DIR, SCRIPTS_DIR, runScript, mkFakeRepo, mkTmpDir, rmDir, ledger } = require('./helpers.js');
 
 const SCRIPT = path.join(HOOKS_DIR, 'freeze_guard.js');
 const RUN = '.agents/ticket-runs/PROJ-1';
@@ -310,5 +311,91 @@ test('a path in two risk areas stays denied until every area it matches is clear
     } finally {
       rmDir(full);
     }
+  }
+});
+
+// The name of a harness script is not the harness: a lookalike under that name runs whatever
+// it contains, so the hook sanctions only the file beside its own install.
+test('a sanctioned call runs only the installed harness script, not a lookalike that shares its name', () => {
+  const root = repoWithRun();
+  try {
+    const real = path.join(SCRIPTS_DIR, 'ledger.js');
+    assert.strictEqual(runHook({ command: `node "${real}" status ${RUN}` }, root).status, 0);
+    assert.strictEqual(
+      runHook({ command: `node "${path.join(SCRIPTS_DIR, 'notify.js')}" ask "clear lib/auth?" --option yes --option no --run ${RUN}` }, root).status,
+      0
+    );
+    for (const cmd of [
+      `node evil/ledger.js close ${RUN}`,
+      `node "${path.join(root, 'ledger.js')}" close ${RUN}`,
+      `node my-ledger.js close ${RUN}`,
+      `node -r ./evil.js "${real}" status ${RUN}`,
+      `node "${real}" approval ${RUN} --choice 1`,
+    ]) {
+      const res = runHook({ command: cmd }, root);
+      assert.strictEqual(res.status, 2, `should block: ${cmd}`);
+    }
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a Read of the chain key or the signing key is refused, and every other Read passes', () => {
+  const root = repoWithRun();
+  try {
+    const read = (file_path) => runHook({ file_path }, root, { tool_name: 'Read' }).status;
+    assert.strictEqual(read('.git/ticket-loop/PROJ-1/key'), 2);
+    assert.strictEqual(read(path.join(root, '.git', 'ticket-loop', 'PROJ-1', 'key::$DATA')), 2);
+    assert.strictEqual(read(path.join(os.homedir(), '.claude', 'ticket-loop', 'signing', 'ed25519.pem')), 2);
+    assert.strictEqual(read(`${RUN}/done.md`), 0, 'a Read is not a write: the frozen contract is readable');
+    assert.strictEqual(read('.agents/ticket-loop.config.json'), 0);
+    assert.strictEqual(read('.git/ticket-loop/PROJ-1/chain.jsonl'), 0);
+    const grep = (p) => runHook({ pattern: '.', path: p }, root, { tool_name: 'Grep' }).status;
+    assert.strictEqual(grep('.git/ticket-loop'), 2);
+    assert.strictEqual(grep('src'), 0);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a shell write to a risk-tier path is denied while a run is active, as the Edit is', () => {
+  const root = repoWithRiskPaths(['lib/ui/auth/**']);
+  try {
+    const res = runHook({ command: 'echo x > lib/ui/auth/login_screen.dart' }, root);
+    assert.strictEqual(res.status, 2, res.stderr);
+    assert.match(res.stderr, /risk-tier path/);
+    assert.strictEqual(runHook({ command: 'cat lib/ui/auth/login_screen.dart' }, root).status, 0);
+  } finally {
+    rmDir(root);
+  }
+  const cleared = repoWithRiskPaths(['lib/ui/auth/**'], ['lib/ui/auth/**']);
+  try {
+    assert.strictEqual(runHook({ command: 'echo x > lib/ui/auth/login_screen.dart' }, cleared).status, 0);
+  } finally {
+    rmDir(cleared);
+  }
+});
+
+test('a Write naming a frozen file through a stream suffix or a trailing dot is refused', () => {
+  const root = repoWithRun();
+  try {
+    for (const f of [`${RUN}/done.md::$DATA`, `${RUN}/done.md.`, `${RUN}/done.md `, `${RUN}/budget.json:x`]) {
+      assert.strictEqual(runHook({ file_path: f }, root).status, 2, `should block ${JSON.stringify(f)}`);
+    }
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The premise of the test above, on the filesystem that has it.
+test('on Windows a stream-suffixed write lands on the file itself', { skip: process.platform !== 'win32' }, () => {
+  const dir = mkTmpDir('tl-ads');
+  try {
+    const file = path.join(dir, 'done.md');
+    fs.writeFileSync(file, 'frozen');
+    fs.writeFileSync(`${file}::$DATA`, 'forged');
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), 'forged');
+  } finally {
+    rmDir(dir);
   }
 });

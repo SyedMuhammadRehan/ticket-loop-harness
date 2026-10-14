@@ -30,6 +30,7 @@
       {
         "matcher": "Read|Grep",
         "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/freeze_guard.js\"", "timeout": 15 },
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/read_hint.js\"", "timeout": 10 }
         ]
       }
