@@ -92,9 +92,9 @@ review were interactions between two rows below, which the code alone did not ma
 
 | # | Invariant | Enforced by | Killed by | Why it exists |
 |---|---|---|---|---|
-| 13 | A receipt costs the artifact it claims | `ledger.js` → `STAGE_PROOF` | `ledger.test.js` :: `gate refuses to seal evidence that does not exist` | Ten gates would otherwise be ten free commands |
+| 13 | A receipt costs the artifact it claims | `ledger.js` → `STAGE_PROOF` | `ledger.test.js` :: `every stage gate must attach the artifact the stage produces` | Ten gates would otherwise be ten free commands |
 | 14 | Sealed evidence that changes is TAMPERED | `ledger.js` → `cmdVerify` | `ledger.test.js` :: `evidence sealed by a gate is reported as TAMPERED when it changes afterwards` | A receipt over a file that then changed attests to nothing |
-| 15 | An UNRECORDED edit to a sealed file is still TAMPERED | `ledger.js` → `cmdRevise` | `ledger.test.js` :: `an unrecorded edit to a sealed file is still TAMPERED` | Revisions must not become a general amnesty (see 16) |
+| 15 | An UNRECORDED edit to a sealed file is still TAMPERED | `ledger.js` → `integrityReport` | `ledger.test.js` :: `an unrecorded edit to a sealed file is still TAMPERED` | Revisions must not become a general amnesty (see 16) |
 | 16 | The frozen contract can never be revised | `ledger.js` → `UNREVISABLE` | `ledger.test.js` :: `revise refuses frozen artifacts and the enforcement profile` | A contract restatable after the freeze is not a contract |
 | 44 | A result must name how it was established | `ledger.js` → `CHECK_METHODS` | `ledger.test.js` :: `check refuses a result with no method named` | PASS|FAIL|SKIPPED cannot distinguish a suite that ran from source that was read |
 | 45 | Concluding something works is not a pass | `ledger.js` → `cmdCheck` | `ledger.test.js` :: `an asserted PASS is refused; an asserted SKIPPED is accepted` | SKIPPED already says "not established" without claiming it holds |
@@ -107,14 +107,14 @@ review were interactions between two rows below, which the code alone did not ma
 | # | Invariant | Enforced by | Killed by | Why it exists |
 |---|---|---|---|---|
 | 18 | A closed run refuses further records | `ledger.js` → `requireOpen` | `ledger.test.js` :: `mutating a closed run is refused` | The gates were lifted against the receipts as they stood |
-| 19 | Records appended after close are reported | `ledger.js` → `cmdVerify` | `ledger.test.js` :: `verify reports records appended after close` | Post-close appends seal and link perfectly; only the marker catches them |
+| 19 | Records appended after close are reported | `ledger.js` → `cmdVerify` | `ledger.test.js` :: `verify reports records appended after close` | Post-close appends seal and link perfectly; only the close record catches them |
 
 ## The freeze
 
 | # | Invariant | Enforced by | Killed by | Why it exists |
 |---|---|---|---|---|
-| 20 | An unvalidated draft cannot be frozen | `freeze_done.js` → `refusing to freeze` | `freeze_done.test.js` :: `refuses to freeze a draft that was never validated` | Validation was advisory before this |
-| 21 | A draft edited after validation cannot be frozen | `freeze_done.js` → `refusing to freeze` | `freeze_done.test.js` :: `refuses to freeze a draft that changed after validation` | Otherwise validate-then-weaken is free |
+| 20 | An unvalidated draft cannot be frozen | `freeze_done.js` → `receipts` | `freeze_done.test.js` :: `refuses to freeze a draft that was never validated` | Validation was advisory before this |
+| 21 | A draft edited after validation cannot be frozen | `freeze_done.js` → `matching` | `freeze_done.test.js` :: `refuses to freeze a draft that changed after validation` | Otherwise validate-then-weaken is free |
 | 22 | Frozen artifacts refuse every write surface | `guard_policy.js` → `pathVerdict` | `freeze_guard.test.js` :: `blocks Edit/Write to frozen done.md, *.approved.md and budget.json` | Editing the contract is how a run passes itself |
 
 ## Control plane
@@ -154,7 +154,7 @@ review were interactions between two rows below, which the code alone did not ma
 |---|---|---|---|---|
 | 31 | Committed slice work is verified, not just the dirty tree | `stop_gate.js` → `changedSourceFiles` | `stop_gate.test.js` :: `COMMITTED slice work is detected — a clean-but-ahead worktree is still verified` | Stage 4 commits after every green slice, so mid-run every tree is clean |
 | 32 | The ticket worktree is checked, not only the cwd | `stop_gate.js` → `treesToCheck` | `stop_gate.test.js` :: `verifies the ticket worktree, not just the cwd tree` | All implementation happens in the worktree |
-| 33 | A tiny timeoutMs cannot disable the gate | `stop_gate.js` → `MIN_TEST_TIMEOUT_MS` | `stop_gate.test.js` :: `a tiny timeoutMs cannot disable the gate (it is floored)` | A 50ms timeout would turn every run into "could not verify" |
+| 33 | A tiny timeoutMs cannot disable the gate | `stop_gate.js` → `spawnTimeoutMs` | `stop_gate.test.js` :: `the test timeout is floored, so a tiny timeoutMs cannot disable the gate` | A 50ms timeout would turn every run into "could not verify" |
 | 34 | An unusable stopGate config blocks mid-run | `stop_gate.js` → `activeRuns` | `stop_gate.test.js` :: `an active run with an unusable stopGate config BLOCKS instead of passing silently` | A deleted block is what disarming this gate looks like |
 | 35 | Filters that match nothing say so | `stop_gate.js` → `applyFilters` | `stop_gate.test.js` :: `a profile whose filters match nothing says so instead of passing quietly` | Silently verifying zero files reads identically to a green run |
 | 36 | Outside a run the gate runs nothing at all | `stop_gate.js` → `verifyTree` | `stop_gate.test.js` :: `outside a run the gate runs nothing, even when changed files match` | A repo keeps its profile permanently; verifying every turn-end would tax unrelated sessions |
@@ -193,3 +193,68 @@ uphold" and must stay there rather than migrating into this table:
 - whether a `died` dispatch outcome was reported at all
 - whether the work is actually *good* — every row above proves the record is intact, none
   proves the output is right
+
+## Write guard: disguises and side doors
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 118 | Removing or renaming .agents or .git is refused mid-run | `guard_policy.js` → `PROTECTED_REFS` | `guard_bypass.test.js` :: `removing or renaming .agents or .git is refused mid-run, and reading them is not` | Deleting the parent takes every frozen file and the chain while naming none of them |
+| 119 | Only node running a harness script first, by exact name, with no node flags is sanctioned; approval, returned and --source never are | `guard_policy.js` → `isSanctioned` | `guard_bypass.test.js` :: `a sanctioned call is node running a harness script first, by exact name, with no node flags` | The sanction was granted to any command line that merely contained a script name |
+| 120 | The sanctioned script must be the installed harness file | `guard_policy.js` → `insideHarness` | `freeze_guard.test.js` :: `a sanctioned call runs only the installed harness script, not a lookalike that shares its name` | A lookalike ledger.js runs whatever it contains |
+| 121 | A stream suffix, trailing dot or space, or dot segment does not disguise a protected path | `guard_policy.js` → `normalisePath` | `guard_bypass.test.js` :: `a stream suffix, trailing dots or spaces, and dot segments do not disguise a frozen path` | On Windows a write to done.md::$DATA overwrites done.md itself |
+| 122 | No guard verdict is superlinear | `guard_policy.js` → `PROTECTED_REFS` | `guard_perf.test.js` :: `every verdict on a 200 KB adversarial string completes in under a second` | A hook that times out lets the call through |
+| 123 | A bracket glob or backslash escape that can expand to the namespace counts as naming it | `guard_policy.js` → `globReachesNamespace` | `guard_bypass.test.js` :: `a bracket glob or a backslash escape does not hide the run directory` | rm .agents/[t]icket-runs/T-1/done.md deleted the file |
+| 124 | A frozen file name behind a wildcard or variable is refused mid-run | `guard_policy.js` → `FROZEN_FILE_BEHIND_GLOB` | `guard_bypass.test.js` :: `a frozen file name behind a wildcard or a variable is refused mid-run` | rm */*/T-1/done.md names no directory at all |
+| 125 | A shell write to an uncleared risk path is refused | `guard_policy.js` → `commandRiskVerdict` | `guard_bypass.test.js` :: `a shell write to an uncleared risk path is refused like the Edit of it` | echo > lib/auth/x.js passed while the Edit of the same file was refused |
+| 126 | Every file of the installed plugin is control plane mid-run | `guard_policy.js` → `PLUGIN_LAYOUT` | `guard_bypass.test.js` :: `every file of the installed plugin is control plane mid-run, and a repo's own hooks are not` | Only five hooks and four scripts were protected |
+| 127 | The chain append lock is frozen | `guard_policy.js` → `FROZEN_PATH_PATTERNS` | `guard_bypass.test.js` :: `the chain append lock is frozen` | A file written at lock wedges every append |
+| 128 | The chain key and the signing key are refused to every command, reads included | `guard_policy.js` → `namesChainDirBeyondRecords` | `guard_bypass.test.js` :: `the chain key and the signing key are refused to every command, reads included` | Whoever can read the key can re-seal a forged history |
+| 129 | A Read or Grep of a key is refused, judged on the path alone | `freeze_guard.js` → `judgeRead` | `freeze_guard.test.js` :: `a Read of the chain key or the signing key is refused, and every other Read passes` | cat was not the only way to read a file |
+| 130 | A history rewrite by any name but rebase is refused mid-run | `guard_policy.js` → `historyRewrite` | `guard_bypass.test.js` :: `moving a ref by another name than rebase is refused mid-run` | reset --soft, update-ref and branch -f move the base the receipts are anchored to |
+| 131 | The write guard stays armed over an orphaned run | `freeze_guard.js` → `activeRuns` | `hooks_orphan.test.js` :: `an orphaned run keeps the write guard armed: the profile stays frozen and push stays refused` | A guard that reads only the run dirs is disarmed by deleting them |
+
+## Ledger: results, verdicts and close bound to the chain
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 132 | A stale lock left as a file is broken | `chain.js` → `breakLock` | `chain.test.js` :: `a stale lock left as a plain file is broken, not a permanent wedge` | rmdir cannot remove a file, so every append wedged for good |
+| 133 | A reader mid-append is not told the chain was truncated | `chain.js` → `HEAD_RETRIES` | `chain.test.js` :: `verify rides out an append in flight, and still reports a head that stays behind` | Parallel dispatches read between another's append and head write and were refused as tampered |
+| 134 | Evidence is sealed by absolute path; verify answers the same from any cwd | `chain.js` → `hashEvidence` | `ledger_integrity.test.js` :: `verify gives the same answer from the repo root and from any other directory` | A relative path names a different file from every other directory |
+| 135 | The dispatch cap holds under parallel dispatch | `ledger.js` → `cmdDispatch` | `ledger_integrity.test.js` :: `parallel dispatches near the cap never exceed it` | The count was read outside the lock; 8 parallel at 20/25 ended at 26/25 |
+| 136 | An unreported dispatch still spends its prompt against the ceiling | `ledger.js` → `CHARS_PER_TOKEN` | `ledger_integrity.test.js` :: `a dispatch with no reported tokens still spends its prompt against the ceiling` | Omitting --tokens, or typing 0, made a dispatch free |
+| 137 | A run is governed by the policy file sealed at init | `ledger.js` → `runPolicy` | `policy.test.js` :: `a run under a sealed policy refuses a policy path changed mid-run, naming both` | Pointing TICKET_LOOP_POLICY at a missing file lifted consent and ceiling limits |
+| 138 | A sealed policy deleted mid-run is TAMPERED | `ledger.js` → `cmdVerify` | `policy.test.js` :: `a sealed policy deleted mid-run is reported as TAMPERED` | Missing evidence was a soft note |
+| 139 | The freeze seals the additions file | `freeze_done.js` → `matching` | `freeze_done.test.js` :: `the freeze seals done-additions.md, so a hand edit before any verdict is TAMPERED` | Before the first verdict nothing sealed it |
+| 140 | A command result is the exit code the ledger saw, for a frozen criterion only | `ledger.js` → `commandResult` | `ledger_integrity.test.js` :: `check --by command runs the frozen command, seals its exit, and refuses a result it contradicts` | --by command sealed whatever was typed, for any id |
+| 141 | A criterion past its timeout is killed with its tree and is never a PASS | `ledger.js` → `CRITERION_RUNNER` | `ledger_integrity.test.js` :: `a criterion command that runs past its timeout is a FAIL, never a PASS` | Killing the shell alone orphaned the command |
+| 142 | A verdict is backed only by an open QA judge the hook dispatched after the freeze | `ledger.js` → `judgeDispatch` | `ledger_integrity.test.js` :: `a verdict is backed only by an open QA judge the hook dispatched after the freeze` | Any dispatch backed a verdict the orchestrator typed |
+| 143 | Deleting the close marker re-opens nothing | `ledger.js` → `isClosed` | `ledger_integrity.test.js` :: `deleting the close marker re-opens nothing: the ledger still refuses, close rewrites it, verify reports it` | The close lived only in a deletable file |
+| 144 | Verify says whether the run passed, not only whether it is intact | `ledger.js` → `completeness` | `ledger_integrity.test.js` :: `verify says whether the run passed: an intact record of failure or of nothing is not a pass` | All-FAIL and report-only runs verified intact |
+| 145 | CI refuses an attestation whose criteria did not all pass | `ci_check.js` → `check` | `ci_check.test.js` :: `a run whose criteria did not all pass is refused, even with an APPROVE and an intact record` | An APPROVE over failed criteria merged |
+| 146 | Nothing tampered is signed | `ledger.js` → `cmdExport` | `attest.test.js` :: `export refuses a run whose sealed evidence was tampered with` | Export checked only seals and links |
+| 147 | A return goes to its agent's dispatch, by id, then by type | `ledger.js` → `cmdReturned` | `ledger_integrity.test.js` :: `a return is routed by agent id, then to the oldest unmarked dispatch of its type, then to the oldest unmarked` | Parallel launches mislabelled returns and masked a stall |
+
+## Hooks: hostile repos, orphaned runs, spoofed judges, notify
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 148 | A run with no receipt chain on this machine never makes a profile command execute | `hook_lib.js` → `hasReceiptChain` | `stop_gate.test.js` :: `a run dir the repo committed, with no receipt chain here, runs no profile command and blocks` | A repo can commit a budget.json and a verify.test, but not the git dir |
+| 149 | A chain that promised to record its close, has not, and has no run dir is still an active run | `hook_lib.js` → `orphanedRuns` | `hooks_orphan.test.js` :: `a promised chain with no close and no run dir is an orphaned active run` | Otherwise deleting .agents disarms every gate |
+| 150 | A closed chain, a legacy chain and an archived run are never orphans | `hook_lib.js` → `chainLeftOpen` | `hooks_orphan.test.js` :: `a closed chain, a legacy chain, and an archived run are never orphans` | A finished run must not arm the gates forever |
+| 151 | A close at the end of a long chain is found by reading only its ends | `hook_lib.js` → `CHAIN_END_BYTES` | `hooks_orphan.test.js` :: `a close record at the end of a long chain is found without reading the whole file` | The check runs on every edit and a chain grows with every dispatch |
+| 152 | A dispatch into an orphaned run is refused | `dispatch_guard.js` → `main` | `hooks_orphan.test.js` :: `a dispatch into an orphaned run is refused, naming the chain and the way out` | A missing run dir must not mean an uncounted budget |
+| 153 | A stop over an orphaned run is blocked | `stop_gate.js` → `runProblems` | `hooks_orphan.test.js` :: `a "done" claim over an orphaned run is blocked` | A missing run dir must not mean an unverified done claim |
+| 154 | Only the spawn error or the shell's exit code means could not start | `stop_gate.js` → `verdictOf` | `stop_gate.test.js` :: `only the spawn or the shell's own exit code says a test command could not start` | A red suite printing "No such file or directory" passed |
+| 155 | A test command that cannot start blocks the stop | `stop_gate.js` → `verifyTree` | `stop_gate.test.js` :: `a test command that cannot start blocks the "done" claim mid-run` | A suite that never ran has verified nothing |
+| 156 | The test timeout never outlasts the hook's deadline | `stop_gate.js` → `spawnTimeoutMs` | `stop_gate.test.js` :: `the test timeout never outlasts the hook's own deadline` | If Claude Code kills the hook at 600 s, the stop proceeds unverified |
+| 157 | Running out of the hook's time budget blocks the stop | `stop_gate.js` → `HOOK_BUDGET_MS` | `stop_gate.test.js` :: `a suite slower than what is left of the hook's deadline blocks as not verified in time` | A slow suite must not fail open |
+| 158 | The stop gate's give-up says the run is not verified and tells the person once | `stop_gate.js` → `MAX_CONSECUTIVE_BLOCKS` | `stop_gate.test.js` :: `the escape valve tells the person the run is not verified, once` | The release exists so sessions do not wedge; it must not read as a pass |
+| 159 | The judge prompt on any agent type but the judge is refused | `dispatch_guard.js` → `spoofedJudge` | `dispatch_guard.test.js` :: `the judge prompt dispatched on any agent but the judge is refused, not counted` | A judge nobody caps, with edit tools |
+| 160 | Placeholder leftovers are caught in any spacing, case or separator | `dispatch_guard.js` → `templatePlaceholderPatterns` | `dispatch_guard.test.js` :: `a template placeholder left in any spacing, case or separator is refused` | A spaced placeholder slipped past the single-shape regex |
+| 161 | Notifications never carry a credential | `hygiene.js` → `redactSecrets` | `notify.test.js` :: `a permission prompt never carries a credential to any channel` | ntfy topics can be public |
+| 162 | Only an answer from the official host can seal | `notify.js` → `isSealable` | `notify.test.js` :: `an answer through any host but the service's own is never sealable` | A local stub can echo the code back |
+| 163 | In a Telegram group only the configured user can seal | `notify.js` → `telegramAnswer` | `notify.test.js` :: `in a Telegram group anyone can answer, so only the configured user seals` | Any group member could answer as the person |
+| 164 | One command word reaches the shell as written | `run_in.js` → `commandLine` | `run_in.test.js` :: `one command word is the profile's command string and reaches the shell as written` | Profile strings use && |
+| 165 | Each of several words arrives as exactly one argument | `run_in.js` → `quoteWord` | `run_in.test.js` :: `several command words each reach the program as exactly one argument` | POSIX quoting exposed & to cmd.exe |
+| 166 | post_edit ignores files outside the repo | `post_edit.js` → `isInside` | `post_edit.test.js` :: `a file outside the repo is not analyzed by the repo's profile` | A file outside the repo was blocked by its profile |
+| 167 | The stale-copy list names nothing the plugin does not ship | `hook_lib.js` → `HARNESS_HOOK_FILES` | `session_start.test.js` :: `the stale-copy list names nothing the plugin does not ship` | A listed file that never shipped |

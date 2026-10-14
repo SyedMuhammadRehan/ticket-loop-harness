@@ -66,8 +66,10 @@ test('every invariant cites a test that exists', () => {
     const file = path.join(REPO_ROOT, 'tests', r.testFile);
     assert.ok(fs.existsSync(file), `invariant ${r.n} cites ${r.testFile}, which does not exist`);
     if (!cache.has(file)) cache.set(file, fs.readFileSync(file, 'utf8'));
+    const src = cache.get(file);
+    const spellings = [`test('${r.testName.replace(/'/g, "\\'")}'`, `test("${r.testName}"`, `test('${r.testName}'`];
     assert.ok(
-      cache.get(file).includes(`test('${r.testName}'`),
+      spellings.some((s) => src.includes(s)),
       `invariant ${r.n} cites "${r.testName}" in ${r.testFile}, which has no such test`
     );
   }
@@ -80,7 +82,6 @@ test('every enforcement source is represented in the table', () => {
   // Only files that genuinely enforce no guarantee belong here. A file that HAS rows must not
   // be listed: it would then pass this check even if every one of its rows were deleted.
   const EXEMPT = new Set([
-    'post_edit.js', // formatting/analysis convenience, enforces no guarantee
     'memory.js', // cross-run notes, explicitly advisory
   ]);
   const cited = new Set(rows.map((r) => r.file));
