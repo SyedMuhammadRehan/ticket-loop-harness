@@ -10,6 +10,7 @@
 // enforcement path. `--source hook` lets ledger.js de-duplicate against the skill's own
 // bookkeeping call (it takes the max of the two, never the sum).
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const lib = require('./hook_lib.js');
@@ -63,11 +64,36 @@ function unresolvedContext(status, runDir) {
 }
 
 // A filled prompt keeps none of its template's {PLACEHOLDERS}; one left in hands the subagent a
-// literal it cannot resolve, and nothing downstream notices.
-const UNFILLED = /\{[A-Z][A-Z0-9_]{2,}\}/g;
+// literal it cannot resolve, and nothing downstream notices. The names come from the templates
+// themselves, so a hand-mangled leftover ({ RUN_DIR }, {run-dir}) is caught too. A multi-word name
+// matches in any case; a one-word name only in capitals, because `{ files }` is ordinary code
+// in a filled diff. Read once per process.
+const PROMPTS_DIR = path.join(__dirname, '..', 'skills', 'ticket-loop', 'prompts');
+const TEMPLATE_NAME = /\{([A-Z][A-Z0-9_]{2,})\}/g;
+// Any capitalised name in braces, whatever the templates say, so an unreadable prompts dir still checks.
+const UNFILLED_UPPERCASE = /\{\s*[A-Z][A-Z0-9_-]{2,}\s*\}/g;
+let placeholderPatterns;
+
+function templatePlaceholderPatterns() {
+  if (placeholderPatterns !== undefined) return placeholderPatterns;
+  const names = new Set();
+  try {
+    for (const f of fs.readdirSync(PROMPTS_DIR).filter((n) => n.endsWith('.md'))) {
+      for (const m of fs.readFileSync(path.join(PROMPTS_DIR, f), 'utf8').matchAll(TEMPLATE_NAME)) names.add(m[1]);
+    }
+  } catch (err) {
+    console.error(`dispatch_guard: prompt templates unreadable (${err.message}); checking capitalised placeholders only`);
+    names.clear();
+  }
+  const multi = [...names].filter((n) => n.includes('_'));
+  const tolerant = (n) => `\\{\\s*${n.split('_').filter(Boolean).join('\\s*[_-]\\s*')}\\s*\\}`;
+  placeholderPatterns = multi.length ? [UNFILLED_UPPERCASE, new RegExp(multi.map(tolerant).join('|'), 'gi')] : [UNFILLED_UPPERCASE];
+  return placeholderPatterns;
+}
+
 function unfilledPlaceholders(toolInput) {
   const text = ['prompt', 'description'].map((k) => (typeof toolInput[k] === 'string' ? toolInput[k] : '')).join('\n');
-  return [...new Set(text.match(UNFILLED) || [])];
+  return [...new Set(templatePlaceholderPatterns().flatMap((re) => text.match(re) || []))];
 }
 
 // What the orchestrator is told alongside a permitted dispatch: unresolved earlier dispatches,
@@ -78,8 +104,26 @@ const MAX_QA_BLOCKS = 3;
 const SOFT_CEILING = 0.8;
 const BLOCK_NOTIFY_MS = 30 * 60 * 1000;
 
+const JUDGE_AGENT = /^(?:ticket-loop:)?ticket-loop-qa$/;
+// The judge prompt's sealing instruction (prompts/qa_agent.md): `node <scripts>/ledger.js verdict`.
+const JUDGE_SEAL = /ledger\.js["']?\s+verdict\b/;
+
+function agentTypeOf(toolInput) {
+  return String(toolInput.subagent_type || toolInput.agentType || '');
+}
+
+function carriesJudgePrompt(toolInput) {
+  return ['prompt', 'description'].some((k) => typeof toolInput[k] === 'string' && JUDGE_SEAL.test(toolInput[k]));
+}
+
 function isJudge(toolInput) {
-  return /ticket-loop-qa/.test(String(toolInput.subagent_type || toolInput.agentType || ''));
+  return /ticket-loop-qa/.test(agentTypeOf(toolInput)) || carriesJudgePrompt(toolInput);
+}
+
+// The QA cap and the verdict's binding key on the judge agent; the same prompt on another agent
+// type would be a judge nobody counts, with edit tools the judge is denied.
+function spoofedJudge(toolInput) {
+  return carriesJudgePrompt(toolInput) && !JUDGE_AGENT.test(agentTypeOf(toolInput));
 }
 
 // A refusal this dispatch must not pass, or null.
@@ -120,10 +164,19 @@ async function main() {
   if (!input) process.exit(0);
 
   const root = lib.findRepoRoot(input.cwd || process.cwd());
-  const runs = activeRuns(root);
-  if (runs.length === 0) process.exit(0); // not inside a ticket run — nothing to budget
+  const records = lib.runRecords(root);
+  if (records.length === 0) process.exit(0); // not inside a ticket run — nothing to budget
 
-  const runDir = runs[0];
+  const orphan = records.find((r) => r.orphaned);
+  if (orphan) {
+    console.error(
+      `BLOCKED: run ${path.basename(orphan.dir)} has an open receipt chain at ${orphan.chainDir} but its run directory ` +
+        `${orphan.dir} is gone, so its budget cannot be enforced.\n` +
+        `  Restore the run directory, or end the run with "ledger.js archive ${orphan.dir}". This dispatch was not counted.`
+    );
+    process.exit(2);
+  }
+  const runDir = records[0].dir;
   const ledger = findLedger(root);
   // Past this point a run IS active (checked above), so "I cannot enforce" must not mean
   // "carry on". Failing open here would make hiding ledger.js a one-command way to buy
@@ -160,14 +213,23 @@ async function main() {
     process.exit(2);
   }
 
-  const { config } = lib.loadConfig(root);
   const toolInput = input.tool_input || {};
+  if (spoofedJudge(toolInput)) {
+    console.error(
+      `BLOCKED: this prompt carries the QA judge's sealing instruction (ledger.js verdict) but is dispatched as ` +
+        `"${agentTypeOf(toolInput) || 'no agent type'}". Dispatch the judge as ticket-loop:ticket-loop-qa. This dispatch was not counted.`
+    );
+    process.exit(2);
+  }
+  const { config } = lib.loadConfig(root);
   const { status } = lib.runStatus(ledger, runDir, root, LEDGER_TIMEOUT_MS);
   const refusal = status ? budgetRefusal(status, toolInput, runDir) : null;
   if (refusal) {
     console.error(`BLOCKED: ${refusal.text}\n  This dispatch was not counted.`);
     await lib.notifyOnce(root, refusal.key, BLOCK_NOTIFY_MS, `ticket-loop ${path.basename(runDir)} in ${path.basename(root)} stopped: ${refusal.text}`);
-    process.exit(2);
+    // process.exit() while fetch sockets close aborts the process on Windows.
+    process.exitCode = 2;
+    return;
   }
   const context = dispatchContext(status, runDir, input.session_id, config.staleRunHours);
   const res = spawnSync(
@@ -219,4 +281,4 @@ if (require.main === module) {
     process.exit(2);
   });
 }
-module.exports = { activeRuns, findLedger, labelFor, ledgerProtocol, unresolvedContext, dispatchContext, unfilledPlaceholders, budgetRefusal, MAX_QA_BLOCKS, REQUIRED_LEDGER_PROTOCOL };
+module.exports = { activeRuns, findLedger, labelFor, spoofedJudge, isJudge, ledgerProtocol, unresolvedContext, dispatchContext, unfilledPlaceholders, budgetRefusal, MAX_QA_BLOCKS, REQUIRED_LEDGER_PROTOCOL };

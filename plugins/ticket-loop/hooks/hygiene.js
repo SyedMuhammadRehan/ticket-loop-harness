@@ -87,6 +87,39 @@ function scanDiff(diff, opts = {}) {
   return findings;
 }
 
+// Text leaving the machine (a notification to a phone, a public ntfy topic) with every
+// credential-shaped value replaced. Over-redacting a message costs nothing; leaking a token costs
+// a rotation.
+const REDACTED = '<redacted>';
+const SECRET_NAME = String.raw`[A-Za-z0-9_.-]*(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|apikey|auth|credential|private[_-]?key|access[_-]?key|session)[A-Za-z0-9_.-]*`;
+const REDACTIONS = [
+  [/\b(Bearer|Basic|Bot|Token|Digest)\s+[A-Za-z0-9._~+/=:-]+/gi, `$1 ${REDACTED}`],
+  [/\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+):[^\s@/]+@/gi, `$1:${REDACTED}@`],
+  [new RegExp(String.raw`(--?${SECRET_NAME})(\s+|=)("[^"]*"|'[^']*'|\S+)`, 'gi'), `$1$2${REDACTED}`],
+  [new RegExp(String.raw`\b(${SECRET_NAME})(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&;,]+)`, 'gi'), `$1$2${REDACTED}`],
+];
+// No `/` in the run: a path is not a key, and a base64 key split at its slashes still leaves long runs.
+const LONG_TOKEN = /[A-Za-z0-9_+=-]{20,}/g;
+const MIN_ENTROPY_BITS = 3.5;
+
+function entropyBits(s) {
+  const counts = {};
+  for (const ch of s) counts[ch] = (counts[ch] || 0) + 1;
+  return Object.values(counts).reduce((h, n) => h - (n / s.length) * Math.log2(n / s.length), 0);
+}
+
+// A long run of mixed letters and digits with high entropy reads as a key whatever it is called.
+function looksRandom(s) {
+  return /[0-9]/.test(s) && /[A-Za-z]/.test(s) && entropyBits(s) >= MIN_ENTROPY_BITS;
+}
+
+function redactSecrets(text, maxChars) {
+  let out = String(text == null ? '' : text);
+  for (const [re, to] of REDACTIONS) out = out.replace(re, to);
+  out = out.replace(LONG_TOKEN, (m) => (looksRandom(m) ? REDACTED : m));
+  return Number.isInteger(maxChars) && out.length > maxChars ? `${out.slice(0, maxChars - 1)}…` : out;
+}
+
 function describe(findings) {
   const debug = findings.filter((f) => f.kind === 'debug');
   const secret = findings.filter((f) => f.kind === 'secret');
@@ -104,4 +137,4 @@ function describe(findings) {
   return lines.join('\n');
 }
 
-module.exports = { scanDiff, addedLines, describe, isTestPath };
+module.exports = { scanDiff, addedLines, describe, isTestPath, redactSecrets };

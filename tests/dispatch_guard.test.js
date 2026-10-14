@@ -111,9 +111,8 @@ test('a dispatch is counted in the sealed chain without the skill calling ledger
 test('the label records what was dispatched, for the report', () => {
   const { root, runDir } = setup();
   try {
-    dispatch(root, { subagent_type: 'code-reviewer', description: 'adversarial QA' });
-    const res = ledger(root, ['verify', runDir]);
-    assert.ok(res.stdout.includes('code-reviewer') || ledger(root, ['status', runDir]).stdout.length > 0);
+    assert.strictEqual(dispatch(root, { subagent_type: 'code-reviewer', description: 'adversarial QA' }).status, 0);
+    assert.strictEqual(chain.last(runDir, 'dispatch').payload.label, 'code-reviewer: adversarial QA');
   } finally {
     rmDir(root);
   }
@@ -341,6 +340,42 @@ test('a prompt with an unfilled template placeholder is refused and not counted'
     assert.match(res.stderr, /\{RUN_DIR\}/);
     assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 0);
     assert.strictEqual(dispatch(root, { subagent_type: 'ticket-loop-qa', description: 'QA', prompt: 'Read .agents/ticket-runs/T-1/done.md; JSON like {"a":1} and {lower} are fine.' }).status, 0);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The names come from the templates, so a leftover is caught however it was mangled; a one-word
+// name in lower case is ordinary code in a filled diff and stays allowed.
+test('a template placeholder left in any spacing, case or separator is refused', () => {
+  const { root, runDir } = setup();
+  try {
+    for (const leftover of ['{ RUN_DIR }', '{run-dir}', '{Run_Dir}', '{worktree_path}', '{ SCRIPTS - DIR }']) {
+      const res = dispatch(root, { subagent_type: 'general-purpose', description: 'C1', prompt: `cd ${leftover} and fix it` });
+      assert.strictEqual(res.status, 2, `${leftover} reached a subagent:\n${res.stderr}`);
+      assert.ok(res.stderr.includes(leftover), res.stderr);
+    }
+    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 0);
+    const code = dispatch(root, { subagent_type: 'general-purpose', description: 'C1', prompt: 'const { files } = scan(diff);' });
+    assert.strictEqual(code.status, 0, code.stderr);
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The QA cap and the verdict both key on the judge agent; the judge's prompt on another agent type
+// would be a judge nobody counts.
+test('the judge prompt dispatched on any agent but the judge is refused, not counted', () => {
+  const { root, runDir } = setup();
+  try {
+    const prompt = 'Judge the diff. As your LAST action run:\nnode /plugin/scripts/ledger.js verdict .agents/ticket-runs/T-1 <BLOCK|APPROVE> --inputs done.md';
+    for (const subagent_type of ['general-purpose', 'code-reviewer', 'my-ticket-loop-qa', undefined]) {
+      const res = dispatch(root, { subagent_type, description: 'QA round 1', prompt });
+      assert.strictEqual(res.status, 2, `${subagent_type}: ${res.stderr}`);
+      assert.match(res.stderr, /ticket-loop:ticket-loop-qa/);
+    }
+    assert.strictEqual(JSON.parse(ledger(root, ['status', runDir]).stdout).dispatches, 0);
+    assert.strictEqual(dispatch(root, { subagent_type: 'ticket-loop:ticket-loop-qa', description: 'QA round 1', prompt }).status, 0);
   } finally {
     rmDir(root);
   }

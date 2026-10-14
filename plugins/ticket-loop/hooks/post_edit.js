@@ -14,6 +14,8 @@
 // analyzeErrorRegex: block (exit 2) only when an output line matches; when unset, any
 // non-zero analyze exit blocks with the output tail.
 'use strict';
+const fs = require('fs');
+const path = require('path');
 const lib = require('./hook_lib.js');
 
 const ANALYZE_TIMEOUT_MS = 90000;
@@ -47,21 +49,39 @@ function findBlockingLines(output, errorRegexSource) {
   return lines;
 }
 
+function realOrResolved(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+// The profile governs its own repo only: a scratch file elsewhere is not its code to analyze.
+function isInside(root, file) {
+  const rel = path.relative(realOrResolved(root), realOrResolved(file));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
 function main() {
   const input = lib.readStdinJson();
   if (!input) process.exit(0);
-  const file = input.tool_input && input.tool_input.file_path;
-  if (!file) process.exit(0);
+  const raw = input.tool_input && input.tool_input.file_path;
+  if (!raw) process.exit(0);
 
-  const { found, config } = lib.loadConfig();
+  const cwd = input.cwd || process.cwd();
+  const file = path.resolve(cwd, String(raw));
+  const { found, root, config } = lib.loadConfig(cwd);
   const conf = found && config.hooks && config.hooks.postEdit;
   if (!conf) process.exit(0);
 
   if (!shouldProcess(file, conf)) process.exit(0);
-  if (!require('fs').existsSync(file)) process.exit(0);
+  if (!fs.existsSync(file)) process.exit(0);
+  if (!isInside(root, file)) process.exit(0);
 
   if (conf.format) {
     const res = lib.runArgv(lib.buildArgv(conf.format, { '{file}': file }), {
+      cwd: root,
       timeoutMs: FORMAT_TIMEOUT_MS,
     });
     if (res.error) {
@@ -73,6 +93,7 @@ function main() {
   if (!conf.analyze) process.exit(0);
 
   const res = lib.runArgv(lib.buildArgv(conf.analyze, { '{file}': file }), {
+    cwd: root,
     timeoutMs: ANALYZE_TIMEOUT_MS,
   });
   if (res.error) {
@@ -98,4 +119,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { shouldProcess, findBlockingLines };
+module.exports = { shouldProcess, findBlockingLines, isInside };

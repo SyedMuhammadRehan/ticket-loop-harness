@@ -44,7 +44,12 @@ const DEFAULT_BRANCH_PREFIXES = ['refs/heads/ticket/'];
 const BASE_REF_CANDIDATES = ['origin/HEAD', 'origin/main', 'main', 'origin/master', 'master'];
 const MAX_SCANNED_FILE_BYTES = 256 * 1024;
 const LEDGER_TIMEOUT_MS = 15000;
-const CANNOT_START = /command not found|not recognized as an internal or external|is not recognized as|No such file or directory|The command line is too long/i;
+// hooks.json gives this hook 600 s; a hook Claude Code kills is a stop that proceeds unverified,
+// so every spawn is cut to what remains of one deadline set below that.
+const HOOK_BUDGET_MS = 540000;
+// Exit codes a shell gives a command it could not find: POSIX sh, and cmd.exe.
+const SHELL_NOT_FOUND = [127, 9009];
+const ESCAPE_NOTIFY_MS = 30 * 60 * 1000;
 // cmd.exe refuses a command line past 8191 characters, and the .bat fallback in runArgv goes
 // through cmd.exe; a `flutter test` naming every mapped file overran it on a 17-file change.
 const MAX_COMMAND_CHARS = process.platform === 'win32' ? 7000 : 100000;
@@ -217,6 +222,10 @@ function addedDiff(tree, conf) {
   return parts.join('\n');
 }
 
+function outOfTime(tree) {
+  return `stop_gate: ${tree}: not verified within the hook's time budget (${HOOK_BUDGET_MS / 1000} s). Treated as RED; run the suite yourself and fix what is slow.`;
+}
+
 function walkTests(dir, suffix, acc) {
   let entries;
   try {
@@ -277,18 +286,36 @@ function batchTargets(template, targets, maxChars) {
   return batches;
 }
 
+// The profile's timeout, floored so a tiny value cannot turn the suite into a "could not verify",
+// and never past what remains of the hook's own deadline. 0 means the deadline is spent:
+// spawnSync reads a timeout of 0 as "no timeout", so a caller must not spawn on it.
+function spawnTimeoutMs(configuredMs, remainingMs) {
+  const configured = Number.isFinite(configuredMs) && configuredMs > 0 ? configuredMs : DEFAULT_TEST_TIMEOUT_MS;
+  return Math.min(Math.max(configured, MIN_TEST_TIMEOUT_MS), Math.max(0, Math.floor(remainingMs)));
+}
+
 // Batches run in sequence and stop at the first that does not pass; the outputs are joined so
-// the tail the gate prints is the failing batch's. The timeout applies to each command.
-function runBatches(argvs, opts) {
-  const out = { status: 0, stdout: '', stderr: '', error: undefined };
+// the tail the gate prints is the failing batch's. `timeoutFor()` is asked before each command.
+function runBatches(argvs, opts, timeoutFor) {
+  const out = { status: 0, stdout: '', stderr: '' };
   for (const argv of argvs) {
-    const res = lib.runArgv(argv, opts);
+    const t = timeoutFor();
+    if (t.ms <= 0) return { ...out, status: null, budgetSpent: true };
+    const res = lib.runArgv(argv, { ...opts, timeoutMs: t.ms });
     out.stdout += res.stdout || '';
     out.stderr += res.stderr || '';
-    if (res.error) return { ...out, error: res.error, status: res.status };
+    if (res.error) return { ...out, error: res.error, status: res.status, capped: t.capped };
     if (res.status !== 0) return { ...out, status: res.status };
   }
   return out;
+}
+
+// Never read from output text: a red suite may print "No such file or directory" itself.
+function verdictOf(res) {
+  if (res.budgetSpent) return 'budget';
+  if (res.error && res.error.code === 'ETIMEDOUT') return res.capped ? 'budget' : 'timeout';
+  if (res.error || SHELL_NOT_FOUND.includes(res.status)) return 'unrunnable';
+  return res.status === 0 ? 'pass' : 'fail';
 }
 
 function looksLikeFlake(output, conf) {
@@ -304,10 +331,11 @@ function looksLikeFlake(output, conf) {
 // there is nothing being claimed, so staying quiet and cheap is right; inside one, every path
 // that ends in "not verified" has to SAY so, or Stage 7 has nothing to disclose and the report
 // reads COMPLETE over work no test touched.
-function verifyTree(tree, conf, verifyTest, runActive) {
+function verifyTree(tree, conf, verifyTest, runActive, deadline = Infinity) {
   // No run means no "done" claim, so nothing runs — not even the git walk. A repo keeps its
   // profile permanently, and ordinary sessions in it end turns with files dirty.
   if (!runActive) return { ok: true, skipped: true };
+  if (deadline - Date.now() <= 0) return { ok: false, tail: outOfTime(tree) };
 
   const { files: changed, rawCount, baseRef, baseIsHead } = changedSourceFiles(tree, conf);
   const notes = [];
@@ -376,13 +404,20 @@ function verifyTree(tree, conf, verifyTest, runActive) {
     return { ...noted, ok: false, skipped: false, tail: [hygieneTail, noted.note].filter(Boolean).join('\n\n') };
   };
 
-  const timeoutMs = Math.max(conf.timeoutMs || DEFAULT_TEST_TIMEOUT_MS, MIN_TEST_TIMEOUT_MS);
+  const timeoutFor = () => {
+    const ms = spawnTimeoutMs(conf.timeoutMs, deadline - Date.now());
+    return { ms, capped: ms < spawnTimeoutMs(conf.timeoutMs, Infinity) };
+  };
   let run;
   if (forceFull || (conf.mode || 'full') === 'full') {
     if (!verifyTest) {
       return finish({ ok: true, skipped: true, note: `stop_gate: ${tree}: source files changed but no verify.test configured — NOT verified.` });
     }
-    run = () => lib.runShell(verifyTest, { cwd: tree, timeoutMs });
+    run = () => {
+      const t = timeoutFor();
+      if (t.ms <= 0) return { status: null, budgetSpent: true };
+      return { ...lib.runShell(verifyTest, { cwd: tree, timeoutMs: t.ms }), capped: t.capped };
+    };
   } else {
     const { targets, unmatched } = mapTargets(tree, changed, conf);
     if (targets.length === 0) {
@@ -403,47 +438,36 @@ function verifyTree(tree, conf, verifyTest, runActive) {
     const argvs = batchTargets(conf.testCommand, targets, conf.maxCommandChars).map((batch) =>
       lib.buildArgv(conf.testCommand, { '{targets}': batch })
     );
-    run = () => runBatches(argvs, { cwd: tree, timeoutMs });
+    run = () => runBatches(argvs, { cwd: tree }, timeoutFor);
   }
 
   const attempt = () => {
     const res = run();
-    const output = lib.combinedOutput(res);
-    // A timeout is NOT "could not verify" — an unbounded suite must block, or timeoutMs
-    // becomes a one-line way to disable this gate.
-    if (res.error && res.error.code === 'ETIMEDOUT') {
-      return { verdict: 'timeout', res, output };
+    return { verdict: verdictOf(res), res, output: lib.combinedOutput(res) };
+  };
+  // Every verdict but pass and a twice-seen flake BLOCKS: mid-run a Stop is a "done" claim, and a
+  // suite that timed out or could not start has verified nothing.
+  const blocked = (a, retry) => {
+    const when = retry ? ' on the flake retry' : '';
+    if (a.verdict === 'budget') return finish({ ok: false, tail: outOfTime(tree) });
+    if (a.verdict === 'timeout') {
+      return finish({ ok: false, tail: `stop_gate: ${tree}: test command exceeded its timeout${when} and was killed. An unverifiable suite is treated as RED.` });
     }
-    if (res.error) return { verdict: 'unrunnable', res, output, why: res.error.message };
-    // shell:true reports a missing binary, or a refused command line, as a normal non-zero
-    // exit, so detect it by output.
-    if (res.status !== 0 && (res.status === 127 || CANNOT_START.test(output))) {
-      return { verdict: 'unrunnable', res, output, why: 'test command could not start' };
+    if (a.verdict === 'unrunnable') {
+      const why = a.res.error ? a.res.error.message : `the shell exited ${a.res.status}: command not found`;
+      return finish({ ok: false, tail: `stop_gate: ${tree}: test command could not start${when} (${why}) — the "done" claim cannot be verified.\n${lib.tail(a.output, TAIL_LINES)}`.trim() });
     }
-    return { verdict: res.status === 0 ? 'pass' : 'fail', res, output };
+    return null;
   };
 
   let a = attempt();
-  if (a.verdict === 'timeout') {
-    return finish({
-      ok: false,
-      tail: `stop_gate: ${tree}: test command exceeded ${timeoutMs}ms and was killed. An unverifiable suite is treated as RED.`,
-    });
-  }
-  if (a.verdict === 'unrunnable') {
-    return finish({ ok: true, skipped: true, note: `stop_gate: ${tree}: test command failed to run (${a.why}) — NOT verified.` });
-  }
   if (a.verdict === 'pass') return finish({ ok: true });
+  if (a.verdict !== 'fail') return blocked(a, false);
 
   if (looksLikeFlake(a.output, conf)) {
     const b = attempt();
     if (b.verdict === 'pass') return finish({ ok: true });
-    if (b.verdict === 'timeout') {
-      return finish({ ok: false, tail: `stop_gate: ${tree}: test command timed out on the flake retry. Treated as RED.` });
-    }
-    if (b.verdict === 'unrunnable') {
-      return finish({ ok: true, skipped: true, note: `stop_gate: ${tree}: test command failed to run on retry (${b.why}) — NOT verified.` });
-    }
+    if (b.verdict !== 'fail') return blocked(b, true);
     if (looksLikeFlake(b.output, conf)) {
       return finish({
         ok: true,
@@ -454,21 +478,6 @@ function verifyTree(tree, conf, verifyTest, runActive) {
     a = b;
   }
   return finish({ ok: false, tail: lib.tail(a.output, TAIL_LINES) });
-}
-
-// A run dir that has been initialized and not CLOSED. Mirrors freeze_guard.activeRuns —
-// closed.json, not report.md, because the run's own deliverable must not be its off switch.
-function activeRuns(root) {
-  const runsDir = path.join(root, '.agents', 'ticket-runs');
-  try {
-    return fs
-      .readdirSync(runsDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && !e.name.includes('._old_'))
-      .map((e) => path.join(runsDir, e.name))
-      .filter((d) => fs.existsSync(path.join(d, 'budget.json')) && !fs.existsSync(path.join(d, 'closed.json')));
-  } catch {
-    return [];
-  }
 }
 
 // A dispatch with no outcome is a "done" claim over work whose result was never recorded. The
@@ -522,21 +531,45 @@ function openDispatchFailures(root, runs, sessionId, staleHours) {
   return { failures, notes };
 }
 
-function main() {
+// Runs whose state alone blocks the "done" claim, and stops any profile command from running.
+// A bare budget.json is a file a repo can commit: it arms the deny-only gates, but a command
+// from the repo's profile runs only for a run whose receipt chain this machine created.
+function runProblems(records) {
+  const out = [];
+  for (const r of records) {
+    const name = path.basename(r.dir);
+    if (r.orphaned) {
+      out.push(
+        `stop_gate: run ${name} has an open receipt chain at ${r.chainDir} but its run directory ${r.dir} is gone. ` +
+          `Restore the run directory, or end the run with "ledger.js archive ${r.dir}"; until then no "done" claim passes.`
+      );
+    } else if (!r.chained) {
+      out.push(
+        `stop_gate: run ${name} has a budget.json but no receipt chain on this machine, so it was not started here. ` +
+          `Its profile's commands were NOT run, and the "done" claim is NOT verified. If the run is yours, its chain ` +
+          `is missing ("ledger.js init ${r.dir} <baseSha> --restart"); if the repo shipped it, end it: "ledger.js archive ${r.dir}".`
+      );
+    }
+  }
+  return out;
+}
+
+async function main() {
+  const deadline = Date.now() + HOOK_BUDGET_MS;
   const input = lib.readStdinJson() || {};
   const sessionId = input.session_id || 'no-session';
   const { found, root, config, error } = lib.loadConfig();
   if (error) console.error(`stop_gate: ${error} — gate is inert until the config parses.`);
   const conf = found && config.hooks && config.hooks.stopGate;
+  const activeRuns = lib.runRecords(root);
 
   // Being inert is fine when nobody is running a ticket. It is NOT fine mid-run: a missing,
   // unparsable, or stopGate-less profile is exactly what disarming this gate looks like, and
   // silently exiting 0 would let that pass as "verified".
   if (!conf) {
-    const runs = activeRuns(root);
-    if (runs.length > 0) {
+    if (activeRuns.length > 0) {
       console.error(
-        `stop_gate: a ticket run is ACTIVE (${runs.map((r) => path.basename(r)).join(', ')}) but there is no usable ` +
+        `stop_gate: a ticket run is ACTIVE (${activeRuns.map((r) => path.basename(r.dir)).join(', ')}) but there is no usable ` +
           `hooks.stopGate config${error ? ` (${error})` : ''} — refusing to confirm a "done" claim it cannot verify.\n` +
           `  If the profile DRIFTED, restore it: its hash is sealed in the run's init receipt, so ` +
           `"ledger.js verify <runDir>" shows what changed.\n` +
@@ -550,23 +583,39 @@ function main() {
     process.exit(0);
   }
 
-  const runs = activeRuns(root);
-  const runActive = runs.length > 0;
+  const runActive = activeRuns.length > 0;
   const state = readState(root, sessionId);
+  // A gate that blocks every stop forever wedges the session, so after MAX_CONSECUTIVE_BLOCKS it
+  // lets one through. That stop is a release, not a verdict, and the person is told so.
   if (input.stop_hook_active && state.consecutiveBlocks >= MAX_CONSECUTIVE_BLOCKS) {
-    console.error(`stop_gate: still red after ${state.consecutiveBlocks} blocks — allowing stop. Suite is NOT green.`);
+    const text =
+      `stop_gate: blocked ${state.consecutiveBlocks} stops in a row; letting this one through so the session is not wedged. ` +
+      `The run is NOT verified and this stop is NOT a pass: the suite is not green, or could not be checked.`;
+    console.error(text);
     writeState(root, { sessionId: state.sessionId, consecutiveBlocks: 0 });
-    process.exit(0);
+    if (runActive) {
+      const runNames = activeRuns.map((r) => path.basename(r.dir)).join(', ');
+      const sent = await lib.notifyOnce(root, `stop-escape:${runNames}`, ESCAPE_NOTIFY_MS, `ticket-loop ${runNames} in ${path.basename(root)}: ${text}`);
+      if (sent.error) console.error(`stop_gate: could not notify (${sent.error})`);
+    }
+    // process.exit() while fetch sockets close aborts the process on Windows.
+    process.exitCode = 0;
+    return;
   }
 
-  const verifyTest = config.verify && config.verify.test;
-  const dispatches = runActive ? openDispatchFailures(root, runs, sessionId, config.staleRunHours) : { failures: [], notes: [] };
-  for (const note of dispatches.notes) console.error(note);
-  const failures = dispatches.failures;
-  for (const tree of treesToCheck(root, conf)) {
-    const result = verifyTree(tree, conf, verifyTest, runActive);
-    if (result.note) console.error(result.note);
-    if (!result.ok) failures.push({ message: `stop_gate: tests FAILED in ${tree}:\n${result.tail}` });
+  const problems = runProblems(activeRuns);
+  const failures = problems.map((message) => ({ message }));
+  if (problems.length === 0) {
+    const verifyTest = config.verify && config.verify.test;
+    const runs = activeRuns.map((r) => r.dir);
+    const dispatches = runActive ? openDispatchFailures(root, runs, sessionId, config.staleRunHours) : { failures: [], notes: [] };
+    for (const note of dispatches.notes) console.error(note);
+    failures.push(...dispatches.failures);
+    for (const tree of treesToCheck(root, conf)) {
+      const result = verifyTree(tree, conf, verifyTest, runActive, deadline);
+      if (result.note) console.error(result.note);
+      if (!result.ok) failures.push({ message: `stop_gate: tests FAILED in ${tree}:\n${result.tail}` });
+    }
   }
 
   if (failures.length === 0) {
@@ -578,5 +627,10 @@ function main() {
   process.exit(2);
 }
 
-if (require.main === module) main();
-module.exports = { parseWorktrees, changedSourceFiles, mapTargets, batchTargets, looksLikeFlake, verifyTree, treesToCheck, readState, openDispatchFailures };
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`stop_gate: failed (${err.message}); the "done" claim is NOT verified.`);
+    process.exit(2);
+  });
+}
+module.exports = { spawnTimeoutMs, verdictOf, runProblems, HOOK_BUDGET_MS, MIN_TEST_TIMEOUT_MS, parseWorktrees, changedSourceFiles, mapTargets, batchTargets, looksLikeFlake, verifyTree, treesToCheck, readState, openDispatchFailures };

@@ -9,7 +9,7 @@
 //
 //   { "channels": [
 //       { "type": "ntfy", "topic": "my-secret-topic", "server": "https://ntfy.sh", "email": "me@x.com" },
-//       { "type": "telegram", "token": "<bot token>", "chatId": "<your chat id>" },
+//       { "type": "telegram", "token": "<bot token>", "chatId": "<your chat id>", "userId": "<your user id>" },
 //       { "type": "whatsapp", "token": "<cloud api token>", "phoneNumberId": "<id>", "to": "<your number>" },
 //       { "type": "slack", "webhookUrl": "https://hooks.slack.com/..." },              // send only
 //       { "type": "slack", "botToken": "xoxb-...", "channel": "C0123", "userId": "U0456" },
@@ -38,6 +38,32 @@ const MAX_TEXT = 3500;
 // An ntfy topic accepts posts from anyone who knows it, the agent included, so an ntfy answer is
 // a notification reply, never a sealed approval.
 const UNFORGEABLE = ['telegram', 'slack', 'discord'];
+// The guarantee holds only against the real service: an `apiBase` pointed anywhere else may be a
+// server the agent runs, which can echo the question's code back as an answer.
+const OFFICIAL_HOSTS = { telegram: 'api.telegram.org', slack: 'slack.com', discord: 'discord.com' };
+
+function onOfficialHost(c) {
+  if (!c.apiBase) return true;
+  try {
+    const u = new URL(c.apiBase);
+    return u.protocol === 'https:' && u.hostname === OFFICIAL_HOSTS[c.type];
+  } catch {
+    return false;
+  }
+}
+
+// Whether an answer can back a sealed approval: a channel only the person can post on, on the
+// service's own host, from the sender the channel names.
+function isSealable(c, hit) {
+  return UNFORGEABLE.includes(hit.channel) && hit.sealable !== false && onOfficialHost(c);
+}
+
+// A Telegram group's members can all post to it, so without a userId nobody's reply there is the
+// person's. A negative chat id is a group; an @name is a channel.
+function telegramIsGroup(chatId) {
+  const id = String(chatId);
+  return id.startsWith('-') || id.startsWith('@');
+}
 
 function canReply(c) {
   return c.type === 'telegram' || c.type === 'ntfy' || ((c.type === 'slack' || c.type === 'discord') && !!c.botToken);
@@ -175,17 +201,24 @@ function parseAnswer(text, nonce, count) {
   return n >= 1 && n <= count ? n : null;
 }
 
-async function pollTelegram(c, state, nonce, count) {
-  const base = `${(c.apiBase || 'https://api.telegram.org').replace(/\/+$/, '')}/bot${c.token}`;
-  const body = JSON.parse(await getJson(`${base}/getUpdates?timeout=0${state.offset ? `&offset=${state.offset}` : ''}`));
-  for (const u of body.result || []) {
+// The first answer among Telegram updates, advancing state.offset past every update read.
+function telegramAnswer(c, updates, state, nonce, count) {
+  for (const u of updates || []) {
     state.offset = u.update_id + 1;
     const msg = u.message || {};
     if (String((msg.chat || {}).id) !== String(c.chatId)) continue;
+    const sender = String((msg.from || {}).id || msg.chat.id);
+    if (c.userId && sender !== String(c.userId)) continue;
     const choice = parseAnswer(msg.text, nonce, count);
-    if (choice) return { choice, channel: 'telegram', sender: String((msg.from || {}).id || msg.chat.id) };
+    if (choice) return { choice, channel: 'telegram', sender, sealable: !!c.userId || !telegramIsGroup(c.chatId) };
   }
   return null;
+}
+
+async function pollTelegram(c, state, nonce, count) {
+  const base = `${(c.apiBase || 'https://api.telegram.org').replace(/\/+$/, '')}/bot${c.token}`;
+  const body = JSON.parse(await getJson(`${base}/getUpdates?timeout=0${state.offset ? `&offset=${state.offset}` : ''}`));
+  return telegramAnswer(c, body.result, state, nonce, count);
 }
 
 // A person's message, never a bot's: Slack marks a bot's with bot_id or a subtype. With userId
@@ -201,7 +234,11 @@ async function pollSlack(c, meta, nonce, count) {
     const body = JSON.parse(await getJson(url, headers));
     if (body.ok) seen.push(...(body.messages || []));
   }
-  for (const m of seen) {
+  return slackAnswer(c, seen, meta, nonce, count);
+}
+
+function slackAnswer(c, messages, meta, nonce, count) {
+  for (const m of messages) {
     if (m.bot_id || m.subtype || !m.user || m.ts === meta.ts) continue;
     if (c.userId && m.user !== c.userId) continue;
     const choice = parseAnswer(m.text, nonce, count);
@@ -213,6 +250,10 @@ async function pollSlack(c, meta, nonce, count) {
 async function pollDiscord(c, meta, nonce, count) {
   if (!meta || !meta.id) return null;
   const list = JSON.parse(await getJson(`${discordBase(c)}/channels/${c.channelId}/messages?after=${meta.id}&limit=50`, { authorization: `Bot ${c.botToken}` }));
+  return discordAnswer(c, list, nonce, count);
+}
+
+function discordAnswer(c, list, nonce, count) {
   for (const m of Array.isArray(list) ? list : []) {
     const author = m.author || {};
     if (author.bot) continue;
@@ -272,7 +313,7 @@ async function ask(question, options, opts = {}) {
           c.type === 'discord' ? await pollDiscord(c, posted.get(c), nonce, options.length) :
           await pollNtfy(c, startedSec, nonce, options.length);
         if (hit) {
-          const sealable = UNFORGEABLE.includes(hit.channel) && hit.sealable !== false;
+          const sealable = isSealable(c, hit);
           return { answered: true, nonce, question, options, ...hit, choiceText: options[hit.choice - 1], sealable, at: new Date().toISOString(), delivery };
         }
       } catch {
@@ -282,6 +323,13 @@ async function ask(question, options, opts = {}) {
     await new Promise((r) => setTimeout(r, interval));
   }
   return { answered: false, nonce, question, options, delivery };
+}
+
+function approvalArgs(runDir, r) {
+  return [
+    path.join(__dirname, 'ledger.js'), 'approval', runDir, '--question', r.question, '--choice', String(r.choice), '--choice-text', r.choiceText,
+    '--channel', r.channel, '--sender', r.sender, '--nonce', r.nonce, ...(r.sealable === true ? [] : ['--forgeable']),
+  ];
 }
 
 function flags(argv, name) {
@@ -312,12 +360,7 @@ async function main() {
     const r = await ask(rest[0], options, { timeoutMin });
     const runDir = flags(rest, '--run')[0];
     if (runDir && r.answered) {
-      const sealed = spawnSync(
-        process.execPath,
-        [path.join(__dirname, 'ledger.js'), 'approval', runDir, '--question', r.question, '--choice', String(r.choice), '--choice-text', r.choiceText,
-          '--channel', r.channel, '--sender', r.sender, '--nonce', r.nonce, ...(r.sealable ? [] : ['--forgeable'])],
-        { encoding: 'utf8', timeout: 15000 }
-      );
+      const sealed = spawnSync(process.execPath, approvalArgs(runDir, r), { encoding: 'utf8', timeout: 15000 });
       r.sealed = sealed.status === 0;
       if (!r.sealed) r.sealError = (sealed.stderr || '').trim();
     }
@@ -329,4 +372,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { readConfig, send, ask, parseAnswer, configPath, ENV_NOTIFY, UNFORGEABLE };
+module.exports = { readConfig, send, ask, parseAnswer, configPath, isSealable, onOfficialHost, telegramAnswer, slackAnswer, discordAnswer, approvalArgs, ENV_NOTIFY, UNFORGEABLE };
