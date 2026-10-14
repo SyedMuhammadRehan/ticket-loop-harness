@@ -185,7 +185,7 @@ if the orchestrator chose to call the counter, the frozen contract could be reac
 interpreter, and the profile that armed the hooks was writable mid-run. What is mechanical now
 and what is still the orchestrator's discipline is spelled out in the README's
 "How the loop stays honest" — including the residual risk, which is that this is
-**tamper-evident, not tamper-proof**. `node tests/run.js` runs 150+ tests covering the scripts,
+**tamper-evident, not tamper-proof**. `node tests/run.js` runs 490+ tests covering the scripts,
 the hooks, and the full corpus of bypasses found during that review as regression cases.
 
 A second hostile review then found that the fix pass had left the enforcement window itself
