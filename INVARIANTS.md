@@ -258,3 +258,13 @@ uphold" and must stay there rather than migrating into this table:
 | 165 | Each of several words arrives as exactly one argument | `run_in.js` → `quoteWord` | `run_in.test.js` :: `several command words each reach the program as exactly one argument` | POSIX quoting exposed & to cmd.exe |
 | 166 | post_edit ignores files outside the repo | `post_edit.js` → `isInside` | `post_edit.test.js` :: `a file outside the repo is not analyzed by the repo's profile` | A file outside the repo was blocked by its profile |
 | 167 | The stale-copy list names nothing the plugin does not ship | `hook_lib.js` → `HARNESS_HOOK_FILES` | `session_start.test.js` :: `the stale-copy list names nothing the plugin does not ship` | A listed file that never shipped |
+
+## Profile: a run is judged by the rules it ran under
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 168 | A run is governed by the profile sealed whole at its init, not the file on disk | `ledger.js` → `runProfile` | `ledger_profile.test.js` :: `an open run is governed by its sealed profile, and an edit to the file is TAMPERED` | Editing the file mid-run raised the ceiling the ledger enforced |
+| 169 | A closed run's profile is judged as it stood at close: an edit after close is not tampering | `ledger.js` → `closedRunControlPlane` | `ledger_profile.test.js` :: `a profile edited after the run closed is not tampering, and the run keeps the profile it ran under` | Every finished run read TAMPERED once the repo's profile moved on |
+| 170 | An edit made while the run was open stays TAMPERED, whatever the file says later | `ledger.js` → `closedRunControlPlane` | `ledger_profile.test.js` :: `a profile edited while the run was open is still TAMPERED after it closes` | Restoring the file after close must not hide an edit made during the run |
+| 171 | A run sealed before whole-profile sealing is given the profile committed as of its close, only when it hashes to the seal | `ledger.js` → `committedProfileAtClose` | `ledger_profile.test.js` :: `a run from before whole-profile sealing is judged by the profile committed as of its close` | Older runs carry only a hash; git holds the content they ran under |
+| 172 | A committed copy that does not match the seal recovers nothing | `ledger.js` → `committedProfileAtClose` | `ledger_profile.test.js` :: `a committed copy that does not match the seal recovers nothing, and the change is still reported` | Recovery must not launder a profile the run never ran under |

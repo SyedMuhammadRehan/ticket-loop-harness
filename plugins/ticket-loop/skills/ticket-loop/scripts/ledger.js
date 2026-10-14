@@ -33,6 +33,7 @@
 //   ledger.js export <runDir> --out <file>         signed bundle of a closed run, for verify_bundle.js
 //   ledger.js protocol                             compatibility probe for the hooks
 'use strict';
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -438,6 +439,7 @@ function cmdInit(runDir, baseSha, opts) {
     maxDispatches: MAX_DISPATCHES,
     maxReplans: MAX_REPLANS,
     evidence: configSealed,
+    profile: fs.existsSync(configRel) ? readJson(configRel) : null,
     policy: { path: policyFile.replace(/\\/g, '/'), sha256: orgPolicy ? orgPolicy.sha256 : null },
     closesInChain: true,
     ...(rotated ? { restartedFrom: rotated.retired, retiredSeal: rotated.retiredSeal, retiredRecords: rotated.retiredRecords } : {}),
@@ -1287,10 +1289,14 @@ function cmdClose(runDir) {
     process.exit(3);
   }
   const records = chain.records(runDir);
+  // What the init receipt's files hash to as the run ends, so a later edit to the repo's profile
+  // or policy is told apart from one made while the run was open.
+  const initEvidence = ((chain.first(runDir, 'init') || { payload: {} }).payload.evidence || []).map((e) => sealedFile(runDir, e.file));
   const closeRec = chain.append(runDir, 'close', {
     reportGateSeq: reportGate.seq,
     verdict: (chain.last(runDir, 'verdict') || { payload: {} }).payload.verdict || null,
     records: records.length,
+    controlPlane: chain.hashEvidence(initEvidence),
   });
   writeCloseMarker(runDir, closeRec);
   console.log(
@@ -1633,18 +1639,82 @@ function cmdQaScope(runDir, worktree, baseRef) {
   process.stdout.write(JSON.stringify(out, null, 2) + '\n');
 }
 
-// The profile a run is governed by: its repo's, under the policy sealed at its init. With no
-// run, the profile in the working directory under the policy the environment names.
+// The profile a run is governed by, under the policy sealed at its init. With no run, the profile
+// in the working directory under the policy the environment names.
 function readConfig(runDir) {
-  const root = runDir ? repoRootOf(runDir) : '.';
-  let raw = {};
-  try {
-    raw = JSON.parse(fs.readFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), 'utf8'));
-  } catch {
-    raw = {};
-  }
+  const raw = runDir ? runProfile(runDir).raw : readJson(PROFILE_REL);
   const loaded = runDir && chain.exists(runDir) ? runPolicy(runDir) : policy.readPolicy();
   return policy.applyPolicy(raw, loaded).cfg;
+}
+
+const PROFILE_REL = path.join('.agents', 'ticket-loop.config.json');
+
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+// The profile a run ran under. Init seals it whole. A run sealed before that carries only its hash,
+// so a closed one is given the copy committed as of its close, when that copy hashes to the seal;
+// anything else falls back to the file on disk, whose drift `verify` reports.
+const recoveredProfiles = new Map();
+function runProfile(runDir) {
+  const init = chain.exists(runDir) ? chain.first(runDir, 'init') : null;
+  const p = (init && init.payload) || {};
+  if (p.profile && typeof p.profile === 'object') return { raw: p.profile, source: 'sealed' };
+  const disk = { raw: readJson(path.join(repoRootOf(runDir), PROFILE_REL)), source: 'disk' };
+  if (!init || !isClosed(runDir)) return disk;
+  const key = path.resolve(runDir);
+  if (!recoveredProfiles.has(key)) recoveredProfiles.set(key, committedProfileAtClose(runDir, p));
+  return recoveredProfiles.get(key) || disk;
+}
+
+// A closed run's profile and policy are judged as they stood at its close: what the repo did with
+// them afterwards is not part of the run. Null when the run is open or nothing settles it, so the
+// file on disk is checked as usual.
+function closedRunControlPlane(runDir, sealed, abs) {
+  if (!isClosed(runDir)) return null;
+  const close = chain.first(runDir, 'close');
+  const atClose = close && (close.payload.controlPlane || []).find((c) => samePath(sealedFile(runDir, c.file), abs));
+  if (atClose) {
+    if (atClose.sha256 === sealed.sha256) return 'unchanged';
+    return `TAMPERED: ${sealed.file} changed during the run — it no longer matched its init seal when the run closed (seq ${close.seq})`;
+  }
+  if (samePath(abs, path.join(repoRootOf(runDir), PROFILE_REL)) && runProfile(runDir).source === 'committed') return 'unchanged';
+  return null;
+}
+
+function closedAtOf(runDir) {
+  const close = chain.first(runDir, 'close');
+  if (close) return close.at;
+  return readJson(closedPath(runDir)).closedAt || null;
+}
+
+function committedProfileAtClose(runDir, initPayload) {
+  const root = repoRootOf(runDir);
+  const profileAbs = path.join(root, PROFILE_REL);
+  const seal = (initPayload.evidence || []).find((e) => samePath(sealedFile(runDir, e.file), profileAbs));
+  const closedAt = closedAtOf(runDir);
+  if (!seal || !closedAt) return null;
+  const rel = PROFILE_REL.replace(/\\/g, '/');
+  const log = spawnSync('git', ['-C', root, 'log', '-1', '--format=%H', `--before=${closedAt}`, '--', rel], { encoding: 'utf8', timeout: 15000 });
+  const sha = (log.stdout || '').trim();
+  if (log.status !== 0 || !sha) return null;
+  const show = spawnSync('git', ['-C', root, 'show', `${sha}:${rel}`], { timeout: 15000, maxBuffer: 1 << 20 });
+  if (show.status !== 0) return null;
+  // The seal hashed the working copy, which on Windows may carry CRLF the committed blob does not.
+  const blob = show.stdout;
+  const crlf = Buffer.from(blob.toString('utf8').replace(/\r?\n/g, '\r\n'), 'utf8');
+  const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  if (![blob, crlf].some((b) => sha256(b) === seal.sha256)) return null;
+  try {
+    return { raw: JSON.parse(blob.toString('utf8')), source: 'committed', commit: sha };
+  } catch {
+    return null;
+  }
 }
 
 function riskPathsFromConfig(runDir) {
@@ -1882,6 +1952,14 @@ function integrityReport(runDir) {
     for (const r of v.records) {
       for (const e of (r.payload && (r.payload.evidence || r.payload.inputs)) || []) {
         const abs = sealedFile(runDir, e.file);
+        if (r.kind === 'init') {
+          const judged = closedRunControlPlane(runDir, e, abs);
+          if (judged === 'unchanged') continue;
+          if (judged) {
+            problems.push(judged);
+            continue;
+          }
+        }
         let now = null;
         try {
           now = chain.sha256File(abs);
