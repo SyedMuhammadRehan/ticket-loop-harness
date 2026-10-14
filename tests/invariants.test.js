@@ -29,6 +29,16 @@ function parseRows() {
 
 const rows = parseRows();
 
+// A symbol kept alive only in a comment would satisfy a plain substring check after its code was
+// deleted. Whole-line comments are dropped; trailing ones are left, since telling `//` in a regex
+// or URL from a comment needs a parser.
+function codeOnly(src) {
+  return src
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
+    .join('\n');
+}
+
 test('INVARIANTS.md parses and covers the enforcement layer', () => {
   assert.ok(rows.length >= 25, `only ${rows.length} invariant rows parsed — the table or the row format drifted`);
   const seen = new Set();
@@ -42,7 +52,7 @@ test('every invariant cites a source file that exists and contains the named sym
   for (const r of rows) {
     const found = SEARCH_DIRS.map((d) => path.join(d, r.file)).find((p) => fs.existsSync(p));
     assert.ok(found, `invariant ${r.n} cites ${r.file}, which is not in hooks/ or scripts/`);
-    const src = fs.readFileSync(found, 'utf8');
+    const src = codeOnly(fs.readFileSync(found, 'utf8'));
     assert.ok(
       src.includes(r.symbol),
       `invariant ${r.n} cites ${r.file} → ${r.symbol}, which no longer appears in that file`
@@ -70,11 +80,11 @@ test('every enforcement source is represented in the table', () => {
   // Only files that genuinely enforce no guarantee belong here. A file that HAS rows must not
   // be listed: it would then pass this check even if every one of its rows were deleted.
   const EXEMPT = new Set([
-    'hook_lib.js', // I/O shims, exercised through the hooks that use them
     'post_edit.js', // formatting/analysis convenience, enforces no guarantee
     'memory.js', // cross-run notes, explicitly advisory
   ]);
   const cited = new Set(rows.map((r) => r.file));
+  for (const name of EXEMPT) assert.ok(!cited.has(name), `${name} has rows, so it must not be exempt`);
   for (const dir of SEARCH_DIRS) {
     for (const name of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {
       assert.ok(

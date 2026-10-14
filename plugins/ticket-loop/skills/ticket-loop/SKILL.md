@@ -229,8 +229,9 @@ prompt's ladder, and the same ledger entry, when it is test-only or a one-file c
 under `dispatchPolicy.minSliceLines` (default 50). Dispatch when the slice is feature-sized,
 needs a fresh context, or is the QA judge. **Before EVERY dispatch** (survey, implementer,
 fixer, QA): `node <SKILL_DIR>/scripts/ledger.js dispatch <runDir> "<kind>: <slice-or-check> [<model>]"`
-Exit 2 means the budget, the token ceiling or the QA cap is spent: do not dispatch; go to Stage 11 as INCOMPLETE unless the person raises it. The
-`dispatch_guard` hook counts the tool call either way; this call labels it for the report.
+Exit 2 means the dispatch budget is spent: do not dispatch; go to Stage 11 as INCOMPLETE. The
+`dispatch_guard` hook counts the tool call either way and also refuses it at the token ceiling
+or the QA cap; this call labels it for the report.
 **When a dispatch returns**, seal what it cost, using the total tokens and duration the Agent
 tool reports on completion and never an estimate:
 `node <SKILL_DIR>/scripts/ledger.js outcome <runDir> <seq> ok "<note>" --tokens <n> --ms <n>`
@@ -301,9 +302,9 @@ result into `ledger.md`'s check-history table.
    nothing regressed", with `{DIFF}` then being those findings verbatim plus
    `git -C <wt> diff <since>`). When `outsideScope` is non-empty, append "Changed outside every
    declared slice scope: <files>" to `{QA_SCOPE}`. Do NOT paste the contract files.
-3. The judge seals its own verdict. Then `node <SKILL_DIR>/scripts/ledger.js require <runDir> qa`
-   must pass and `ledger.js status` must show the verdict; without a sealed verdict the QA pass
-   did not happen. Then `node <SKILL_DIR>/scripts/ledger.js gate <runDir> qa`.
+3. The judge seals its own verdict. `ledger.js status` must show it; without a sealed verdict
+   the QA pass did not happen. Then `node <SKILL_DIR>/scripts/ledger.js gate <runDir> qa`, and
+   `node <SKILL_DIR>/scripts/ledger.js require <runDir> qa` must pass.
 4. BLOCK → Stage 10 as QA_BLOCK with the findings verbatim. APPROVE WITH COMMENTS → findings
    into the report, Stage 11. APPROVE → Stage 11.
 
@@ -349,8 +350,7 @@ when a non-obvious fix finally works: `memory.js add <memoryFile> flaky|fix <TIC
    FAIL or SKIPPED(reason); assumptions verbatim; FLAKY and GOLDEN flags; toolchain line;
    wall-clock; counters from `ledger.js status`; for each visual criterion the Figma PNG and
    runtime capture paths. Paste verbatim, never summarise:
-   `node <SKILL_DIR>/scripts/ledger.js cost <runDir> --worktree <wt>` into Cost (proxies only,
-   never a token count) and `node <SKILL_DIR>/scripts/ledger.js verify <runDir>` into
+   `node <SKILL_DIR>/scripts/ledger.js cost <runDir> --worktree <wt>` into Cost and `node <SKILL_DIR>/scripts/ledger.js verify <runDir>` into
    Integrity. Exit 4 → `Integrity: TAMPERED`, problems verbatim, escalate. `Status:` is the
    work and `Integrity:` the history; report them separately. `revisions` in the output are
    recorded edits, listed with their reasons.
