@@ -263,7 +263,8 @@ any kind when null. Commits happen only in the worktree; never push or touch mai
 
 Record every result as you go, naming how it was established:
 `node <SKILL_DIR>/scripts/ledger.js check <runDir> <C-id> PASS|FAIL|SKIPPED --by <method> "<note>"`
-Methods: `command` (a command ran and its exit code decided), `observed` (the running system
+Methods: `command` (add `--cwd <wt>`: the ledger runs the frozen `run:` command and its exit
+code decides), `observed` (the running system
 was exercised and seen), `human` (a person confirmed; the only way a `(manual)` criterion
 passes), `asserted` (concluded from source or a summary; can back only SKIPPED). Read the
 command's own exit code, never a pipe's: redirect output to a file if it is long. Mirror each
@@ -288,8 +289,8 @@ result into `ledger.md`'s check-history table.
 1. `node <SKILL_DIR>/scripts/ledger.js qascope <runDir> --worktree <wt>` prints `scope`
    (FOCUSED, FULL, or DELTA after a verdict when the fix stayed inside the files that judge
    read), `why`, `outsideScope`, `consumerFiles` and `label`. Use the label verbatim in `ledger.js dispatch`.
-2. Dispatch ONE judge with **`subagent_type: ticket-loop-qa`** (no Write or Edit; never
-   substitute a general-purpose agent) using `prompts/qa_agent.md`. Fill `{TICKET}`,
+2. Dispatch ONE judge with **`subagent_type: ticket-loop-qa`** (no Write or Edit; a verdict
+   binds to no other type) using `prompts/qa_agent.md`. Fill `{TICKET}`,
    `{RUN_DIR}` (`<runDir>`), `{SCRIPTS_DIR}` (`<SKILL_DIR>/scripts`), `{DIFF}`
    (`git -C <wt> diff <base>..HEAD`, `git -C <wt> status --porcelain`, `git -C <wt> diff HEAD`;
    say when status is non-empty; past `dispatchPolicy.promptBudgetChars`, give the `--stat`
