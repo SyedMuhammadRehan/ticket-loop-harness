@@ -6,15 +6,12 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { SCRIPTS_DIR, mkRun, mkTmpDir, rmDir, runScript, settleDispatches } = require('./helpers.js');
+const { SCRIPTS_DIR, mkRun, mkTmpDir, rmDir, runScript, settleDispatches, RUNNABLE_CONFIG, freezeRun, judge } = require('./helpers.js');
 const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
 const { canonical, verifyBundle } = require(path.join(SCRIPTS_DIR, 'verify_bundle.js'));
 
 const LEDGER = path.join(SCRIPTS_DIR, 'ledger.js');
 const VERIFY = path.join(SCRIPTS_DIR, 'verify_bundle.js');
-const DRAFT =
-  '# Done\n## Criteria\n- [ ] C1 (test): behaviour holds | run: x tests\n' +
-  '- [ ] C2 (analyzer): clean | run: y .\n## Tokens\n- none\n## Out of scope\n- the offline banner\n';
 
 function keyEnv(dir) {
   return { TICKET_LOOP_SIGNING_KEY: path.join(dir, 'key.pem'), HOME: dir, USERPROFILE: dir };
@@ -23,8 +20,11 @@ const ledger = (root, args, env) => runScript(LEDGER, args, { cwd: root, env });
 
 // A run driven to close, the only state that is attested.
 function closedRun(env) {
-  const { root, runDir } = mkRun({ verify: { test: 'x', analyze: 'y' } });
-  const ok = (args) => assert.strictEqual(ledger(root, args, env).status, 0, `ledger ${args[0]} failed`);
+  const { root, runDir } = mkRun(RUNNABLE_CONFIG);
+  const ok = (args) => {
+    const res = ledger(root, args, env);
+    assert.strictEqual(res.status, 0, `ledger ${args[0]} failed: ${res.stderr}`);
+  };
   ok(['init', runDir, 'base1']);
   const write = (name, body) => {
     const p = path.join(runDir, name);
@@ -33,18 +33,16 @@ function closedRun(env) {
   };
   const brief = write('ticket-brief.md', '# brief\n');
   ok(['gate', runDir, 'intake', '--evidence', brief]);
-  write('done.draft.md', DRAFT);
-  runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root });
-  runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root });
-  ok(['check', runDir, 'C1', 'PASS', '--by', 'command']);
+  freezeRun(root, runDir);
+  ok(['check', runDir, 'C1', 'PASS', '--by', 'command', '--cwd', root]);
+  ok(['check', runDir, 'C2', 'PASS', '--by', 'command', '--cwd', root]);
   ok(['gate', runDir, 'verify', '--evidence', brief]);
-  ok(['dispatch', runDir, 'qa', '--source', 'hook']);
-  ok(['verdict', runDir, 'APPROVE', '--inputs', path.join(runDir, `done${'.approved'}.md`), '--inputs', path.join(runDir, 'done-additions.md')]);
+  assert.strictEqual(judge(root, runDir, 'APPROVE').status, 0);
   ok(['gate', runDir, 'qa', '--evidence', brief]);
   const report = write('report.md', '# Report\n');
   ok(['gate', runDir, 'report', '--evidence', report]);
   settleDispatches(root, runDir);
-  return { root, runDir, ok };
+  return { root, runDir, ok, brief };
 }
 
 function exported(t) {
@@ -72,6 +70,7 @@ test('a closed run exports a bundle that verifies with no secret, trusted by its
   assert.strictEqual(bundle.attestation.verdict, 'APPROVE');
   assert.strictEqual(bundle.attestation.records, bundle.records.length);
   assert.strictEqual(bundle.attestation.integrity.intact, true);
+  assert.strictEqual(bundle.attestation.completeness.passed, true, 'the attestation says whether the run passed');
   const plain = check(out);
   assert.strictEqual(plain.status, 0, plain.stdout);
   assert.strictEqual(JSON.parse(plain.stdout).valid, true);
@@ -135,6 +134,26 @@ test('export refuses an open run, a run without a key, and a chain that does not
   const broken = ledger(run.root, ['export', run.runDir, '--out', out], env);
   assert.strictEqual(broken.status, 4, broken.stderr);
   assert.ok(!fs.existsSync(out), 'nothing is signed over a chain that does not verify');
+});
+
+// Seals and links can all verify over evidence that changed after it was sealed; signing that
+// run would attest the changed file as if it were the one the receipts covered.
+test('export refuses a run whose sealed evidence was tampered with', (t) => {
+  const keys = mkTmpDir('tl-keys');
+  const env = keyEnv(keys);
+  const run = closedRun(env);
+  t.after(() => {
+    rmDir(run.root);
+    rmDir(keys);
+  });
+  run.ok(['close', run.runDir]);
+  assert.strictEqual(ledger(keys, ['keygen'], env).status, 0);
+  fs.writeFileSync(run.brief, '# brief\nquietly narrowed\n');
+  const out = path.join(keys, 'b.json');
+  const res = ledger(run.root, ['export', run.runDir, '--out', out], env);
+  assert.strictEqual(res.status, 4, res.stderr);
+  assert.match(res.stderr, /TAMPERED/);
+  assert.ok(!fs.existsSync(out), 'nothing is signed over a tampered run');
 });
 
 test('keygen never replaces an existing key', () => {

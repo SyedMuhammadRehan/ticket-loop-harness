@@ -11,12 +11,14 @@
 //   ledger.js replan <runDir> [reason]             +1 re-plan;  exit 2 at the cap
 //   ledger.js gate <runDir> <stage> [--evidence f] record that a stage completed
 //   ledger.js require <runDir> <stage>             exit 3 unless that stage was recorded
-//   ledger.js check <runDir> <id> <result> --by <m>  record a result AND how it was reached
+//   ledger.js check <runDir> <id> <result> --by <m> [--cwd <dir>] [--timeout-ms <n>]
+//                                                  record a result AND how it was reached;
+//                                                  --by command runs the criterion's frozen run:
 //   ledger.js verdict <runDir> <v> [--inputs f]    record the QA verdict + what it judged
 //   ledger.js close <runDir>                       end the run (needs a report receipt)
 //   ledger.js archive <runDir>                     sanctioned CLEAN-RESTART move
 //   ledger.js status <runDir>                      counters as JSON
-//   ledger.js cost <runDir> [--worktree <path>]    what the run spent (proxies, not tokens)
+//   ledger.js cost <runDir> [--worktree <path>]    what the run spent
 //   ledger.js qascope <runDir> [--worktree <path>] how widely the QA judge should read
 //   ledger.js qascope --base <ref> [--worktree <path>]  same, with no run behind it
 //   ledger.js clear <runDir> <glob> <reason>       record a human's GATE A/C risk clearance
@@ -68,6 +70,17 @@ const DEFAULT_APPROVAL_MINUTES = 60;
 // Mirrors load_config's dispatchPolicy default, for a run whose profile does not set one.
 const DEFAULT_PROMPT_BUDGET = 32000;
 const DEFAULT_SMALL_DIFF_LINES = 60;
+// A dispatch spends at least the prompt it was handed, whatever was reported for it.
+const CHARS_PER_TOKEN = 4;
+const DEFAULT_CHECK_TIMEOUT_MS = 10 * 60 * 1000;
+const OUTPUT_TAIL_LINES = 40;
+// Enough output for the sealed tail however long its lines run, without holding all of it.
+const CHECK_OUTPUT_KEEP_CHARS = 256 * 1024;
+// The judge's subagent type, as the dispatch hook records it at the head of the label.
+const JUDGE_ROLE = /ticket-loop-qa/;
+const PASSING_VERDICTS = ['APPROVE', 'APPROVE_WITH_COMMENTS'];
+// Criteria checked by a tool rather than a shell command; validate_done exempts the same set.
+const NON_COMMAND_RUNNERS = /^(playwright|browser|manual):/i;
 
 // The riskPaths globs, matched the way the guard matches them. Kept here rather than imported
 // from the hooks: scripts and hooks install to different places, and a require across that
@@ -112,16 +125,17 @@ const UNREVISABLE = [
 // reporting `intact: true, problems: []` over a run in which nothing happened, and
 // `require <stage>` proving only that someone typed `ledger.js gate`.
 //
-// `artifact` = the file the stage cannot have happened without, which must be among --evidence
-// (hashEvidence already refuses files that do not exist). `receipt` = a stage whose product is
-// another sealed record rather than a file, bound to that record instead.
+// `artifact` = the file the stage cannot have happened without: <runDir>/<artifact>, non-empty,
+// among --evidence. A file of the same name elsewhere is not this run's product. `receipt` = a
+// stage whose product is another sealed record rather than a file, bound to that record instead.
+// `validated` = the artifact must hash to what a validate receipt sealed.
 const STAGE_PROOF = {
   intake: { artifact: 'ticket-brief.md' },
   survey: { artifact: 'codebase-map.md' },
   design: { artifact: 'design-spec.md' },
   approach: { artifact: 'approach.md' },
   validate: { receipt: 'validate', how: 'run validate_done.js against the draft — it seals the receipt' },
-  freeze: { artifact: 'done.md' },
+  freeze: { artifact: 'done.md', validated: true, how: 'freeze with freeze_done.js, which seals the draft validate_done.js accepted' },
   implement: {
     anyEvidence: true,
     how: 'seal the diff or the files the slices touched — ledger.md keeps growing after this gate, so sealing it costs a "revise" receipt per attempt',
@@ -146,6 +160,30 @@ function budgetPath(runDir) {
 // marker itself is write-protected by freeze_guard.
 function closedPath(runDir) {
   return path.join(runDir, 'closed.json');
+}
+
+// The marker is a file in the run dir, so deleting it must not re-open the run: the chain's own
+// `close` record says so too, and either one is enough.
+function isClosed(runDir) {
+  return fs.existsSync(closedPath(runDir)) || !!chain.first(runDir, 'close');
+}
+
+// The repo a run belongs to is the directory holding its `.agents`, wherever the command was
+// started from.
+function repoRootOf(runDir) {
+  let dir = path.resolve(runDir);
+  for (;;) {
+    if (path.basename(dir) === '.agents') return path.dirname(dir);
+    const parent = path.dirname(dir);
+    if (parent === dir) return process.cwd();
+    dir = parent;
+  }
+}
+
+// Evidence is sealed absolute; a receipt from before that is resolved against the run's repo,
+// never against the cwd of whoever is verifying.
+function sealedFile(runDir, file) {
+  return path.isAbsolute(String(file)) ? path.resolve(String(file)) : path.resolve(repoRootOf(runDir), String(file));
 }
 
 function caps(runDir) {
@@ -221,14 +259,16 @@ function counters(runDir) {
   };
 }
 
-// Tokens are known only when a dispatch's outcome is recorded, so the ceiling is checked before
-// each dispatch against what has finished: a run can overshoot by at most the one in flight.
+// Reported tokens arrive only with an outcome, and an outcome need not report any, so each
+// dispatch counts at least its prompt as the hook measured it. The ceiling is checked before each
+// dispatch: a run can overshoot by at most what the ones in flight spend beyond their prompts.
 function tokenCeiling(runDir) {
-  const used = tokenStats(runDir).total || 0;
-  const base = Number((readConfig().dispatchPolicy || {}).maxRunTokens);
-  if (!Number.isInteger(base) || base <= 0) return { tokensUsed: used, maxRunTokens: null };
+  const stats = tokenStats(runDir);
+  const used = stats.counted;
+  const base = Number((readConfig(runDir).dispatchPolicy || {}).maxRunTokens);
+  if (!Number.isInteger(base) || base <= 0) return { tokensUsed: used, tokensFloor: stats.floor, maxRunTokens: null };
   const raised = chain.ofKind(runDir, 'raise').reduce((n, r) => n + (Number(r.payload.tokens) || 0), 0);
-  return { tokensUsed: used, maxRunTokens: base + raised };
+  return { tokensUsed: used, tokensFloor: stats.floor, maxRunTokens: base + raised };
 }
 
 // budget.json exists so a human can read the state without a tool. It is never read back.
@@ -268,14 +308,35 @@ function requireChain(runDir) {
     );
     process.exit(4);
   }
+  runPolicy(runDir);
   return v;
+}
+
+// The org policy a run is governed by is the file sealed at its init, by path as well as by
+// hash: pointing TICKET_LOOP_POLICY at a missing file would otherwise lift the floor mid-run.
+// A run that started under no policy has no floor to lift, so a different path is refused only
+// when a policy was sealed. A run initialised before the path was sealed reads the policy the
+// environment names.
+function runPolicy(runDir) {
+  const init = chain.first(runDir, 'init');
+  const sealed = init && init.payload && init.payload.policy;
+  if (!sealed || !sealed.path) return policy.readPolicy();
+  const now = policy.policyPath();
+  if (sealed.sha256 && path.resolve(sealed.path) !== now) {
+    console.error(
+      `ledger: this run's org policy was sealed at ${path.resolve(sealed.path)}, but ${policy.ENV_POLICY} now resolves to ${now}.\n` +
+        `  A run is governed by the policy it started under; restore the environment, or archive and restart the run.`
+    );
+    process.exit(1);
+  }
+  return policy.readPolicy(sealed.path);
 }
 
 // `close` released the dispatch budget and the control-plane freeze against the receipts as
 // they stood; collecting more afterwards leaves the report describing a different run. Reads
 // and `archive` stay available.
 function requireOpen(runDir, what) {
-  if (!fs.existsSync(closedPath(runDir))) return;
+  if (!isClosed(runDir)) return;
   console.error(
     `ledger ${what}: ${runDir} is CLOSED — refusing to record anything more.\n` +
       `  Closing released the budget and the control-plane freeze against the receipts as they were; ` +
@@ -361,8 +422,9 @@ function cmdInit(runDir, baseSha, opts) {
   // TAMPERED in `ledger.js verify` instead of passing as "verified".
   const configRel = path.join('.agents', 'ticket-loop.config.json');
   const configSealed = fs.existsSync(configRel) ? chain.hashEvidence([configRel]) : [];
-  // The org policy governs the profile, so it is sealed beside it.
-  const orgPolicy = policy.readPolicy();
+  // The org policy governs the profile, so it is sealed beside it, by path as well as content.
+  const policyFile = policy.policyPath();
+  const orgPolicy = policy.readPolicy(policyFile);
   if (orgPolicy && orgPolicy.error) {
     console.error(`ledger init: ${orgPolicy.error} — fix or remove it before a run starts under it.`);
     process.exit(1);
@@ -376,6 +438,8 @@ function cmdInit(runDir, baseSha, opts) {
     maxDispatches: MAX_DISPATCHES,
     maxReplans: MAX_REPLANS,
     evidence: configSealed,
+    policy: { path: policyFile.replace(/\\/g, '/'), sha256: orgPolicy ? orgPolicy.sha256 : null },
+    closesInChain: true,
     ...(rotated ? { restartedFrom: rotated.retired, retiredSeal: rotated.retiredSeal, retiredRecords: rotated.retiredRecords } : {}),
   });
 
@@ -417,15 +481,8 @@ function cmdDispatch(runDir, label, opts) {
   requireChain(runDir);
   requireOpen(runDir, 'dispatch');
   const { maxDispatches } = caps(runDir);
-  const { count } = dispatchCount(runDir);
-  if (count >= maxDispatches) {
-    console.error(
-      `HARD BUDGET: ${count}/${maxDispatches} dispatches used — do NOT dispatch. Go to Stage 7 with status INCOMPLETE.`
-    );
-    process.exit(2);
-  }
   const promptChars = Number(opts && opts.promptChars);
-  chain.append(runDir, 'dispatch', {
+  const payload = {
     label: label || null,
     source: opts && opts.source ? opts.source : 'script',
     session: (opts && opts.session) || null,
@@ -434,9 +491,23 @@ function cmdDispatch(runDir, label, opts) {
     promptChars: Number.isFinite(promptChars) && promptChars >= 0 ? promptChars : null,
     // The model the Agent tool was handed, as the hook saw it; null is the session model.
     model: (opts && opts.model) || null,
+  };
+  // Count and append under one lock: parallel dispatches that each read the count first would
+  // all see room under the cap and all append.
+  const counted = chain.withLock(runDir, () => {
+    const { count } = dispatchCount(runDir);
+    if (count >= maxDispatches) return { refused: count };
+    chain.appendUnlocked(runDir, 'dispatch', payload);
+    return { used: dispatchCount(runDir).count };
   });
+  if (counted.refused !== undefined) {
+    console.error(
+      `HARD BUDGET: ${counted.refused}/${maxDispatches} dispatches used — do NOT dispatch. Go to Stage 7 with status INCOMPLETE.`
+    );
+    process.exit(2);
+  }
   mirrorBudget(runDir);
-  console.log(`ledger: dispatch OK — ${dispatchCount(runDir).count}/${maxDispatches} used`);
+  console.log(`ledger: dispatch OK — ${counted.used}/${maxDispatches} used`);
 }
 
 function cmdReplan(runDir, reason) {
@@ -477,12 +548,20 @@ function cmdGate(runDir, stage, evidence) {
     console.error(`ledger gate: refusing to record "${stage}" — ${why}${proof.how ? `\n  ${proof.how}` : ''}`);
     process.exit(1);
   };
-  if (proof.artifact && !hashed.some((e) => path.basename(e.file) === proof.artifact)) {
-    refuse(
-      `no ${proof.artifact} among the sealed evidence. Pass it: ` +
-        `--evidence ${path.join(runDir, proof.artifact)}. A stage receipt with nothing attached ` +
-        `attests only that this command ran.`
-    );
+  if (proof.artifact) {
+    const want = path.join(path.resolve(runDir), proof.artifact);
+    const hit = hashed.find((e) => samePath(e.file, want));
+    if (!hit) {
+      refuse(
+        `no ${proof.artifact} from this run dir among the sealed evidence. Pass it: ` +
+          `--evidence ${want}. A stage receipt with nothing attached, or a file of that name from ` +
+          `elsewhere, attests only that this command ran.`
+      );
+    }
+    if (fs.statSync(want).size === 0) refuse(`${want} is empty, so the stage produced nothing`);
+    if (proof.validated && !chain.ofKind(runDir, 'validate').some((r) => r.payload && r.payload.sha256 === hit.sha256)) {
+      refuse(`${want} matches no validate receipt — only the draft validate_done.js accepted may be frozen`);
+    }
   }
   if (proof.anyEvidence && hashed.length === 0) {
     refuse('no --evidence at all, so the receipt proves nothing happened');
@@ -502,11 +581,11 @@ function samePath(a, b) {
 }
 
 // Receipts that sealed this file, oldest first.
-function sealsOf(records, file) {
+function sealsOf(runDir, records, file) {
   const out = [];
   for (const r of records) {
     for (const e of (r.payload && (r.payload.evidence || r.payload.inputs)) || []) {
-      if (samePath(e.file, file)) out.push({ record: r, evidence: e });
+      if (samePath(sealedFile(runDir, e.file), file)) out.push({ record: r, evidence: e });
     }
   }
   return out;
@@ -545,7 +624,7 @@ function cmdRevise(runDir, file, reason) {
   }
 
   const records = chain.records(runDir);
-  const seals = sealsOf(records, abs);
+  const seals = sealsOf(runDir, records, abs);
   if (seals.length === 0) {
     console.error(
       `ledger revise: no receipt ever sealed ${file}, so there is nothing to revise.\n` +
@@ -555,7 +634,7 @@ function cmdRevise(runDir, file, reason) {
   }
 
   const now = chain.sha256File(abs);
-  const prior = records.filter((r) => r.kind === 'revise' && samePath(r.payload.file, abs)).pop();
+  const prior = records.filter((r) => r.kind === 'revise' && samePath(sealedFile(runDir, r.payload.file), abs)).pop();
   const expected = prior ? prior.payload.sha256 : seals[seals.length - 1].evidence.sha256;
   if (now === expected) {
     console.error(
@@ -566,7 +645,7 @@ function cmdRevise(runDir, file, reason) {
   }
 
   chain.append(runDir, 'revise', {
-    file: String(file).replace(/\\/g, '/'),
+    file: abs.replace(/\\/g, '/'),
     sha256: now,
     reason: reason.trim(),
     supersedes: (prior || seals[seals.length - 1].record).seq,
@@ -599,7 +678,7 @@ function cmdAddition(runDir, line) {
   }
   const abs = path.resolve(file);
   const records = chain.records(runDir);
-  const seals = sealsOf(records, abs);
+  const seals = sealsOf(runDir, records, abs);
   const priorAdd = records.filter((r) => r.kind === 'addition').pop();
   const expected = priorAdd ? priorAdd.payload.sha256 : seals.length ? seals[seals.length - 1].evidence.sha256 : null;
   const current = fs.readFileSync(abs, 'utf8');
@@ -619,7 +698,7 @@ function cmdAddition(runDir, line) {
   fs.appendFileSync(abs, `${current.endsWith('\n') || current === '' ? '' : '\n'}${text}\n`);
   const sealedBy = priorAdd ? `addition (seq ${priorAdd.seq})` : seals.length ? `${seals[seals.length - 1].record.kind} (seq ${seals[seals.length - 1].record.seq})` : 'nothing yet';
   chain.append(runDir, 'addition', {
-    file: String(file).replace(/\\/g, '/'),
+    file: abs.replace(/\\/g, '/'),
     id: m[1],
     line: text,
     sha256: chain.sha256File(abs),
@@ -649,6 +728,11 @@ function cmdOutcome(runDir, seqArg, outcome, note, opts) {
     process.exit(1);
   }
   const tokens = wholeNumberFlag(opts && opts.tokens, '--tokens');
+  // A dispatch that ran spent something; zero would undercount the ceiling as an explicit claim.
+  if (tokens === 0) {
+    console.error('ledger outcome: --tokens must be above zero; leave it out when the tool reported no figure');
+    process.exit(1);
+  }
   const ms = wholeNumberFlag(opts && opts.ms, '--ms');
   const seq = Number(seqArg);
   const target = chain.records(runDir).find((r) => r.seq === seq);
@@ -683,6 +767,22 @@ function roleOf(label) {
   return m ? m[1].toLowerCase() : 'unlabelled';
 }
 
+// The hook labels a dispatch `<subagent_type>: <description>`, and a plugin agent's type
+// carries its own colon (`ticket-loop:ticket-loop-qa`), so the type ends at the first colon
+// followed by a space.
+function agentTypeOf(label) {
+  const text = String(label || '');
+  const m = /^\s*(.*?):(?:\s|$)/.exec(text);
+  return (m ? m[1] : text).trim();
+}
+
+// SubagentStop may name an agent with or without its plugin prefix.
+function sameAgentType(a, b) {
+  if (!a || !b) return false;
+  const bare = (t) => String(t).split(':').pop();
+  return a === b || bare(a) === bare(b);
+}
+
 // One subagent call reaches the chain twice: the playbook's labelled `dispatch` before the
 // call, then the hook's record at the tool call. A hook record pairs with the nearest earlier
 // unpaired script record; the label comes from the script side, the prompt size from the hook.
@@ -699,8 +799,15 @@ function dispatchPairs(runDir) {
         mate.seqs.push(r.seq);
         if (Number.isFinite(p.promptChars) && mate.promptChars == null) mate.promptChars = p.promptChars;
         mate.model = p.model || null;
+        mate.agentType = agentTypeOf(p.label);
       } else {
-        pairs.push({ seqs: [r.seq], label: p.label, promptChars: Number.isFinite(p.promptChars) ? p.promptChars : null, model: p.model || null });
+        pairs.push({
+          seqs: [r.seq],
+          label: p.label,
+          promptChars: Number.isFinite(p.promptChars) ? p.promptChars : null,
+          model: p.model || null,
+          agentType: agentTypeOf(p.label),
+        });
       }
     } else {
       const entry = { seqs: [r.seq], label: p.label, promptChars: Number.isFinite(p.promptChars) ? p.promptChars : null };
@@ -720,8 +827,8 @@ function sameModel(a, b) {
 // the profile did not choose, cheaper or dearer, is reported. Pairs with no hook record are
 // skipped here: their independence is already reported on its own.
 function modelProblems(runDir) {
-  const models = readConfig().models || {};
-  const loaded = policy.readPolicy();
+  const models = readConfig(runDir).models || {};
+  const loaded = runPolicy(runDir);
   const org = loaded && !loaded.error ? loaded.policy : null;
   const out = [];
   for (const d of dispatchPairs(runDir)) {
@@ -747,8 +854,8 @@ function modelProblems(runDir) {
   return out;
 }
 
-function stallMinutes() {
-  const v = (readConfig().dispatchPolicy || {}).stallMinutes;
+function stallMinutes(runDir) {
+  const v = (readConfig(runDir).dispatchPolicy || {}).stallMinutes;
   return Number.isInteger(v) && v >= 0 ? v : DEFAULT_STALL_MINUTES;
 }
 
@@ -764,7 +871,7 @@ function openDispatches(runDir, now = Date.now()) {
   const outcomes = new Set(chain.ofKind(runDir, 'outcome').map((r) => r.payload.dispatchSeq));
   const lastSeen = new Map();
   for (const r of chain.ofKind(runDir, 'returned')) lastSeen.set(r.payload.dispatchSeq, r.at);
-  const stallMs = stallMinutes() * 60000;
+  const stallMs = stallMinutes(runDir) * 60000;
   return dispatchPairs(runDir)
     .filter((d) => !d.seqs.some((seq) => outcomes.has(seq)))
     .map((d) => {
@@ -774,6 +881,7 @@ function openDispatches(runDir, now = Date.now()) {
       return {
         seqs: d.seqs,
         label: d.label,
+        agentType: d.agentType || null,
         at,
         minutesOpen: Math.round(Math.max(0, now - Date.parse(at)) / 60000),
         seenAt,
@@ -790,16 +898,21 @@ function describeOpen(o) {
   return `dispatch seq ${seq} (${label}) has no outcome recorded (out ${o.minutesOpen} min) — wait for it, or record what it produced`;
 }
 
-// Marks the dispatch an agent belongs to: the one an earlier mark from the same agent named,
-// or else the oldest one never marked. Parallel launches can swap labels, never counts; the
-// outcome the orchestrator records names its seq itself.
+// Marks the dispatch an agent belongs to: the one an earlier mark from the same agent named;
+// else the oldest never-marked dispatch of the agent's own type; else the oldest never marked.
+// Parallel launches of one type can swap labels, never counts; the outcome the orchestrator
+// records names its seq itself.
 function cmdReturned(runDir, opts) {
   requireChain(runDir);
   requireOpen(runDir, 'returned');
   const open = openDispatches(runDir);
   const agentId = opts && opts.agentId;
+  const agentType = opts && opts.agentType;
   const known = agentId ? chain.ofKind(runDir, 'returned').find((r) => r.payload.agentId === agentId) : null;
-  const target = known ? open.find((o) => o.seqs.includes(known.payload.dispatchSeq)) : open.find((o) => !o.seenAt);
+  const unmarked = open.filter((o) => !o.seenAt);
+  const target = known
+    ? open.find((o) => o.seqs.includes(known.payload.dispatchSeq))
+    : unmarked.find((o) => sameAgentType(o.agentType, agentType)) || unmarked[0];
   if (!target) {
     console.log('ledger: no dispatch is out — nothing to mark');
     return;
@@ -820,12 +933,19 @@ function tokenStats(runDir) {
   const byRole = {};
   let measured = 0;
   let total = 0;
+  // `floor` is what the prompts alone cost; `counted` is what the ceiling charges: per dispatch,
+  // the reported figure or the prompt's floor, whichever is larger.
+  let floor = 0;
+  let counted = 0;
   const pairs = dispatchPairs(runDir);
   for (const d of pairs) {
     const role = roleOf(d.label);
     const entry = byRole[role] || (byRole[role] = { dispatches: 0, measured: 0, tokens: 0, ms: 0 });
     entry.dispatches++;
+    const promptFloor = Number.isFinite(d.promptChars) ? Math.ceil(d.promptChars / CHARS_PER_TOKEN) : 0;
+    floor += promptFloor;
     const o = d.seqs.map((s) => outcomes.get(s)).find((x) => x && Number.isInteger(x.tokens));
+    counted += Math.max(o ? o.tokens : 0, promptFloor);
     if (o) {
       entry.measured++;
       entry.tokens += o.tokens;
@@ -834,7 +954,7 @@ function tokenStats(runDir) {
       total += o.tokens;
     }
   }
-  return { measured, unmeasured: pairs.length - measured, total: measured ? total : null, byRole };
+  return { measured, unmeasured: pairs.length - measured, total: measured ? total : null, floor, counted, byRole };
 }
 
 function cmdRequire(runDir, stage) {
@@ -850,24 +970,143 @@ function cmdRequire(runDir, stage) {
   console.log(`ledger: stage "${stage}" receipt present (seq ${hit.seq}, ${hit.at})`);
 }
 
-// The kind the FROZEN contract gave this criterion, so the rules below key off the contract
-// itself rather than a second list that could disagree with it. Null when nothing is frozen yet.
-function frozenKindOf(runDir, id) {
-  for (const name of ['done.approved.md', 'done.md', 'done-additions.md']) {
+// The frozen contract's criteria: done.approved.md, then what the harness appended to
+// done-additions.md. A wrapped bullet is one criterion, as validate_done reads it, since the
+// `| run:` tag often lands on a continuation line.
+const FROZEN_CONTRACT = ['done.approved.md', 'done-additions.md'];
+const CRITERION_HEAD = /^-\s*\[[ xX]\]\s*(C\d+)\b/i;
+
+function frozenCriteria(runDir) {
+  const out = [];
+  for (const name of FROZEN_CONTRACT) {
     let text;
     try {
       text = fs.readFileSync(path.join(runDir, name), 'utf8');
     } catch {
       continue;
     }
-    const re = new RegExp(`-\\s*\\[[ xX]\\]\\s*${id}\\b[^\\n]*?\\((test|analyzer|runtime|token|manual)\\)`, 'i');
-    const m = text.match(re);
-    if (m) return m[1].toLowerCase();
+    let open = null;
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (line.startsWith('- ')) {
+        open = CRITERION_HEAD.test(line) ? { text: line } : null;
+        if (open) out.push(open);
+      } else if (!line) {
+        continue;
+      } else if (!/^\s/.test(raw)) {
+        open = null;
+      } else if (open) {
+        open.text += ` ${line}`;
+      }
+    }
   }
-  return null;
+  return out.map(({ text }) => {
+    const kind = /\((test|analyzer|runtime|token|manual)\)/i.exec(text);
+    const run = /\|\s*run:\s*(.+)$/.exec(text);
+    return {
+      id: CRITERION_HEAD.exec(text)[1].toUpperCase(),
+      kind: kind ? kind[1].toLowerCase() : null,
+      run: run ? run[1].trim().replace(/^`(.+)`$/, '$1') : null,
+    };
+  });
 }
 
-function cmdCheck(runDir, id, result, method, note) {
+function frozenCriterion(runDir, id) {
+  return frozenCriteria(runDir).find((c) => c.id === String(id || '').toUpperCase()) || null;
+}
+
+// The kind the FROZEN contract gave this criterion, so the rules below key off the contract
+// itself rather than a second list that could disagree with it.
+function frozenKindOf(runDir, id) {
+  const c = frozenCriterion(runDir, id);
+  return c ? c.kind : null;
+}
+
+function tailOf(text, lines) {
+  return String(text || '').replace(/\s+$/, '').split(/\r?\n/).slice(-lines).join('\n');
+}
+
+// Runs one shell command and kills its whole process tree at the deadline. A timeout on the
+// shell alone orphans what the shell started — on Windows the command keeps running and holds
+// its directory — so the deadline is enforced by this child, which can wait asynchronously.
+const CRITERION_RUNNER = `
+const { spawn, spawnSync } = require('child_process');
+const [command, cwd, timeoutMs, keep] = JSON.parse(process.argv[1]);
+const win = process.platform === 'win32';
+const kid = spawn(command, { shell: true, cwd, detached: !win, windowsHide: true });
+let out = '';
+const take = (c) => { out = (out + c).slice(-keep); };
+kid.stdout.on('data', take);
+kid.stderr.on('data', take);
+let timedOut = false;
+const timer = setTimeout(() => {
+  timedOut = true;
+  if (win) spawnSync('taskkill', ['/pid', String(kid.pid), '/T', '/F'], { windowsHide: true });
+  else { try { process.kill(-kid.pid, 'SIGKILL'); } catch (e) { kid.kill('SIGKILL'); } }
+}, timeoutMs);
+kid.on('error', (e) => take('\\n' + e.message));
+kid.on('close', (code) => {
+  clearTimeout(timer);
+  process.stdout.write(JSON.stringify({ code: timedOut ? null : code, timedOut, out }));
+});
+`;
+// Grace for the runner itself to report after it has killed the command.
+const RUNNER_GRACE_MS = 30000;
+
+// The criterion's own frozen command, run by the ledger rather than reported to it: a result
+// "by command" is the exit code this process saw.
+function runCriterion(command, cwd, timeoutMs) {
+  const started = Date.now();
+  const res = spawnSync(process.execPath, ['-e', CRITERION_RUNNER, JSON.stringify([command, cwd, timeoutMs, CHECK_OUTPUT_KEEP_CHARS])], {
+    encoding: 'utf8',
+    timeout: timeoutMs + RUNNER_GRACE_MS,
+    windowsHide: true,
+  });
+  let ran;
+  try {
+    ran = JSON.parse(res.stdout);
+  } catch {
+    ran = { code: null, timedOut: false, out: `the command could not be run: ${(res.stderr || (res.error && res.error.message) || '').trim()}` };
+  }
+  return {
+    command,
+    cwd: path.resolve(cwd).replace(/\\/g, '/'),
+    exitCode: typeof ran.code === 'number' ? ran.code : null,
+    ms: Date.now() - started,
+    ...(ran.timedOut ? { timedOut: true } : {}),
+    outputTail: tailOf(ran.out, OUTPUT_TAIL_LINES),
+  };
+}
+
+// Runs the criterion for `--by command` and refuses a claimed result its exit code contradicts.
+function commandResult(runDir, criterion, claimed, opts) {
+  const refuse = (why) => {
+    console.error(`ledger check: refusing ${criterion.id} ${claimed} --by command — ${why}`);
+    process.exit(1);
+  };
+  if (claimed === 'SKIPPED') refuse('a command decides PASS or FAIL; record a skip --by asserted');
+  if (!criterion.run || NON_COMMAND_RUNNERS.test(criterion.run)) {
+    refuse(`the frozen contract gives it no shell command to run (${criterion.run || 'no run:'}); record it --by observed or --by human`);
+  }
+  if (!opts.cwd || !fs.existsSync(opts.cwd) || !fs.statSync(opts.cwd).isDirectory()) {
+    refuse(`--cwd <dir> must name the directory the command runs in (the ticket worktree)${opts.cwd ? `; ${opts.cwd} is not one` : ''}`);
+  }
+  let timeoutMs = DEFAULT_CHECK_TIMEOUT_MS;
+  if (opts.timeoutMs !== undefined) {
+    if (!/^\d+$/.test(String(opts.timeoutMs)) || Number(opts.timeoutMs) <= 0) refuse(`--timeout-ms must be a whole number above zero, got "${opts.timeoutMs}"`);
+    timeoutMs = Number(opts.timeoutMs);
+  }
+  const ran = runCriterion(criterion.run, opts.cwd, timeoutMs);
+  if ((claimed === 'PASS') !== (ran.exitCode === 0)) {
+    refuse(
+      `"${ran.command}" ${ran.timedOut ? `timed out after ${timeoutMs} ms` : `exited ${ran.exitCode}`}, which is not a ${claimed}.\n` +
+        `  Last output:\n${ran.outputTail.split('\n').map((l) => `    ${l}`).join('\n')}`
+    );
+  }
+  return ran;
+}
+
+function cmdCheck(runDir, id, result, method, note, opts = {}) {
   requireChain(runDir);
   requireOpen(runDir, 'check');
   const normalized = String(result || '').toUpperCase();
@@ -894,6 +1133,14 @@ function cmdCheck(runDir, id, result, method, note) {
     );
     process.exit(1);
   }
+  const criterion = frozenCriterion(runDir, id);
+  if (!criterion) {
+    console.error(
+      `ledger check: ${id} is not a criterion of the frozen contract (${FROZEN_CONTRACT.join(', ')} in ${runDir}).\n` +
+        `  A result is recorded against the contract; a new criterion is appended with "ledger.js addition" first.`
+    );
+    process.exit(1);
+  }
   const kind = frozenKindOf(runDir, id);
   if (kind === 'manual' && normalized === 'PASS' && by !== 'human') {
     console.error(
@@ -902,16 +1149,30 @@ function cmdCheck(runDir, id, result, method, note) {
     );
     process.exit(1);
   }
-  chain.append(runDir, 'check', { id, result: normalized, by, kind, note: note || null });
-  const history = chain.ofKind(runDir, 'check').filter((r) => r.payload.id === id).map((r) => r.payload.result);
-  console.log(`ledger: check ${id} ${normalized} — history: ${history.join(' → ')}`);
+  const ran = by === 'command' ? commandResult(runDir, criterion, normalized, opts) : null;
+  chain.append(runDir, 'check', { id: criterion.id, result: normalized, by, kind, note: note || null, ...(ran || {}) });
+  const history = chain.ofKind(runDir, 'check').filter((r) => r.payload.id === criterion.id).map((r) => r.payload.result);
+  console.log(
+    `ledger: check ${criterion.id} ${normalized}${ran ? ` ("${ran.command}" exited ${ran.exitCode} in ${ran.ms} ms)` : ''} — history: ${history.join(' → ')}`
+  );
 }
 
-// A verdict is a claim that an independent judge read the frozen contract. Two things now have
-// to hold: the frozen contract is among the sealed inputs, and a subagent was actually
-// dispatched after the freeze. Neither proves WHICH process typed the verdict — process
-// identity is not available here — but together they rule out the cheap version, which was
-// `ledger.js verdict <run> APPROVE` with no inputs and no judge.
+// A verdict is a claim that an independent judge read the frozen contract. Two things have to
+// hold: this run's frozen contract, by path, is among the sealed inputs, and a QA judge was
+// dispatched through the hook after the freeze and has neither sealed a verdict nor been given
+// an outcome — a judge seals its verdict before it returns. Neither proves WHICH process typed
+// the verdict — process identity is not available here — but a dispatch of any other agent
+// does not back one.
+function judgeDispatch(runDir, freeze) {
+  const judged = new Set(chain.ofKind(runDir, 'verdict').map((r) => r.payload.dispatchSeq));
+  const settledSeqs = new Set(chain.ofKind(runDir, 'outcome').map((r) => r.payload.dispatchSeq));
+  const settled = new Set(dispatchPairs(runDir).filter((d) => d.seqs.some((s) => settledSeqs.has(s))).flatMap((d) => d.seqs));
+  const judges = chain
+    .ofKind(runDir, 'dispatch')
+    .filter((r) => r.seq > freeze.seq && r.payload && r.payload.source === 'hook' && JUDGE_ROLE.test(agentTypeOf(r.payload.label)));
+  return { judges, judge: judges.filter((r) => !judged.has(r.seq) && !settled.has(r.seq)).pop() || null };
+}
+
 function cmdVerdict(runDir, verdict, inputs) {
   requireChain(runDir);
   requireOpen(runDir, 'verdict');
@@ -926,11 +1187,15 @@ function cmdVerdict(runDir, verdict, inputs) {
     console.error(`ledger verdict: judged-input files not found: ${missing.map((m) => m.file).join(', ')}`);
     process.exit(1);
   }
-  if (!hashed.some((e) => path.basename(e.file) === 'done.approved.md')) {
+  const contract = FROZEN_CONTRACT.map((name) => path.join(path.resolve(runDir), name)).filter(
+    (f, i) => i === 0 || fs.existsSync(f)
+  );
+  const unsealed = contract.filter((f) => !hashed.some((e) => samePath(e.file, f)));
+  if (unsealed.length) {
     console.error(
       `ledger verdict: refusing to record a verdict that does not seal the frozen contract.\n` +
-        `  Pass --inputs ${path.join(runDir, 'done.approved.md')} (and done-additions.md). ` +
-        `A verdict over nothing cannot show which contract was judged.`
+        `  Pass --inputs ${unsealed.join(' --inputs ')}. ` +
+        `A verdict over nothing, or over a copy from elsewhere, cannot show which contract was judged.`
     );
     process.exit(1);
   }
@@ -940,42 +1205,65 @@ function cmdVerdict(runDir, verdict, inputs) {
     console.error(`ledger verdict: refusing — nothing has been frozen yet, so there is no contract to judge.`);
     process.exit(1);
   }
-  const judgeDispatch = chain.ofKind(runDir, 'dispatch').filter((r) => r.seq > freeze.seq).pop();
-  if (!judgeDispatch) {
+  const { judges, judge } = judgeDispatch(runDir, freeze);
+  if (!judge && judges.length) {
+    const last = judges[judges.length - 1];
+    const prior = chain.ofKind(runDir, 'verdict').find((r) => r.payload.dispatchSeq === last.seq);
     console.error(
-      `ledger verdict: refusing — no subagent was dispatched after the freeze (seq ${freeze.seq}), ` +
-        `so no fresh-context judge can have run.\n` +
-        `  Dispatch the QA agent with prompts/qa_agent.md and let it record the verdict itself.`
-    );
-    process.exit(3);
-  }
-
-  const prior = chain.ofKind(runDir, 'verdict').find((r) => r.payload.dispatchSeq === judgeDispatch.seq);
-  if (prior) {
-    console.error(
-      `ledger verdict: the dispatch at seq ${judgeDispatch.seq} already sealed ${prior.payload.verdict} (seq ${prior.seq}) — ` +
+      `ledger verdict: every QA judge dispatched since the freeze has already sealed a verdict or been given an outcome` +
+        `${prior ? ` (seq ${last.seq} already sealed ${prior.payload.verdict} at seq ${prior.seq})` : ''} — ` +
         `a judge's verdict is recorded once. A re-review is a new dispatch, not a second seal.`
     );
     process.exit(1);
   }
-  const source = (judgeDispatch.payload && judgeDispatch.payload.source) || 'script';
+  if (!judge) {
+    console.error(
+      `ledger verdict: refusing — no ticket-loop-qa judge was dispatched through the hook after the freeze ` +
+        `(seq ${freeze.seq}), so no fresh-context judge can have run.\n` +
+        `  Dispatch the QA agent (subagent_type ticket-loop-qa) and let it record the verdict itself.`
+    );
+    process.exit(3);
+  }
+
   chain.append(runDir, 'verdict', {
     verdict: normalized,
     inputs: hashed,
-    dispatchSeq: judgeDispatch.seq,
-    dispatchSource: source,
+    dispatchSeq: judge.seq,
+    dispatchSource: judge.payload.source,
   });
   console.log(
-    `ledger: verdict ${normalized} recorded (${hashed.length} judged input(s) sealed, ` +
-      `backed by the dispatch at seq ${judgeDispatch.seq}${source === 'hook' ? '' : ' — SCRIPT-sourced, see verify'})`
+    `ledger: verdict ${normalized} recorded (${hashed.length} judged input(s) sealed, backed by the judge dispatched at seq ${judge.seq})`
   );
 }
 
+function writeCloseMarker(runDir, closeRec) {
+  const marker = {
+    '//': 'END-OF-RUN MARKER — written only by ledger.js close. The chain\'s close record is the authority; this file is how the hooks see it.',
+    closedAt: closeRec.at,
+    reportGateSeq: closeRec.payload.reportGateSeq,
+    closeSeq: closeRec.seq,
+    chainRecords: closeRec.seq,
+    lastSeal: closeRec.hmac,
+  };
+  fs.writeFileSync(closedPath(runDir), JSON.stringify(marker, null, 2) + '\n');
+}
+
 // Ending the run has to cost a receipt, or it is just another file the orchestrator can write
-// to get out from under the gates.
+// to get out from under the gates. The close is itself a chain record, so deleting the marker
+// re-opens nothing: the ledger still refuses records, close rewrites the marker from the
+// chain, and verify reports the removal.
 function cmdClose(runDir) {
   requireChain(runDir);
-  if (fs.existsSync(closedPath(runDir))) {
+  const sealedClose = chain.first(runDir, 'close');
+  if (sealedClose && !fs.existsSync(closedPath(runDir))) {
+    writeCloseMarker(runDir, sealedClose);
+    console.log(
+      `ledger: ${runDir} was closed in the chain (seq ${sealedClose.seq}) but its close marker was missing — ` +
+        `marker rewritten from the chain. verify reports the removal.`
+    );
+    return;
+  }
+  if (sealedClose || fs.existsSync(closedPath(runDir))) {
     console.error(`ledger close: ${runDir} is already closed.`);
     process.exit(1);
   }
@@ -999,16 +1287,14 @@ function cmdClose(runDir) {
     process.exit(3);
   }
   const records = chain.records(runDir);
-  const marker = {
-    '//': 'END-OF-RUN MARKER — written only by ledger.js close. Deleting it re-opens the run under the hooks; forging it is a tampering event, not a shortcut.',
-    closedAt: new Date().toISOString(),
+  const closeRec = chain.append(runDir, 'close', {
     reportGateSeq: reportGate.seq,
-    chainRecords: records.length,
-    lastSeal: records.length ? records[records.length - 1].hmac : null,
-  };
-  fs.writeFileSync(closedPath(runDir), JSON.stringify(marker, null, 2) + '\n');
+    verdict: (chain.last(runDir, 'verdict') || { payload: {} }).payload.verdict || null,
+    records: records.length,
+  });
+  writeCloseMarker(runDir, closeRec);
   console.log(
-    `ledger: closed ${runDir} (report receipt seq ${reportGate.seq}, ${records.length} records). ` +
+    `ledger: closed ${runDir} (report receipt seq ${reportGate.seq}, close record seq ${closeRec.seq}). ` +
       `The dispatch budget and the control-plane freeze are released.`
   );
 }
@@ -1028,18 +1314,6 @@ function cmdArchive(runDir) {
   );
 }
 
-// What a run cost, derived ONLY from the sealed chain and from git. Deliberately not token
-// counts: nothing outside the model can observe those, so a "tokens" figure here could only
-// be the orchestrator's self-report — the kind of number this harness exists to distrust.
-//
-// These are proxies, and they are the useful ones: dispatches are the unit the budget spends,
-// and diff size per dispatch is what tells you whether the implementers are writing less code
-// or just churning. Both come from data the loop cannot quietly edit.
-// GATE A/C clearance for a risk-tier area. freeze_guard denies edits under riskPaths until one
-// of these exists, so this is the recorded act that unlocks it — and it lands in the sealed
-// chain, so the report shows exactly what was cleared and why. The orchestrator is told never
-// to run this without asking a human; that part is not mechanical, and the receipt is what
-// makes skipping it visible afterwards.
 // A person's answer, as notify.js received it: the question, the option chosen, the channel and
 // sender it came from, and the one-time code it carried. `forgeable` marks a channel the agent
 // itself could have posted on; such an answer is recorded but cannot back a clearance.
@@ -1076,7 +1350,7 @@ function usableApproval(runDir, approvalSeq, what) {
   if (approval.payload.forgeable) {
     fail(`the approval at seq ${approvalSeq} came on ${approval.payload.channel}, which the agent itself could have posted on; it cannot back a ${what}`);
   }
-  const limit = Number(readConfig().approvalMinutes);
+  const limit = Number(readConfig(runDir).approvalMinutes);
   const minutes = Number.isInteger(limit) && limit >= 0 ? limit : DEFAULT_APPROVAL_MINUTES;
   if (Date.now() - Date.parse(approval.at) > minutes * 60000) {
     fail(`the approval at seq ${approvalSeq} is older than ${minutes} min; ask again`);
@@ -1090,8 +1364,8 @@ const PUBLISH_ACTS = ['push', 'pr', 'ticket'];
 
 // What the profile, under the org policy, lets a run publish. An act missing here cannot be
 // consented to, so no answer given mid-run can widen what the repo allows.
-function publishAllowed() {
-  const list = ((readConfig().publish || {}).allowed) || [];
+function publishAllowed(runDir) {
+  const list = ((readConfig(runDir).publish || {}).allowed) || [];
   return PUBLISH_ACTS.filter((a) => Array.isArray(list) && list.includes(a));
 }
 
@@ -1108,7 +1382,7 @@ function cmdConsent(runDir, answers, reason, approvalSeq) {
     console.error('ledger consent: need a reason — who answered, and where');
     process.exit(1);
   }
-  const allowed = publishAllowed();
+  const allowed = publishAllowed(runDir);
   const acts = {};
   for (const act of PUBLISH_ACTS) {
     const raw = String(answers[act] || 'no').toLowerCase();
@@ -1145,6 +1419,11 @@ function cmdRaise(runDir, tokensArg, reason, approvalSeq) {
   console.log(`ledger: token ceiling raised by ${tokens} — ${tokensUsed} of ${maxRunTokens === null ? 'no ceiling' : maxRunTokens} used`);
 }
 
+// GATE A/C clearance for a risk-tier area. freeze_guard denies edits under riskPaths until one
+// of these exists, so this is the recorded act that unlocks it — and it lands in the sealed
+// chain, so the report shows exactly what was cleared and why. The orchestrator is told never
+// to run this without asking a human; that part is not mechanical, and the receipt is what
+// makes skipping it visible afterwards.
 function cmdClear(runDir, glob, reason, approvalSeq) {
   requireChain(runDir);
   requireOpen(runDir, 'clear');
@@ -1155,7 +1434,7 @@ function cmdClear(runDir, glob, reason, approvalSeq) {
   // Only a glob the profile actually declares may be cleared. Without this, `clear "**"`
   // would grant one blanket exemption over every risk area, and the per-glob guarantee would
   // hold for the literals in the README and nothing else.
-  const declared = riskPathsFromConfig();
+  const declared = riskPathsFromConfig(runDir);
   if (!declared.includes(glob)) {
     console.error(
       `ledger clear: "${glob}" is not one of the profile's riskPaths, so there is nothing to ` +
@@ -1181,14 +1460,6 @@ function cmdClear(runDir, glob, reason, approvalSeq) {
   console.log(`ledger: cleared "${glob}" — recorded in the chain and mirrored for the hooks`);
 }
 
-// What the QA judge should READ, decided here rather than eyeballed. Two rules, and the second
-// is the one prose got wrong: a diff is sized by what it ADDED. Deleting a 68-line component is
-// not 68 lines of new surface to review, but a line count that sums insertions and deletions
-// says it is, so every removal bought a full-codebase sweep it did not need. A risk path still
-// forces FULL at any size, because there the question is never "how much".
-// `--base <ref>` judges a diff with no run behind it, for the standalone review. Everything
-// else is identical, deliberately: a review outside a run should size and fence a change the
-// same way one inside it does.
 function cmdSlice(runDir, id, globs) {
   requireChain(runDir);
   requireOpen(runDir, 'slice');
@@ -1239,13 +1510,21 @@ function deltaSinceVerdict(runDir, tree, riskPaths) {
   };
 }
 
+// What the QA judge should READ, decided here rather than eyeballed. Two rules, and the second
+// is the one prose got wrong: a diff is sized by what it ADDED. Deleting a 68-line component is
+// not 68 lines of new surface to review, but a line count that sums insertions and deletions
+// says it is, so every removal bought a full-codebase sweep it did not need. A risk path still
+// forces FULL at any size, because there the question is never "how much".
+// `--base <ref>` judges a diff with no run behind it, for the standalone review. Everything
+// else is identical, deliberately: a review outside a run should size and fence a change the
+// same way one inside it does.
 function cmdQaScope(runDir, worktree, baseRef) {
   const withRun = !baseRef;
   if (withRun) {
     requireChain(runDir);
     requireOpen(runDir, 'qascope');
   }
-  const cfg = readConfig();
+  const cfg = readConfig(withRun ? runDir : null);
   const limit = Number((cfg.qaScope || {}).smallDiffLines);
   const threshold = Number.isInteger(limit) && limit >= 0 ? limit : DEFAULT_SMALL_DIFF_LINES;
   const baseSha = baseRef || caps(runDir).baseSha;
@@ -1272,7 +1551,7 @@ function cmdQaScope(runDir, worktree, baseRef) {
   const headLines = gitLines(tree, ['rev-parse', 'HEAD']);
   const head = headLines && headLines[0] ? headLines[0].trim() : null;
 
-  const riskPaths = riskPathsFromConfig();
+  const riskPaths = riskPathsFromConfig(withRun ? runDir : null);
   const touchedRiskPaths = [...files].filter((f) => riskPaths.some((g) => globToRegExp(g).test(f)));
 
   // The files a focused read must include beyond the diff itself.
@@ -1354,25 +1633,29 @@ function cmdQaScope(runDir, worktree, baseRef) {
   process.stdout.write(JSON.stringify(out, null, 2) + '\n');
 }
 
-function readConfig() {
+// The profile a run is governed by: its repo's, under the policy sealed at its init. With no
+// run, the profile in the working directory under the policy the environment names.
+function readConfig(runDir) {
+  const root = runDir ? repoRootOf(runDir) : '.';
   let raw = {};
   try {
-    raw = JSON.parse(fs.readFileSync(path.join('.agents', 'ticket-loop.config.json'), 'utf8'));
+    raw = JSON.parse(fs.readFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), 'utf8'));
   } catch {
     raw = {};
   }
-  return policy.applyPolicy(raw, policy.readPolicy()).cfg;
+  const loaded = runDir && chain.exists(runDir) ? runPolicy(runDir) : policy.readPolicy();
+  return policy.applyPolicy(raw, loaded).cfg;
 }
 
-function riskPathsFromConfig() {
-  const cfg = readConfig();
+function riskPathsFromConfig(runDir) {
+  const cfg = readConfig(runDir);
   return Array.isArray(cfg.riskPaths) ? cfg.riskPaths : [];
 }
 
 // What the subagents were handed, from the sizes the hook recorded. Dispatches with no
 // recorded size are counted separately rather than folded in as zero.
 function promptStats(runDir) {
-  const budget = Number((readConfig().dispatchPolicy || {}).promptBudgetChars) || DEFAULT_PROMPT_BUDGET;
+  const budget = Number((readConfig(runDir).dispatchPolicy || {}).promptBudgetChars) || DEFAULT_PROMPT_BUDGET;
   const pairs = dispatchPairs(runDir);
   const sizes = pairs.map((d) => d.promptChars).filter((n) => Number.isFinite(n));
   if (sizes.length === 0) return { measured: 0, unmeasured: pairs.length, total: null, max: null, avg: null, overBudget: 0, budget };
@@ -1450,15 +1733,18 @@ function cmdCost(runDir, worktree) {
   }
 
   const dispatches = dispatchCount(runDir).count;
+  const tokens = tokenStats(runDir);
   process.stdout.write(
     JSON.stringify(
       {
         note:
-          'tokens are the subagent totals the Agent tool reported, sealed on dispatch outcomes; the ' +
-          'orchestrator\'s own turns are not observable, so they are a floor. Everything else is a proxy from the chain and git',
+          'tokens are the subagent totals the Agent tool reported, sealed on dispatch outcomes; tokensFloor is what the ' +
+          'prompts alone cost (characters / 4), and the ceiling charges each dispatch the larger of the two. The ' +
+          'orchestrator\'s own turns are not observable, so every figure is a floor. Everything else is a proxy from the chain and git',
         dispatches,
         dispatchesDied: diedCount(runDir),
-        tokens: tokenStats(runDir),
+        tokensFloor: tokens.floor,
+        tokens,
         subagentPrompts: promptStats(runDir),
         evidence: evidenceStats(runDir),
         replans: byKind.replan || 0,
@@ -1517,6 +1803,20 @@ function integrityReport(runDir) {
       }
     } catch {
       // No marker means the run is still open; freeze_guard protects it from ordinary writes.
+    }
+    const closeRec = v.records.find((r) => r.kind === 'close');
+    if (closeRec) {
+      if (!fs.existsSync(closedPath(runDir))) {
+        problems.push(
+          `close marker removed: the chain closed this run at seq ${closeRec.seq}, but closed.json is gone, so the hooks read it as open again`
+        );
+      }
+      const after = v.records.filter((r) => r.seq > closeRec.seq);
+      if (after.length) {
+        problems.push(
+          `records after the close record (seq ${closeRec.seq}): ${after.map((r) => `${r.kind} seq ${r.seq}`).join(', ')}`
+        );
+      }
     }
 
     // freeze_guard trusts the clearance mirror without consulting the chain, because it runs on
@@ -1581,18 +1881,18 @@ function integrityReport(runDir) {
     const counted = new Set();
     for (const r of v.records) {
       for (const e of (r.payload && (r.payload.evidence || r.payload.inputs)) || []) {
-        const abs = path.isAbsolute(e.file) ? e.file : path.join(process.cwd(), e.file);
+        const abs = sealedFile(runDir, e.file);
         let now = null;
         try {
           now = chain.sha256File(abs);
         } catch {
-          problems.push(`${r.kind}${r.payload.stage ? ` "${r.payload.stage}"` : ''} sealed ${e.file}, which is now missing`);
+          problems.push(`TAMPERED: ${e.file}, sealed by the ${r.kind}${r.payload.stage ? ` "${r.payload.stage}"` : ''} receipt (seq ${r.seq}), is now missing`);
           continue;
         }
         if (now === e.sha256) continue;
 
         const accounted = reviseRecords
-          .filter((rv) => rv.seq > r.seq && rv.payload.sha256 === now && samePath(rv.payload.file, abs))
+          .filter((rv) => rv.seq > r.seq && rv.payload.sha256 === now && samePath(sealedFile(runDir, rv.payload.file), abs))
           .pop();
         if (!accounted) {
           problems.push(`TAMPERED: ${e.file} changed after it was sealed by the ${r.kind} receipt (seq ${r.seq})`);
@@ -1620,8 +1920,27 @@ function integrityReport(runDir) {
     // Accounted-for edits to sealed documents — not problems, but the report prints them.
     revisions,
     counters: v.ok ? counters(runDir) : null,
+    completeness: v.ok ? completeness(runDir) : null,
   };
   return report;
+}
+
+// Whether the run did what it set out to, which `intact` does not say: a run that closed with
+// every criterion FAILED, or with only a report gate, has an intact record of not passing.
+// Close stays permissive — an unfinished run must still be closable — so this is read by
+// whatever acts on a pass (export's attestation, publish, CI).
+function completeness(runDir) {
+  const verdict = (chain.last(runDir, 'verdict') || { payload: {} }).payload.verdict || null;
+  const checks = chain.ofKind(runDir, 'check');
+  const criteria = frozenCriteria(runDir).map((c) => {
+    const last = checks.filter((r) => r.payload.id === c.id).pop();
+    return { id: c.id, result: last ? last.payload.result : 'unchecked', by: last ? last.payload.by : null };
+  });
+  const passed =
+    PASSING_VERDICTS.includes(verdict) &&
+    criteria.length > 0 &&
+    criteria.every((c) => c.result === 'PASS' && c.by !== 'asserted');
+  return { verdict, frozenCriteria: criteria.length, criteria, passed };
 }
 
 function cmdVerify(runDir) {
@@ -1676,7 +1995,13 @@ function cmdExport(runDir, out, worktree) {
     console.error(`ledger export: ${signer.error}`);
     process.exit(1);
   }
+  // Seals and links verifying is not enough: a run whose evidence changed after it was sealed
+  // would be signed as it now stands, and the signature would launder the change.
   const integrity = integrityReport(runDir);
+  if (!integrity.intact) {
+    console.error(`ledger export: the run's integrity check is not intact, so nothing is signed:\n- ${integrity.problems.join('\n- ')}`);
+    process.exit(4);
+  }
   const c = counters(runDir);
   const ticket = path.basename(path.resolve(runDir));
   const headLines = gitLines(worktree || '.', ['rev-parse', '--verify', '--quiet', `ticket/${ticket}`]);
@@ -1697,6 +2022,7 @@ function cmdExport(runDir, out, worktree) {
     dispatches: c.dispatches,
     dispatchesDied: c.dispatchesDied,
     integrity: { intact: integrity.intact, problems: integrity.problems },
+    completeness: integrity.completeness,
     signedAt: new Date().toISOString(),
     keyId: signer.keyId,
   };
@@ -1708,8 +2034,8 @@ function cmdExport(runDir, out, worktree) {
   };
   fs.writeFileSync(out, JSON.stringify(bundle, null, 2) + '\n');
   console.log(
-    `ledger: ${ticket} exported to ${out} — ${records.length} record(s), verdict ${c.verdict || 'none'}, ` +
-      `integrity ${integrity.intact ? 'intact' : `with ${integrity.problems.length} problem(s)`}, signed by key ${signer.keyId}`
+    `ledger: ${ticket} exported to ${out} — ${records.length} record(s), verdict ${c.verdict || 'none'}, integrity intact, ` +
+      `${integrity.completeness.passed ? 'passed' : 'did not pass'}, signed by key ${signer.keyId}`
   );
 }
 
@@ -1733,6 +2059,8 @@ function main() {
   const source = takeFlag(argv, '--source')[0];
   const promptChars = takeFlag(argv, '--prompt-chars')[0];
   const checkMethod = takeFlag(argv, '--by')[0];
+  const checkCwd = takeFlag(argv, '--cwd')[0];
+  const timeoutMs = takeFlag(argv, '--timeout-ms')[0];
   const worktree = takeFlag(argv, '--worktree')[0];
   const baseRef = takeFlag(argv, '--base')[0];
   const evidence = takeFlag(argv, '--evidence');
@@ -1776,6 +2104,7 @@ function main() {
         '       ledger.js qascope <runDir> | qascope --base <ref> [--worktree <path>]\n' +
         '       ledger.js gate <runDir> <stage> [--evidence <file>]... | require <runDir> <stage>\n' +
         '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> --by <command|observed|human|asserted> [note]\n' +
+        '                 --by command also takes --cwd <dir> [--timeout-ms <n>]: the ledger runs the frozen run: command\n' +
         '       ledger.js verdict <runDir> <verdict> [--inputs <file>]...\n' +
         '       ledger.js close <runDir> | archive <runDir> | status <runDir> | verify <runDir> | protocol\n' +
         '       ledger.js keygen | export <runDir> --out <file> [--worktree <path>]\n' +
@@ -1804,7 +2133,7 @@ function main() {
     case 'require':
       return cmdRequire(runDir, rest[0]);
     case 'check':
-      return cmdCheck(runDir, rest[0], rest[1], checkMethod, rest.slice(2).join(' '));
+      return cmdCheck(runDir, rest[0], rest[1], checkMethod, rest.slice(2).join(' '), { cwd: checkCwd, timeoutMs });
     case 'verdict':
       return cmdVerdict(runDir, rest[0], inputs);
     case 'close':
@@ -1846,4 +2175,20 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { counters, caps, dispatchCount, openDispatches, closedPath, integrityReport, readConfig, publishAllowed, PUBLISH_ACTS, STAGES, VERDICTS, LEDGER_PROTOCOL };
+module.exports = {
+  counters,
+  caps,
+  dispatchCount,
+  openDispatches,
+  closedPath,
+  isClosed,
+  integrityReport,
+  completeness,
+  readConfig,
+  publishAllowed,
+  PUBLISH_ACTS,
+  PASSING_VERDICTS,
+  STAGES,
+  VERDICTS,
+  LEDGER_PROTOCOL,
+};

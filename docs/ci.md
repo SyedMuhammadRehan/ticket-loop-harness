@@ -4,9 +4,10 @@
 
 1. the branch carries `.agents/attestations/<ID>.bundle.json`, signed by a key listed in the
    **base** branch's `.agents/ticket-loop.trust`;
-2. the bundle attests the pull request's exact head — one later commit that adds only the bundle
-   is allowed, anything else is a change the run never saw;
-3. the run's verdict was `APPROVE` or `APPROVE_WITH_COMMENTS` and its integrity check was intact;
+2. the bundle attests the pull request's exact head — commits after it may change the bundle file
+   and nothing else; any other change is one the run never saw;
+3. the run's verdict was `APPROVE` or `APPROVE_WITH_COMMENTS`, every frozen criterion passed, and its
+   integrity check was intact;
 4. the **base** branch's `verify.analyze` and `verify.test` pass when CI runs them itself.
 
 It exits 0 to pass and 2 to block. Make the job a **required status check** in branch protection;

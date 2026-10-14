@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // Freeze a VALIDATED draft: done.draft.md -> done.md + done.approved.md.
 //
-// The freeze now requires a validation receipt sealing the exact bytes being frozen. Before,
-// validate_done.js was advisory: nothing stopped a draft from being frozen unvalidated, or
-// from being edited in between validating and freezing. Both are refused here.
+// The freeze requires a validation receipt sealing the exact bytes being frozen, so a draft
+// cannot be frozen unvalidated, or edited between validating and freezing.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -66,7 +65,7 @@ if (!fs.existsSync(additions)) {
 // so post-freeze edits surface as TAMPERED instead of needing a self-reported diff.
 chain.append(runDir, 'gate', {
   stage: 'freeze',
-  evidence: chain.hashEvidence([done, approved]),
+  evidence: chain.hashEvidence([done, approved, additions]),
   validatedBy: matching.seq,
 });
 

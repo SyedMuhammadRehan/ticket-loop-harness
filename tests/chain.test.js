@@ -183,6 +183,67 @@ test('a stale lock left by a killed process does not deadlock the chain', () => 
   }
 });
 
+// A plain file at the lock's name fails every mkdir exactly as a held lock does, and rmdir cannot
+// remove it, so an unbreakable stale lock would wedge every append for good.
+test('a stale lock left as a plain file is broken, not a permanent wedge', () => {
+  const { root, runDir } = fresh();
+  try {
+    const lock = path.join(chain.resolveChainDir(runDir).dir, chain.LOCK_NAME);
+    fs.writeFileSync(lock, '');
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    fs.utimesSync(lock, old, old);
+    const rec = chain.append(runDir, 'dispatch', { label: 'after-stale-file-lock' });
+    assert.strictEqual(rec.seq, 1);
+    assert.ok(!fs.existsSync(lock), 'the stale lock file is cleared');
+  } finally {
+    rmDir(root);
+  }
+});
+
+// Readers take no lock. One that lands between a writer's record append and its head write sees
+// the anchor a record behind, which is how truncation looks too; parallel dispatches made that
+// a refused dispatch. The in-flight state resolves in moments, so verify waits it out, while a
+// head that stays behind is still reported.
+test('verify rides out an append in flight, and still reports a head that stays behind', async () => {
+  const { root, runDir } = fresh();
+  try {
+    chain.append(runDir, 'dispatch', { label: 'one' });
+    const headFile = chain.headPath(runDir);
+    const before = fs.readFileSync(headFile, 'utf8');
+    chain.append(runDir, 'dispatch', { label: 'two' });
+    const after = fs.readFileSync(headFile, 'utf8');
+
+    fs.writeFileSync(headFile, before);
+    assert.match(chain.verify(runDir).problems.join('\n'), /TRUNCATED or an append was interrupted/, 'a head that stays behind is reported');
+
+    // The writer finishes its head write shortly after the reader starts.
+    const ready = path.join(root, 'ready');
+    const go = path.join(root, 'go');
+    const writer = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const fs=require('fs');const [ready,go,head,text]=process.argv.slice(1);fs.writeFileSync(ready,'');` +
+          `const t=setInterval(()=>{if(fs.existsSync(go)){clearInterval(t);setTimeout(()=>fs.writeFileSync(head,text),30);}},2);`,
+        ready,
+        go,
+        headFile,
+        after,
+      ],
+      { stdio: 'ignore' }
+    );
+    const exited = new Promise((resolve) => writer.on('exit', resolve));
+    const deadline = Date.now() + 10000;
+    while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    fs.writeFileSync(go, '');
+    const result = chain.verify(runDir);
+    await exited;
+    assert.deepStrictEqual(result.problems, [], 'the reader waited for the head the writer was about to write');
+  } finally {
+    rmDir(root);
+  }
+});
+
 test('the chain lives outside the run dir, under the git dir', () => {
   const { root, runDir } = fresh();
   try {

@@ -17,7 +17,6 @@ const chain = require('./chain.js');
 const ledger = require('./ledger.js');
 const { remoteOf, titleOf, body } = require('./handoff.js');
 
-const PASSING = ['APPROVE', 'APPROVE_WITH_COMMENTS'];
 // For tests and wrapped CLIs: a JSON array that replaces `gh` or `glab`, e.g. ["node","fake.js"].
 const CLI_OVERRIDE = 'TICKET_LOOP_PUBLISH_CLI';
 
@@ -38,36 +37,22 @@ function cli(name, args, opts = {}) {
   return { ok: res.status === 0, out: (res.stdout || '').trim(), err: (res.stderr || res.error?.message || '').trim() };
 }
 
-function criterionIds(runDir) {
-  const ids = new Set();
-  for (const name of ['done.approved.md', 'done-additions.md']) {
-    let text = '';
-    try {
-      text = fs.readFileSync(path.join(runDir, name), 'utf8');
-    } catch {
-      continue;
-    }
-    for (const m of text.matchAll(/^- \[[ xX]\] (C\d+)\b/gm)) ids.add(m[1]);
-  }
-  return [...ids];
-}
-
-// Why this run may not be published, from its sealed record alone. Empty means it may.
+// Why this run may not be published, from its sealed record alone. Empty means it may. The pass
+// itself is verify's completeness verdict, so publish and the attestation CI reads cannot
+// disagree about what "passed" means.
 function readinessProblems(runDir) {
   const problems = [];
-  if (!fs.existsSync(ledger.closedPath(runDir))) problems.push('the run is not closed; publish only a finished run');
+  if (!ledger.isClosed(runDir)) problems.push('the run is not closed; publish only a finished run');
   const integrity = ledger.integrityReport(runDir);
   if (!integrity.intact) problems.push(`the run's integrity check reports ${integrity.problems.length} problem(s): ${integrity.problems.join('; ')}`);
-  const c = integrity.counters || ledger.counters(runDir);
-  if (!PASSING.includes(c.verdict)) problems.push(`the QA verdict is ${c.verdict || 'none'}, not a pass`);
-  const checks = chain.ofKind(runDir, 'check');
-  const ids = criterionIds(runDir);
-  if (!ids.length) problems.push('no frozen criteria found');
-  for (const id of ids) {
-    const last = checks.filter((r) => r.payload.id === id).pop();
-    if (!last) problems.push(`${id} has no recorded result`);
-    else if (last.payload.result !== 'PASS') problems.push(`${id} last recorded ${last.payload.result}`);
-    else if (!['command', 'observed', 'human'].includes(last.payload.by)) problems.push(`${id} passed only by ${last.payload.by}`);
+  const done = integrity.completeness || ledger.completeness(runDir);
+  if (done.passed) return problems;
+  if (!ledger.PASSING_VERDICTS.includes(done.verdict)) problems.push(`the QA verdict is ${done.verdict || 'none'}, not a pass`);
+  if (!done.frozenCriteria) problems.push('no frozen criteria found');
+  for (const c of done.criteria) {
+    if (c.result === 'unchecked') problems.push(`${c.id} has no recorded result`);
+    else if (c.result !== 'PASS') problems.push(`${c.id} last recorded ${c.result}`);
+    else if (c.by === 'asserted') problems.push(`${c.id} passed only by ${c.by}`);
   }
   return problems;
 }
@@ -100,7 +85,7 @@ function publish(argv, cwd = process.cwd()) {
   const branch = `ticket/${ticket}`;
   const refuse = (why) => ({ refused: true, act, why });
 
-  if (!ledger.publishAllowed().includes(act)) return refuse(`the profile does not allow "${act}" (publish.allowed)`);
+  if (!ledger.publishAllowed(absRun).includes(act)) return refuse(`the profile does not allow "${act}" (publish.allowed)`);
   if (!consented(absRun, act)) return refuse(`the person did not say yes to "${act}" for this run`);
   const problems = readinessProblems(absRun);
   if (problems.length) return refuse(problems.join('\n  - '));
@@ -108,7 +93,7 @@ function publish(argv, cwd = process.cwd()) {
   if (current !== branch) return refuse(`the worktree is on "${current || 'a detached head'}", not ${branch}`);
   if (git(wt, ['status', '--porcelain']).out) return refuse('the worktree has uncommitted changes; publish only what was committed');
 
-  const cfg = ledger.readConfig();
+  const cfg = ledger.readConfig(absRun);
   const base = flag(argv, '--base') || ((cfg.hooks || {}).stopGate || {}).baseRef;
   const detected = remoteOf(git(wt, ['remote', 'get-url', 'origin']).out);
   // A self-hosted GitHub or GitLab on a company domain says nothing about itself in its URL.

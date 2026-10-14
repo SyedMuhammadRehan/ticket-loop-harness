@@ -12,8 +12,8 @@ const { SCRIPTS_DIR, mkTmpDir, rmDir, runScript } = require('./helpers.js');
 const LEDGER = path.join(SCRIPTS_DIR, 'ledger.js');
 const PUBLISH = path.join(SCRIPTS_DIR, 'publish.js');
 const DRAFT =
-  '# Done\n## Criteria\n- [ ] C1 (test): behaviour holds | run: node check.js tests\n' +
-  '- [ ] C2 (analyzer): clean | run: node lint.js .\n## Tokens\n- none\n## Out of scope\n- nothing else\n';
+  '# Done\n## Criteria\n- [ ] C1 (test): behaviour holds | run: node check.js\n' +
+  '- [ ] C2 (analyzer): clean | run: node lint.js\n## Tokens\n- none\n## Out of scope\n- nothing else\n';
 
 function git(cwd, ...args) {
   const res = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 20000 });
@@ -47,6 +47,8 @@ function finishedRun(t, opts = {}) {
   fs.writeFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), JSON.stringify(profile));
   fs.writeFileSync(path.join(root, '.gitignore'), '.agents/ticket-runs/\n');
   fs.writeFileSync(path.join(root, 'a.js'), 'module.exports = 1;\n');
+  fs.writeFileSync(path.join(root, 'check.js'), 'process.exit(0);\n');
+  fs.writeFileSync(path.join(root, 'lint.js'), "process.exit(require('fs').existsSync('lint.fail') ? 1 : 0);\n");
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'base');
   git(root, 'remote', 'add', 'origin', bare);
@@ -74,10 +76,12 @@ function finishedRun(t, opts = {}) {
   write('done.draft.md', DRAFT);
   assert.strictEqual(runScript(path.join(SCRIPTS_DIR, 'validate_done.js'), [runDir], { cwd: root }).status, 0);
   assert.strictEqual(runScript(path.join(SCRIPTS_DIR, 'freeze_done.js'), [runDir], { cwd: root }).status, 0);
-  ok(['check', runDir, 'C1', 'PASS', '--by', 'command']);
-  ok(['check', runDir, 'C2', opts.c2 || 'PASS', '--by', 'command']);
+  ok(['check', runDir, 'C1', 'PASS', '--by', 'command', '--cwd', wt]);
+  if (opts.c2 === 'FAIL') fs.writeFileSync(path.join(wt, 'lint.fail'), '');
+  ok(['check', runDir, 'C2', opts.c2 || 'PASS', '--by', 'command', '--cwd', wt]);
+  fs.rmSync(path.join(wt, 'lint.fail'), { force: true });
   ok(['gate', runDir, 'verify', '--evidence', brief]);
-  ok(['dispatch', runDir, 'qa: contract [full]', '--source', 'hook']);
+  ok(['dispatch', runDir, 'ticket-loop:ticket-loop-qa: contract [full]', '--source', 'hook']);
   const qaSeq = JSON.parse(ledger(['status', runDir]).stdout).open[0].seqs[0];
   ok(['verdict', runDir, opts.verdict || 'APPROVE', '--inputs', path.join(runDir, 'done.approved.md'), '--inputs', path.join(runDir, 'done-additions.md')]);
   ok(['outcome', runDir, String(qaSeq), 'ok']);

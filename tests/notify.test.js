@@ -3,7 +3,9 @@
 // channel never silences the rest, an answer counts only when it carries the question's code
 // and comes from the right chat, an answer the agent could have forged never backs a clearance,
 // and a session that stalls mid-run says so on its own. A local server stands in for every
-// service, so nothing here leaves the machine.
+// service, so nothing here leaves the machine — and because a local server is exactly what an
+// agent could stand up to echo a code back, no answer through it is sealable; sealing is tested
+// on the answer parsers with the services' real hosts.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -136,7 +138,7 @@ test('an answer counts only with the code of its question and from the configure
   assert.strictEqual(r.choiceText, 'no, park the run');
   assert.strictEqual(r.channel, 'telegram');
   assert.strictEqual(r.sender, '77');
-  assert.strictEqual(r.sealable, true);
+  assert.strictEqual(r.sealable, false, 'an apiBase off the service\'s own host could be the agent\'s echo server');
   assert.strictEqual(notify.parseAnswer('ABC123 2', 'ABC123', 2), 2);
   assert.strictEqual(notify.parseAnswer('2', 'ABC123', 2), null, 'a bare number is not an answer');
   assert.strictEqual(notify.parseAnswer('ABC123 9', 'ABC123', 2), null, 'out of range is not an answer');
@@ -167,8 +169,19 @@ test('an answer is sealed into the run, and only an unforgeable one naming the g
   const asked = await runAsync(path.join(SCRIPTS_DIR, 'notify.js'), ['ask', 'Clear pubspec.yaml for the dependency bump?', '--option', 'yes', '--option', 'no', '--timeout-min', '0.1', '--run', runDir], { cwd: root, env: { TICKET_LOOP_NOTIFY: file } });
   assert.strictEqual(asked.status, 0, asked.stderr + asked.stdout);
   assert.strictEqual(JSON.parse(asked.stdout).sealed, true);
+  const echoed = chain.last(runDir, 'approval');
+  assert.strictEqual(echoed.payload.channel, 'telegram');
+  assert.strictEqual(echoed.payload.forgeable, true, 'an answer through a stand-in host is sealed as forgeable');
+  const fromStub = ledger(root, ['clear', runDir, 'pubspec.yaml', 'from the stub', '--approval', String(echoed.seq)]);
+  assert.strictEqual(fromStub.status, 1, 'an answer the agent could have echoed backs no clearance');
+
+  // The argv notify.js hands the ledger for an answer from the real service, sealed the same way.
+  const real = { question: 'Clear pubspec.yaml for the dependency bump?', choice: 1, choiceText: 'yes', channel: 'telegram', sender: '77', nonce: 'A1B2C3', sealable: true };
+  const args = notify.approvalArgs(runDir, real);
+  assert.ok(!args.includes('--forgeable'));
+  assert.ok(notify.approvalArgs(runDir, { ...real, sealable: false }).includes('--forgeable'));
+  assert.strictEqual(ledger(root, args.slice(1)).status, 0);
   const approval = chain.last(runDir, 'approval');
-  assert.strictEqual(approval.payload.channel, 'telegram');
   assert.strictEqual(approval.payload.forgeable, false);
 
   const wrongGlob = ledger(root, ['clear', runDir, 'lib/auth/**', 'from the phone', '--approval', String(approval.seq)]);
@@ -242,7 +255,7 @@ test('a Slack bot answer counts only from the configured person, never from a bo
   assert.strictEqual(r.answered, true, JSON.stringify(r));
   assert.strictEqual(r.choice, 2);
   assert.strictEqual(r.sender, 'U0456');
-  assert.strictEqual(r.sealable, true);
+  assert.strictEqual(r.sealable, false, 'a stand-in host is never sealable');
 });
 
 test('a Discord bot answer counts only from the configured person, and without a userId it cannot be sealed', async (t) => {
@@ -255,7 +268,7 @@ test('a Discord bot answer counts only from the configured person, and without a
   const r = await notify.ask('Continue?', ['yes', 'no'], { config: { channels: pinned }, timeoutMin: 0.05, pollMs: 50 });
   assert.strictEqual(r.answered, true, JSON.stringify(r));
   assert.strictEqual(r.sender, '777');
-  assert.strictEqual(r.sealable, true);
+  assert.strictEqual(r.sealable, false, 'a stand-in host is never sealable');
 
   const open = [{ type: 'discord', apiBase: `${base}/discordapi`, botToken: 'D', channelId: 'C1' }];
   const anyone = await notify.ask('Continue?', ['yes', 'no'], { config: { channels: open }, timeoutMin: 0.05, pollMs: 50 });
@@ -289,4 +302,75 @@ test('a hook notification with a key is sent once, then held back for its repeat
   assert.strictEqual((await lib.notifyOnce(root, 'ceiling:T-1', 60000, 'stopped at the ceiling')).sent, 1);
   assert.strictEqual((await lib.notifyOnce(root, 'ceiling:T-1', 60000, 'stopped at the ceiling')).sent, 0);
   assert.strictEqual(seen.length, 1);
+});
+
+// --- what may seal: the parsers, against the services' real hosts ---------------------------
+
+const TG = { type: 'telegram', token: 'T', chatId: '4242' };
+const tgUpdate = (id, chat, from, text) => ({ update_id: id, message: { chat: { id: chat }, from: { id: from }, text } });
+
+test('a Telegram answer in a private chat with the official host can be sealed', () => {
+  const hit = notify.telegramAnswer(TG, [tgUpdate(1, '4242', 4242, 'ABC123 1')], {}, 'ABC123', 2);
+  assert.strictEqual(hit.sealable, true);
+  assert.strictEqual(notify.isSealable(TG, hit), true);
+  assert.strictEqual(notify.isSealable({ ...TG, apiBase: 'https://api.telegram.org' }, hit), true);
+});
+
+test('in a Telegram group anyone can answer, so only the configured user seals', () => {
+  const group = { ...TG, chatId: '-100777' };
+  const updates = [tgUpdate(1, '-100777', 555, 'ABC123 1'), tgUpdate(2, '-100777', 77, 'ABC123 2')];
+  const anyone = notify.telegramAnswer(group, updates, {}, 'ABC123', 2);
+  assert.strictEqual(anyone.sender, '555');
+  assert.strictEqual(notify.isSealable(group, anyone), false, 'a group member is not the person who started the run');
+  const pinned = { ...group, userId: '77' };
+  const state = {};
+  const theirs = notify.telegramAnswer(pinned, updates, state, 'ABC123', 2);
+  assert.strictEqual(theirs.sender, '77', 'another member\'s answer does not count');
+  assert.strictEqual(theirs.choice, 2);
+  assert.strictEqual(notify.isSealable(pinned, theirs), true);
+  assert.strictEqual(state.offset, 3);
+  assert.strictEqual(notify.telegramAnswer(pinned, [updates[0]], {}, 'ABC123', 2), null);
+});
+
+test('an answer through any host but the service\'s own is never sealable', () => {
+  const hit = { choice: 1, channel: 'telegram', sender: '77', sealable: true };
+  for (const apiBase of ['http://127.0.0.1:9999', 'http://api.telegram.org', 'https://api.telegram.org.evil.example', 'not a url']) {
+    assert.strictEqual(notify.isSealable({ ...TG, apiBase }, hit), false, apiBase);
+  }
+  const slack = { type: 'slack', botToken: 'x', channel: 'C1', userId: 'U1' };
+  const slackHit = notify.slackAnswer(slack, [{ ts: '2', user: 'U1', text: 'ABC123 1' }], { ts: '1' }, 'ABC123', 2);
+  assert.strictEqual(notify.isSealable(slack, slackHit), true);
+  assert.strictEqual(notify.isSealable({ ...slack, apiBase: 'https://slack.com/api' }, slackHit), true);
+  assert.strictEqual(notify.isSealable({ ...slack, apiBase: 'https://hooks.example/api' }, slackHit), false);
+  const discord = { type: 'discord', botToken: 'x', channelId: 'C1', userId: '9' };
+  const discordHit = notify.discordAnswer(discord, [{ id: '2', author: { id: '9' }, content: 'ABC123 2' }], 'ABC123', 2);
+  assert.strictEqual(notify.isSealable(discord, discordHit), true);
+  assert.strictEqual(notify.isSealable({ ...discord, apiBase: 'http://localhost:1/api' }, discordHit), false);
+  assert.strictEqual(notify.isSealable({ type: 'ntfy', topic: 't' }, { choice: 1, channel: 'ntfy' }), false);
+});
+
+// A permission prompt quotes the command it asks about; the channel may be a public ntfy topic.
+test('a permission prompt never carries a credential to any channel', async (t) => {
+  const { base, seen } = await fakeServices(t);
+  const file = writeConfig(t, [{ type: 'ntfy', server: `${base}/ntfy`, topic: 'public-topic' }, { type: 'webhook', url: `${base}/hook` }]);
+  const { root, runDir } = mkRun({ verify: { test: 'x' } });
+  t.after(() => rmDir(root));
+  fs.writeFileSync(path.join(runDir, 'budget.json'), '{}');
+  const secrets = ['eyJhbGciOiJIUzI1NiJ9.c2VjcmV0LXBheWxvYWQ', 'hunter2-Correct-Horse', 'ghp_9fK2xQ7LmN4pR8sT1vW3yZ6aB0cD5eF', 'p4ssW0rd!', 'sk_live_51HaBcDeFgHiJkLmNoPq'];
+  const message =
+    `Claude needs permission to run: curl -H "Authorization: Bearer ${secrets[0]}" https://api.example.com/x?token=${secrets[1]} ` +
+    `&& gh auth login --with-token ${secrets[2]} && mysql --password=${secrets[3]} && export STRIPE_KEY=${secrets[4]} ` +
+    'x'.repeat(2000);
+  const res = await runAsync(path.join(HOOKS_DIR, 'notify_hook.js'), [], {
+    cwd: root,
+    env: { TICKET_LOOP_NOTIFY: file },
+    input: JSON.stringify({ cwd: root, hook_event_name: 'Notification', notification_type: 'permission_prompt', message }),
+  });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(seen.length, 2, 'both channels were told');
+  for (const s of seen) {
+    for (const secret of secrets) assert.ok(!s.body.includes(secret), `${secret} reached ${s.url}: ${s.body}`);
+    assert.match(s.body, /Claude needs permission to run: curl/);
+    assert.ok(s.body.length < 700, `the prompt was not truncated: ${s.body.length} chars`);
+  }
 });

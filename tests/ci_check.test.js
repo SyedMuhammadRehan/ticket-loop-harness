@@ -42,6 +42,7 @@ function bundleFor(key, fields) {
     lastSeal: 'h2',
     verdict: fields.verdict || 'APPROVE',
     integrity: fields.integrity || { intact: true, problems: [] },
+    completeness: fields.completeness || { verdict: 'APPROVE', frozenCriteria: 1, criteria: [{ id: 'C1', result: 'PASS', by: 'command' }], passed: true },
     keyId: key.id,
   };
   const signature = crypto.sign(null, Buffer.from(canonical(attestation)), key.privateKey).toString('base64');
@@ -114,6 +115,18 @@ test('a run whose verdict was BLOCK, or whose integrity was not intact, is refus
   const res = ci(tampered.root, ['--no-rerun']);
   assert.strictEqual(res.status, 2);
   assert.match(res.stdout, /integrity check reported problems: TAMPERED: done\.md/);
+});
+
+// An APPROVE over an intact record of failed criteria is a run that did not pass.
+test('a run whose criteria did not all pass is refused, even with an APPROVE and an intact record', (t) => {
+  const failed = setup(t, {
+    fields: { completeness: { verdict: 'APPROVE', frozenCriteria: 2, criteria: [{ id: 'C1', result: 'PASS', by: 'command' }, { id: 'C2', result: 'FAIL', by: 'command' }], passed: false } },
+  });
+  const res = ci(failed.root, ['--no-rerun']);
+  assert.strictEqual(res.status, 2, res.stdout);
+  assert.match(res.stdout, /criteria did not all pass: C2 FAIL/);
+  const silent = setup(t, { fields: { completeness: { passed: 'yes' } } });
+  assert.strictEqual(ci(silent.root, ['--no-rerun']).status, 2, 'only a recorded pass counts');
 });
 
 test('CI reruns the base branch test command, so a red suite or a swapped command does not pass', (t) => {

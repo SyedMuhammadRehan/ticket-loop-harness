@@ -8,7 +8,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { mkTmpDir, rmDir, ledger } = require('./helpers.js');
+const { mkTmpDir, rmDir, ledger, SCRIPTS_DIR } = require('./helpers.js');
+const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
 
 function git(cwd, ...args) {
   const res = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 20000 });
@@ -186,9 +187,11 @@ function judged(root, runDir, verdict) {
   fs.writeFileSync(path.join(root, runDir, 'done.md'), '# Done\n');
   fs.writeFileSync(path.join(root, runDir, 'done.approved.md'), '# Done\n');
   if (!JSON.parse(ledger(root, ['status', runDir]).stdout).gates.includes('freeze')) {
+    // The freeze gate seals only a validated draft.
+    chain.append(path.join(root, runDir), 'validate', { file: 'done.draft.md', sha256: chain.sha256File(path.join(root, runDir, 'done.md')) });
     assert.strictEqual(ledger(root, ['gate', runDir, 'freeze', '--evidence', path.join(runDir, 'done.md')]).status, 0);
   }
-  assert.strictEqual(ledger(root, ['dispatch', runDir, 'qa: contract [focused]', '--source', 'hook']).status, 0);
+  assert.strictEqual(ledger(root, ['dispatch', runDir, 'ticket-loop:ticket-loop-qa: contract [focused]', '--source', 'hook']).status, 0);
   const res = ledger(root, ['verdict', runDir, verdict, '--inputs', path.join(runDir, 'done.approved.md')]);
   assert.strictEqual(res.status, 0, res.stderr);
   const seq = JSON.parse(ledger(root, ['status', runDir]).stdout).open[0].seqs[0];

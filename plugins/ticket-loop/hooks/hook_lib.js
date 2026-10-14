@@ -16,6 +16,15 @@ try {
 } catch {
   policyLib = null;
 }
+// The receipt chain lives under this machine's git dir, which no clone or checkout can write; a
+// hand-copied hook set without chain.js finds no chain, so it never executes a profile command.
+let chainLib = null;
+try {
+  chainLib = require(path.join(__dirname, '..', 'skills', 'ticket-loop', 'scripts', 'chain.js'));
+} catch {
+  chainLib = null;
+}
+const CHAIN_FILE = 'chain.jsonl';
 const LEDGER_REL = path.join('skills', 'ticket-loop', 'scripts', 'ledger.js');
 const MAX_ROOT_SEARCH_DEPTH = 8;
 const DEFAULT_TIMEOUT_MS = 120000;
@@ -101,21 +110,95 @@ function runShell(command, opts = {}) {
 //
 // Reading report.md as "the run is over" is what let an orchestrator at the cap write one
 // unprotected file and carry on dispatching, uncounted.
-function activeRuns(root) {
+//
+// Each record says whether the run has a receipt chain under this machine's git dir (`chained`):
+// a budget.json is a file any repo can commit, so only a chained run may cause a profile command
+// to execute. An `orphaned` run is a chain left open with its run dir deleted; its `dir` is
+// where the run dir should be.
+function runRecords(root) {
   const runsDir = path.join(root, RUNS_REL);
-  let entries;
+  let names = [];
   try {
-    entries = fs.readdirSync(runsDir, { withFileTypes: true });
+    names = fs.readdirSync(runsDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    names = [];
+  }
+  const live = names
+    .filter((n) => !n.includes('._old_'))
+    .map((n) => path.join(runsDir, n))
+    .filter((dir) => fs.existsSync(path.join(dir, 'budget.json')) && !fs.existsSync(path.join(dir, 'closed.json')))
+    .map((dir) => ({ dir, orphaned: false, chained: hasReceiptChain(dir), mtime: fs.statSync(dir).mtimeMs }));
+  return [...live, ...orphanedRuns(root, names)].sort((a, b) => b.mtime - a.mtime);
+}
+
+function activeRuns(root) {
+  return runRecords(root).map((r) => r.dir);
+}
+
+function hasReceiptChain(runDir) {
+  if (!chainLib) return false;
+  const { dir, inGit } = chainLib.resolveChainDir(runDir);
+  return inGit && fs.existsSync(path.join(dir, CHAIN_FILE));
+}
+
+// Deleting `.agents/` must not disarm the gates, so a chain that promised to record its own
+// close (init `closesInChain`) and has not, with neither its run dir nor an archive of it, is
+// still an open run. A chain without the promise predates it and is never an orphan.
+function orphanedRuns(root, runNames) {
+  if (!chainLib) return [];
+  const probe = chainLib.resolveChainDir(path.join(root, RUNS_REL, 'probe'));
+  if (!probe.inGit) return [];
+  const chainsDir = path.dirname(probe.dir);
+  let tickets;
+  try {
+    tickets = fs.readdirSync(chainsDir, { withFileTypes: true });
   } catch {
     return [];
   }
-  return entries
-    .filter((e) => e.isDirectory() && !e.name.includes('._old_'))
-    .map((e) => path.join(runsDir, e.name))
-    .filter((dir) => fs.existsSync(path.join(dir, 'budget.json')) && !fs.existsSync(path.join(dir, 'closed.json')))
-    .map((dir) => ({ dir, mtime: fs.statSync(dir).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime)
-    .map((r) => r.dir);
+  const hasRunDir = (t) => runNames.some((n) => n === t || n.startsWith(`${t}._old_`));
+  const out = [];
+  for (const e of tickets) {
+    if (!e.isDirectory() || hasRunDir(e.name)) continue;
+    const file = path.join(chainsDir, e.name, CHAIN_FILE);
+    if (!chainLeftOpen(file)) continue;
+    out.push({ dir: path.join(root, RUNS_REL, e.name), orphaned: true, chained: true, chainDir: path.dirname(file), mtime: fs.statSync(file).mtimeMs });
+  }
+  return out;
+}
+
+// The init record is the first line and a close is the last, so only the two ends are read: this
+// runs on every edit, and a chain grows with every dispatch. A record appended after the close
+// hides it, which reads as open — the safe direction.
+const CHAIN_END_BYTES = 8192;
+
+function chainLeftOpen(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const read = (start) => {
+      const buf = Buffer.alloc(Math.min(CHAIN_END_BYTES, size));
+      fs.readSync(fd, buf, 0, buf.length, start);
+      return buf.toString('utf8');
+    };
+    let init;
+    try {
+      init = JSON.parse(read(0).split('\n')[0]);
+    } catch {
+      return false;
+    }
+    if (!(init && init.kind === 'init' && init.payload && init.payload.closesInChain === true)) return false;
+    const lines = read(Math.max(0, size - CHAIN_END_BYTES)).split('\n').filter((l) => l.trim());
+    try {
+      return JSON.parse(lines[lines.length - 1]).kind !== 'close';
+    } catch {
+      return true;
+    }
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 // Search the install layouts in order of specificity: plugin root, project-local skill,
@@ -170,7 +253,7 @@ function describeOpenDispatch(o) {
 // settings entry that runs one from there, is a pre-plugin install still registered beside the
 // plugin, so every edit and every stop runs both.
 const HARNESS_HOOK_FILES = [
-  'stop_gate.js', 'freeze_guard.js', 'dispatch_guard.js', 'post_edit.js', 'dart_post_edit.js',
+  'stop_gate.js', 'freeze_guard.js', 'dispatch_guard.js', 'post_edit.js',
   'read_hint.js', 'subagent_return.js', 'session_start.js', 'notify_hook.js', 'guard_policy.js', 'hook_lib.js', 'hygiene.js',
 ];
 
@@ -284,6 +367,8 @@ module.exports = {
   findRepoRoot,
   loadConfig,
   activeRuns,
+  runRecords,
+  hasReceiptChain,
   findLedger,
   runStatus,
   notifyOnce,

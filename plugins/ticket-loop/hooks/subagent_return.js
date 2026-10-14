@@ -10,6 +10,7 @@
 // that cannot be recorded must not break the session — it surfaces instead as an open dispatch
 // at the next dispatch, at the stop gate and at close.
 'use strict';
+const path = require('path');
 const { spawnSync } = require('child_process');
 const lib = require('./hook_lib.js');
 
@@ -17,15 +18,21 @@ const LEDGER_TIMEOUT_MS = 15000;
 
 function recordReturn(input) {
   const root = lib.findRepoRoot(input.cwd || process.cwd());
-  const runs = lib.activeRuns(root);
-  if (runs.length === 0) return null;
+  const records = lib.runRecords(root);
+  if (records.length === 0) return null;
+  const run = records.find((r) => !r.orphaned);
+  if (!run) return `subagent_return: run ${path.basename(records[0].dir)} has no run directory — the return was not recorded`;
   const ledger = lib.findLedger(root);
   if (!ledger) return 'subagent_return: ledger.js not found — the return was not recorded';
 
-  const args = [ledger, 'returned', runs[0]];
+  // The ledger routes a return to its dispatch by agent id and type; without them it can only
+  // guess the oldest unmarked dispatch.
+  const agentId = input.agent_id || input.agentId;
+  const agentType = input.agent_type || input.agentType || input.subagent_type;
+  const args = [ledger, 'returned', run.dir];
   if (input.session_id) args.push('--session', String(input.session_id));
-  if (input.agent_id) args.push('--agent', String(input.agent_id));
-  if (input.agent_type) args.push('--type', String(input.agent_type));
+  if (agentId) args.push('--agent', String(agentId));
+  if (agentType) args.push('--type', String(agentType));
   if (typeof input.last_assistant_message === 'string') {
     args.push('--message-chars', String(input.last_assistant_message.length));
   }

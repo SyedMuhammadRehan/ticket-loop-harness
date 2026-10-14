@@ -21,13 +21,13 @@ const path = require('path');
 const ENV_POLICY = 'TICKET_LOOP_POLICY';
 
 function policyPath() {
-  return process.env[ENV_POLICY] || path.join(os.homedir(), '.claude', 'ticket-loop', 'policy.json');
+  return path.resolve(process.env[ENV_POLICY] || path.join(os.homedir(), '.claude', 'ticket-loop', 'policy.json'));
 }
 
 // null when there is no policy; { error } when there is one that cannot be read, which callers
-// treat as a violation rather than as no policy.
-function readPolicy() {
-  const file = policyPath();
+// treat as a violation rather than as no policy. A run passes the path sealed at its init, so
+// the environment cannot point it at another file mid-run.
+function readPolicy(file = policyPath()) {
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
