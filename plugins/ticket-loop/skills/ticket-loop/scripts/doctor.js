@@ -52,6 +52,57 @@ function profileFindings(root, add) {
   return cfg;
 }
 
+// The profile is frozen once a run starts, so a command that cannot start costs the whole run.
+// Only the program is looked up, never run: the profile is repo-owned and doctor executes nothing
+// from it. A builtin or an interpreter-relative path is not something PATH can answer for.
+const VERIFY_KEYS = ['test', 'analyze', 'pubGet', 'codegen'];
+const SHELL_BUILTINS = new Set(['cd', 'pushd', 'set', 'export', 'echo', 'exit', 'true', 'false', 'call', 'if', 'for', 'source', '.', 'test', '[']);
+const STORE_ALIAS = /[\\/]WindowsApps[\\/]python3?(\.exe)?$/i;
+
+function programsOf(command) {
+  return command
+    .split(/&&|\|\||[;|]/)
+    .map((seg) => seg.trim().split(/\s+/).filter((t) => !/^\w+=/.test(t))[0])
+    .filter(Boolean)
+    .map((t) => t.replace(/^["']|["']$/g, ''));
+}
+
+function onPath(program) {
+  const exts = process.platform === 'win32' ? ['', ...(process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';')] : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, program + ext);
+      // An app execution alias is a reparse point that lstat reads but stat may not.
+      const st = fs.lstatSync(candidate, { throwIfNoEntry: false });
+      if (st && !st.isDirectory()) return candidate;
+    }
+  }
+  return null;
+}
+
+// The Microsoft Store alias answers to `python` and exits non-zero without running anything.
+function isStoreStub(file) {
+  if (!STORE_ALIAS.test(file)) return false;
+  return spawnSync(file, ['--version'], { timeout: 5000, windowsHide: true }).status !== 0;
+}
+
+function commandFindings(root, cfg, add) {
+  for (const key of VERIFY_KEYS) {
+    const command = cfg.verify && cfg.verify[key];
+    if (typeof command !== 'string' || !command.trim()) continue;
+    for (const program of programsOf(command)) {
+      if (SHELL_BUILTINS.has(program.toLowerCase())) continue;
+      if (/[\\/]/.test(program)) {
+        if (!fs.existsSync(path.resolve(root, program))) add('problem', `verify.${key} runs ${program}, which does not exist`, 'fix the path in the profile before the first run');
+        continue;
+      }
+      const found = onPath(program);
+      if (!found) add('problem', `verify.${key} runs ${program}, which is not on PATH`, `install it, or change verify.${key} to a command this machine has; the profile is frozen once a run starts`);
+      else if (isStoreStub(found)) add('problem', `verify.${key} runs ${program}, which here is the Microsoft Store stub, not Python`, 'install Python, or use the py launcher (py -m ...) in the profile');
+    }
+  }
+}
+
 function gitignoreFindings(root, add) {
   for (const probe of ['.agents/ticket-runs/probe', '.claude/hooks/state/probe']) {
     const res = spawnSync('git', ['-C', root, 'check-ignore', '-q', probe], { timeout: TIMEOUT_MS });
@@ -117,6 +168,7 @@ function diagnose(start) {
     return { root: null, findings };
   }
   const cfg = profileFindings(root, add);
+  if (cfg._meta && cfg._meta.configFound) commandFindings(root, cfg, add);
   gitignoreFindings(root, add);
   let lib = null;
   try {
@@ -140,8 +192,10 @@ function main() {
     process.stdout.write(JSON.stringify({ ...report, problems }, null, 2) + '\n');
   } else {
     console.log(`ticket-loop doctor: ${report.root || process.cwd()}`);
-    if (report.findings.length === 0) console.log('  ok: nothing to report');
     for (const f of report.findings) console.log(`  ${f.level}: ${f.what}${f.fix ? `\n      fix: ${f.fix}` : ''}`);
+    const notes = report.findings.length - problems;
+    const tally = `${problems} problem${problems === 1 ? '' : 's'}, ${notes} note${notes === 1 ? '' : 's'}`;
+    console.log(problems ? `  NOT ready: ${tally}` : `  ok: ${tally}`);
   }
   process.exit(problems ? 1 : 0);
 }

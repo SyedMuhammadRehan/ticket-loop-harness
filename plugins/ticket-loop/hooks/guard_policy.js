@@ -665,7 +665,7 @@ function commandVerdict(cmd, opts = {}) {
     return {
       reason:
         `this command references ${segRefs[0].what} and is not a read-only command or a ` +
-        `sanctioned harness invocation (default-deny on the protected namespace)`,
+        `sanctioned harness invocation (default-deny on the protected namespace, whether or not a run is active)`,
       hit: segRefs[0].what,
     };
   }
@@ -673,7 +673,7 @@ function commandVerdict(cmd, opts = {}) {
   return {
     reason:
       `this command references ${refs[0].what} and is not a read-only command or a sanctioned ` +
-      `harness invocation (default-deny on the protected namespace)`,
+      `harness invocation (default-deny on the protected namespace, whether or not a run is active)`,
     hit: refs[0].what,
   };
 }
