@@ -73,7 +73,7 @@ stack-agnostic, and it is also the risk:
 
 - With a global install, opening **any** repo that ships a `.agents/ticket-loop.config.json`
   gives that repo arbitrary command execution on your machine — at every file edit
-  (`post_edit`) and at every Stop (`stop_gate`).
+  (`post_edit`), run or no run, and at every Stop while a ticket run is active (`stop_gate`).
 - So: **review that file before opening an untrusted repo**, exactly as you would review a
   `Makefile`, a `package.json` `postinstall`, or a `.vscode/tasks.json`.
 - If you work in repos you don't control, prefer the **per-project install** (option 3) so the
@@ -103,13 +103,22 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
    stop-gate hooks; set `hooks.stopGate.baseRef` to your default branch so **committed** slice
    work is verified (the loop commits every green slice — without a base ref only uncommitted
    changes are seen). `freeze_guard` and `dispatch_guard` work with or without a profile.
+   **Commit the profile and the `.gitignore` change to your default branch**: each run works in
+   a worktree cut from it, so an uncommitted profile is not there, and the team shares one.
 2. **gitignore run state:** add `.agents/ticket-runs/` and `.claude/hooks/state/`. You do not
    need to ignore the receipt chain — it lives inside `.git/ticket-loop/`, which git never
    tracks. Do not delete it while a run is in flight: it holds the run's counters and receipts,
    and `ledger.js init` will refuse to carry on if it finds a run dir whose chain has gone
    missing (`--restart` is the sanctioned way out, and it records that the history was lost).
+   One rule holds in every repo, run or no run: inside Claude Code, a shell command that names
+   `.agents/ticket-runs/` and is not read-only or a harness script is refused, even when the
+   path is only text in an `echo`, a heredoc or a commit message. Write such text with an
+   editor, or `git commit -F <file>`.
 3. **Check it:** `node <SKILL_DIR>/scripts/doctor.js` reports anything wrong with the setup,
-   each with its fix, and changes nothing. Run it again whenever hooks or runs behave oddly; it
+   each with its fix, and changes nothing. It looks up every program the `verify.*` commands
+   name on PATH (it runs none of them), and ends with `ok: 0 problems, N notes` when you are
+   done. It cannot tell whether your test command can *fail*: break one test, run the command,
+   see a non-zero exit, then restore it. Run it again whenever hooks or runs behave oddly; it
    finds pre-plugin copies of these hooks, abandoned runs and leftover ticket worktrees.
 4. **Optional: sign finished runs.** `node <SKILL_DIR>/scripts/ledger.js keygen` once per
    machine creates an Ed25519 key under `~/.claude/ticket-loop/signing/` and prints its key id.
@@ -152,24 +161,27 @@ This reads the ticket, resolves your profile, and writes a frozen done-list **wi
 touching code**. If that produces a sensible `.agents/ticket-runs/<id>/done.md`, do one
 full supervised run on a small, low-risk ticket and watch it.
 
+The dry run is a real run that stops early: it **stays open**, and while it is open the stop
+gate runs your tests at every Stop and the profile is frozen. Continue it with
+`/ticket-loop <id>`, or end it as below. `doctor.js` lists every open run.
+
 ## Cleaning up a run you want to discard
 
-`rm -rf .agents/ticket-runs/<TICKET>` is **denied** by `freeze_guard` — deleting a run
-directory is how a budget gets silently reset, so the guard blocks it whether you mean well
-or not. Move it instead; `._old_` names are ignored when the hooks look for active runs:
-
-```
-mv .agents/ticket-runs/<TICKET> .agents/ticket-runs/<TICKET>._old_1
-```
-
-For a run that has a sealed chain, prefer the sanctioned step, which records the restart:
+Inside Claude Code, deleting or moving a run directory is **denied** by `freeze_guard` —
+that is how a budget gets silently reset, so the guard blocks it whether you mean well or not.
+The sanctioned step records the restart in the run's sealed chain:
 
 ```
 node <SKILL_DIR>/scripts/ledger.js archive .agents/ticket-runs/<TICKET>
 ```
 
-`archive` needs a chain to move, so it will refuse on a run created by a pre-0.4.0 version —
-use the `mv` above for those.
+`archive` needs a chain to move, so it refuses a run created by a pre-0.4.0 version. For
+those, rename the directory from your own terminal, outside Claude Code, where the hooks do
+not run; `._old_` names are ignored when the hooks look for active runs:
+
+```
+mv .agents/ticket-runs/<TICKET> .agents/ticket-runs/<TICKET>._old_1
+```
 
 ## Honest status
 
@@ -185,7 +197,7 @@ if the orchestrator chose to call the counter, the frozen contract could be reac
 interpreter, and the profile that armed the hooks was writable mid-run. What is mechanical now
 and what is still the orchestrator's discipline is spelled out in the README's
 "How the loop stays honest" — including the residual risk, which is that this is
-**tamper-evident, not tamper-proof**. `node tests/run.js` runs 490+ tests covering the scripts,
+**tamper-evident, not tamper-proof**. `node tests/run.js` runs the suite covering the scripts,
 the hooks, and the full corpus of bypasses found during that review as regression cases.
 
 A second hostile review then found that the fix pass had left the enforcement window itself

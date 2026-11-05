@@ -156,14 +156,18 @@ With no config, the loop degrades honestly (asks / logic-only) — it never sile
 /plugin install ticket-loop
 ```
 
-Then, per repo, add a profile and run:
+Then, per repo, write a profile, check it, and run:
 
 ```
-# copy a profile from plugins/ticket-loop/skills/ticket-loop/config.example.json
-#   into  .agents/ticket-loop.config.json  and edit for your stack
-/ticket-loop <TICKET-ID> --dry-run    # reads + plans, no code
-/ticket-loop <TICKET-ID>              # full run
+node <SKILL_DIR>/scripts/init.js --dry-run   # the profile it would write from your manifests
+node <SKILL_DIR>/scripts/init.js             # write it, gitignore run state; review what it lists
+node <SKILL_DIR>/scripts/doctor.js           # until it ends "ok: 0 problems"; commit the profile
+/ticket-loop <TICKET-ID> --dry-run           # reads + plans, no code; leaves the run open
+/ticket-loop <TICKET-ID>                     # full run
 ```
+
+`<SKILL_DIR>` is `plugins/ticket-loop/skills/ticket-loop` in this repo or in the installed
+plugin. Hand-written profiles for each stack are in `config.example.json`.
 
 Full steps, the manual (non-plugin) install, and the one thing to test first are in
 [INSTALL.md](INSTALL.md).

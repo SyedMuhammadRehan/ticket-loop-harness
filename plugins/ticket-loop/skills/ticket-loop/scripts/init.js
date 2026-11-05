@@ -101,14 +101,20 @@ function detectStack(root) {
   if (pyproject !== null || requirements !== null || read(root, 'setup.py') !== null) {
     const text = `${pyproject || ''}\n${requirements || ''}`;
     const ruff = /\bruff\b/.test(text);
+    const pytest = /\bpytest\b/.test(text);
+    const hasTestsDir = fs.existsSync(path.join(root, 'tests'));
+    // pip install runs at every run's start against whatever pip is first on PATH, so it is only
+    // proposed when the repo declares something to install.
+    const declaresDeps = /^\s*dependencies\s*=\s*\[\s*["']/m.test(pyproject || '') || read(root, 'setup.py') !== null;
     found.push({
       stack: 'python',
       verify: {
         analyze: ruff ? 'ruff check .' : null,
-        test: /\bpytest\b/.test(text) || fs.existsSync(path.join(root, 'tests')) ? 'pytest -q' : null,
-        pubGet: requirements !== null ? 'pip install -r requirements.txt' : 'pip install -e .',
+        test: pytest ? 'pytest -q' : hasTestsDir ? 'python -m unittest discover' : null,
+        pubGet: requirements !== null ? 'pip install -r requirements.txt' : /^\[tool\.poetry/m.test(pyproject || '') ? 'poetry install' : declaresDeps ? 'pip install -e .' : null,
         codegen: null,
       },
+      inferred: !pytest && hasTestsDir ? ['verify.test was inferred from the tests/ folder (unittest); confirm it runs, e.g. py -m on Windows'] : [],
       extensions: ['.py'],
       exclude: null,
       postEdit: ruff ? { format: 'ruff format {file}', analyze: 'ruff check {file}' } : null,
@@ -171,7 +177,11 @@ function buildProfile(root) {
   };
   const review = [];
   if (stacks.length > 1) review.push(`several stacks found (${stacks.map((x) => x.stack).join(', ')}); the profile uses ${s.stack}`);
-  for (const [k, v] of Object.entries(s.verify)) if (v === null && (k === 'test' || k === 'analyze')) review.push(`verify.${k} could not be found; set it before the first run`);
+  if (s.verify.test === null) review.push('verify.test could not be found; set it before the first run');
+  if (s.verify.analyze === null) review.push('verify.analyze could not be found; optional, but set the repo\'s linter or type checker if it has one');
+  review.push(...(s.inferred || []));
+  if (s.verify.pubGet) review.push(`verify.pubGet (${s.verify.pubGet}) runs at the start of every run; point it at a virtualenv or project-local install if it would touch a global one`);
+  review.push('commit the profile and the .gitignore change to your default branch: runs work in a worktree cut from it, and the team shares one profile');
   if (ticket.note) review.push(ticket.note);
   review.push(`baseRef is ${base}; change it if tickets branch from somewhere else`);
   review.push('riskPaths holds only dependency manifests; add auth, API contracts and migrations for this repo');
@@ -193,8 +203,20 @@ function ensureIgnored(root, dryRun) {
   return added;
 }
 
+const USAGE = 'usage: init.js [--dry-run]\n  writes .agents/ticket-loop.config.json from this repo and gitignores run state;\n  --dry-run prints what it would write and changes nothing';
+
 function main() {
-  const dryRun = process.argv.includes('--dry-run');
+  const args = process.argv.slice(2);
+  if (args.some((a) => a === '--help' || a === '-h')) {
+    console.log(USAGE);
+    return;
+  }
+  const unknown = args.filter((a) => a !== '--dry-run');
+  if (unknown.length) {
+    console.error(`init: unknown argument ${unknown[0]}\n${USAGE}`);
+    process.exit(2);
+  }
+  const dryRun = args.includes('--dry-run');
   const root = findRoot(process.cwd());
   if (!root) {
     console.error('init: not inside a git repository');

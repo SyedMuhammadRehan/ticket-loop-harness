@@ -411,3 +411,9 @@ test('operators outside quotes still disqualify it', () => {
   assert.ok(denied(`node scripts/ledger.js status ${RUN} $(${RM} ${RUN})`));
   assert.ok(denied(`node scripts/ledger.js status ${RUN}; ${RM} ${RUN}`));
 });
+
+test('a refusal with no run active says the namespace is protected whether or not a run is active', () => {
+  const v = policy.commandVerdict(`echo "see ${RUN}/done.md" > notes.md`, { runActive: false });
+  assert.ok(v, 'mentioning the namespace in a write is refused with no run active');
+  assert.match(v.reason, /whether or not a run is active/);
+});

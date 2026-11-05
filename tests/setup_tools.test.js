@@ -146,3 +146,80 @@ test('doctor passes a freshly initialised repo, then finds stale copies, an aban
 });
 
 test.after(() => rmDir(home));
+
+test('doctor reports a verify command whose program is not on PATH, and skips shell builtins', () => {
+  const root = repo(NODE_REPO);
+  try {
+    assert.strictEqual(run(INIT, root).status, 0);
+    const file = path.join(root, '.agents', 'ticket-loop.config.json');
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    cfg.verify = { ...cfg.verify, test: 'tl-no-such-tool-7f3 --run', analyze: 'cd sub && node --version', pubGet: null };
+    fs.writeFileSync(file, JSON.stringify(cfg));
+    const res = run(DOCTOR, root, ['--json']);
+    assert.strictEqual(res.status, 1, res.stdout);
+    const problems = JSON.parse(res.stdout).findings.filter((f) => f.level === 'problem').map((f) => f.what);
+    assert.ok(problems.some((p) => /verify\.test runs tl-no-such-tool-7f3, which is not on PATH/.test(p)), problems.join('\n'));
+    assert.ok(!problems.some((p) => /verify\.analyze/.test(p)), problems.join('\n'));
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('init proposes pytest only when the repo names it, and no install for a dependency-free python repo', () => {
+  const root = repo({ 'pyproject.toml': '[project]\nname = "svc"\n', 'tests/test_x.py': 'import unittest\n' });
+  try {
+    const res = run(INIT, root, ['--dry-run']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    const profile = JSON.parse(res.stdout.slice(res.stdout.indexOf('{'), res.stdout.lastIndexOf('}') + 1));
+    assert.strictEqual(profile.verify.test, 'python -m unittest discover');
+    assert.strictEqual(profile.verify.pubGet, null);
+    assert.match(res.stdout, /verify\.test was inferred from the tests\/ folder/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('init --help and an unknown flag print usage and write nothing', () => {
+  const root = repo(NODE_REPO);
+  try {
+    const help = run(INIT, root, ['--help']);
+    assert.strictEqual(help.status, 0, help.stderr);
+    assert.match(help.stdout, /usage: init\.js/);
+    const bad = run(INIT, root, ['--force']);
+    assert.strictEqual(bad.status, 2);
+    assert.match(bad.stderr, /usage: init\.js/);
+    assert.ok(!fs.existsSync(path.join(root, '.agents')), 'nothing written');
+    assert.strictEqual(git(root, 'status', '--porcelain'), '');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('doctor always ends with a count of problems and notes', () => {
+  const root = repo(NODE_REPO);
+  try {
+    assert.strictEqual(run(INIT, root).status, 0);
+    const res = run(DOCTOR, root);
+    assert.strictEqual(res.status, 0, res.stdout);
+    assert.match(res.stdout.trim().split(/\r?\n/).pop(), /^\s*ok: 0 problems, \d+ notes?$/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('init proposes the install a python repo declares: requirements, poetry, or its own dependencies', () => {
+  for (const [files, pubGet] of [
+    [{ 'requirements.txt': 'requests\n' }, 'pip install -r requirements.txt'],
+    [{ 'pyproject.toml': '[tool.poetry]\nname = "svc"\n[tool.poetry.dependencies]\npython = "^3.11"\n' }, 'poetry install'],
+    [{ 'pyproject.toml': '[project]\nname = "svc"\ndependencies = [\n  "httpx",\n]\n' }, 'pip install -e .'],
+  ]) {
+    const root = repo(files);
+    try {
+      const res = run(INIT, root, ['--dry-run']);
+      const profile = JSON.parse(res.stdout.slice(res.stdout.indexOf('{'), res.stdout.lastIndexOf('}') + 1));
+      assert.strictEqual(profile.verify.pubGet, pubGet, JSON.stringify(files));
+    } finally {
+      rmDir(root);
+    }
+  }
+});
