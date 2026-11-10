@@ -42,6 +42,7 @@ const chain = require('./chain.js');
 const { importersOf } = require('./importers.js');
 const attest = require('./attest.js');
 const policy = require('./policy.js');
+const { withoutBom } = require('./load_config.js');
 const { digestOf, FORMAT: ATTESTATION_FORMAT } = require('./verify_bundle.js');
 
 // Bumped when the contract between the hooks and this script changes (chain-backed counters,
@@ -385,9 +386,16 @@ function baseProblem(runDir, baseSha, offBase) {
 function runDirProblem(runDir) {
   const abs = path.resolve(runDir);
   const runs = path.dirname(abs);
-  if (path.basename(runs) === 'ticket-runs' && path.basename(path.dirname(runs)) === '.agents') return null;
-  return `${abs} is not <repo>/.agents/ticket-runs/<TICKET>, where the hooks look for a run.`;
+  if (path.basename(runs) !== 'ticket-runs' || path.basename(path.dirname(runs)) !== '.agents') {
+    return `${abs} is not <repo>/.agents/ticket-runs/<TICKET>, where the hooks look for a run.`;
+  }
+  // The ticket names a branch and is printed into commands a person pastes into a shell.
+  if (!TICKET_NAME.test(path.basename(abs))) {
+    return `"${path.basename(abs)}" is not a usable ticket name: letters, digits, dot, dash and underscore only, starting with a letter or digit.`;
+  }
+  return null;
 }
+const TICKET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 // The environment may name a policy only where the machine has none of its own.
 function policyDisplaced() {
@@ -705,10 +713,11 @@ function cmdAddition(runDir, line) {
   requireChain(runDir);
   requireOpen(runDir, 'addition');
   const text = String(line || '').trim();
-  const m = CRITERION_LINE.exec(text);
+  // One criterion per call: a second line would ride into the contract unchecked.
+  const m = /[\r\n]/.test(text) ? null : CRITERION_LINE.exec(text);
   if (!m) {
     console.error(
-      'ledger addition: the line must be a criterion in the done-list shape:\n' +
+      'ledger addition: the line must be one criterion, on one line, in the done-list shape:\n' +
         '  "- [ ] C<n> (test|analyzer|runtime|token|manual): when <trigger>, the system shall <response> | run: <command>"'
     );
     process.exit(1);
@@ -1097,12 +1106,13 @@ const RUNNER_GRACE_MS = 30000;
 
 // The criterion's own frozen command, run by the ledger rather than reported to it: a result
 // "by command" is the exit code this process saw.
-function runCriterion(command, cwd, timeoutMs) {
+function runCriterion(command, cwd, timeoutMs, env = process.env) {
   const started = Date.now();
   const res = spawnSync(process.execPath, ['-e', CRITERION_RUNNER, JSON.stringify([command, cwd, timeoutMs, CHECK_OUTPUT_KEEP_CHARS])], {
     encoding: 'utf8',
     timeout: timeoutMs + RUNNER_GRACE_MS,
     windowsHide: true,
+    env,
   });
   let ran;
   try {
@@ -1808,7 +1818,7 @@ const PROFILE_REL = path.join('.agents', 'ticket-loop.config.json');
 
 function readJson(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    return JSON.parse(withoutBom(fs.readFileSync(file, 'utf8')));
   } catch {
     return {};
   }
@@ -2436,6 +2446,7 @@ module.exports = {
   tokenStats,
   dispatchPairs,
   readConfig,
+  runCriterion,
   publishAllowed,
   PUBLISH_ACTS,
   PASSING_VERDICTS,

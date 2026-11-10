@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { verifyBundle, canonical } = require('./verify_bundle.js');
+const { runCriterion } = require('./ledger.js');
 
 const TRUST_FILE = '.agents/ticket-loop.trust';
 const PROFILE_FILE = '.agents/ticket-loop.config.json';
@@ -70,17 +71,11 @@ function withoutKeys(env) {
   return out;
 }
 
+// The ledger's runner, because a timeout has to end the command's whole process tree: ending
+// only the shell leaves the suite running on the CI machine after the check has reported.
 function runCommand(command, cwd, timeoutMs) {
-  const started = Date.now();
-  const res = spawnSync(command, { cwd, shell: true, encoding: 'utf8', timeout: timeoutMs, env: withoutKeys(process.env) });
-  const timedOut = res.error && res.error.code === 'ETIMEDOUT';
-  return {
-    command,
-    exit: timedOut ? null : res.status,
-    timedOut: !!timedOut,
-    ms: Date.now() - started,
-    tail: `${res.stdout || ''}\n${res.stderr || ''}`.trim().split('\n').slice(-20).join('\n'),
-  };
+  const ran = runCriterion(command, cwd, timeoutMs, withoutKeys(process.env));
+  return { command, exit: ran.timedOut ? null : ran.exitCode, timedOut: !!ran.timedOut, ms: ran.ms, tail: ran.outputTail };
 }
 
 function check(argv, cwd = process.cwd()) {

@@ -145,14 +145,13 @@ function stopGateWarnings(cfg) {
 }
 
 function findRepoRoot(start) {
-  let dir = start;
-  for (let i = 0; i < 8; i++) {
+  let dir = path.resolve(start);
+  for (;;) {
     if (fs.existsSync(path.join(dir, '.git'))) return dir;
     const parent = path.dirname(dir);
-    if (parent === dir) break;
+    if (parent === dir) return start;
     dir = parent;
   }
-  return start;
 }
 
 function deepMerge(base, over) {
@@ -178,14 +177,20 @@ function notifyStatus() {
   return { configured: !cfg.error, error: cfg.error || null, channels: types, canReply: replies };
 }
 
-function resolve() {
-  const root = findRepoRoot(process.cwd());
+const BYTE_ORDER_MARK = 0xfeff;
+function withoutBom(text) {
+  return text.charCodeAt(0) === BYTE_ORDER_MARK ? text.slice(1) : text;
+}
+
+function resolve(start = process.cwd()) {
+  const root = findRepoRoot(start);
   const configPath = path.join(root, '.agents', 'ticket-loop.config.json');
   const warnings = [];
   let userConfig = {};
   if (fs.existsSync(configPath)) {
     try {
-      userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      // Windows editors and PowerShell 5 write a byte-order mark that JSON.parse rejects.
+      userConfig = JSON.parse(withoutBom(fs.readFileSync(configPath, 'utf8')));
     } catch (e) {
       warnings.push(`config parse error at ${configPath}: ${e.message} — using defaults`);
     }
@@ -306,4 +311,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { resolve, DEFAULTS, findRepoRoot, deepMerge };
+module.exports = { resolve, DEFAULTS, findRepoRoot, deepMerge, withoutBom };

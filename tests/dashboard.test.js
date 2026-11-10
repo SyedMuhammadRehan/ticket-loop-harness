@@ -134,6 +134,17 @@ test('--serve answers on loopback only and refreshes itself', async () => {
     assert.strictEqual(body.status, 200);
     assert.ok(body.b.includes('http-equiv="refresh"'), 'the served page refreshes itself');
     assert.ok(body.b.includes('T-1'));
+
+    // The same port reached under another hostname is a web page that re-pointed its own name here.
+    const rebound = await new Promise((resolve, reject) => {
+      http.get(url, { headers: { host: 'attacker.example' } }, (res) => {
+        let b = '';
+        res.on('data', (d) => (b += d));
+        res.on('end', () => resolve({ status: res.statusCode, b }));
+      }).on('error', reject);
+    });
+    assert.strictEqual(rebound.status, 403);
+    assert.ok(!rebound.b.includes('T-1'), 'no run data leaves under a foreign Host');
   } finally {
     await new Promise((resolve) => {
       child.once('exit', resolve);
@@ -141,6 +152,16 @@ test('--serve answers on loopback only and refreshes itself', async () => {
     });
     rmDir(root);
   }
+});
+
+test('a repo directory name never reaches the page as markup, and only loopback names are served', () => {
+  const { render, isLoopbackHost } = require(DASHBOARD);
+  const name = 'x"><img src=x onerror=alert(1)>';
+  const html = render({ host: 'h', generatedAt: '2026-01-01T00:00:00Z', repos: [{ name, root: '/r', runs: [{ ticket: 'T-1', state: 'open', lastAt: 12345 }] }] }, 0);
+  assert.ok(!html.includes('<img src=x'), 'the name is escaped wherever it appears');
+  assert.ok(html.includes('href="#run-0-0"') && html.includes('id="run-0-0"'), 'anchors are numbered');
+  for (const host of ['127.0.0.1:8080', 'localhost:8080', '[::1]:8080', 'LOCALHOST']) assert.ok(isLoopbackHost(host), host);
+  for (const host of ['attacker.example', '127.0.0.1.attacker.example', 'localhost.attacker.example:80', '', undefined]) assert.ok(!isLoopbackHost(host), String(host));
 });
 
 test('each test criterion shows whether tests-first was proven', () => {

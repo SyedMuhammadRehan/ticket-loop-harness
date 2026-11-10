@@ -100,7 +100,7 @@ function loadConfig(startDir) {
   const configPath = path.join(root, CONFIG_REL_PATH);
   if (!fs.existsSync(configPath)) return { found: false, root, config: {} };
   try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const config = JSON.parse(withoutBom(fs.readFileSync(configPath, 'utf8')));
     return { found: true, root, config: policyLib ? policyLib.applyPolicy(config, policyLib.readPolicy()).cfg : config };
   } catch (e) {
     return { found: false, root, config: {}, error: `config parse error: ${e.message}` };
@@ -394,11 +394,14 @@ async function notifyOnce(root, key, repeatMs, text) {
   return result;
 }
 
+const BYTE_ORDER_MARK = 0xfeff;
+function withoutBom(text) {
+  return text.charCodeAt(0) === BYTE_ORDER_MARK ? text.slice(1) : text;
+}
+
 function readStdinJson() {
   try {
-    let raw = fs.readFileSync(0, 'utf8');
-    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-    return JSON.parse(raw);
+    return JSON.parse(withoutBom(fs.readFileSync(0, 'utf8')));
   } catch {
     return null;
   }

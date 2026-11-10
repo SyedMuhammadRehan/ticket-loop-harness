@@ -40,8 +40,8 @@ function sameFile(a, b) {
 
 function main() {
   const argv = process.argv.slice(2);
-  const worktree = argv.find((a) => !a.startsWith('--'));
   const mainIdx = argv.indexOf('--main');
+  const worktree = argv.find((a, i) => !a.startsWith('--') && i !== mainIdx + 1);
   if (!worktree) {
     console.error('worktree_deps: usage: worktree_deps.js <worktreePath> [--main <repoRoot>]');
     process.exit(1);

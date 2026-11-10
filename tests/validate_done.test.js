@@ -288,6 +288,19 @@ test('an absolute criterion still has to name the real command', () => {
   );
 });
 
+test('the real-command rule holds when the validator is run from another directory', () => {
+  const { root, runDir } = writeDraft(VALID_DRAFT.replace('run: ruff check .', 'run: ruff-delta --base abc123'));
+  const elsewhere = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'tl-vd-'));
+  try {
+    const res = runScript(SCRIPT, [runDir], { cwd: elsewhere });
+    assert.strictEqual(res.status, 1, res.stdout);
+    assert.ok(res.stderr.includes('must be checked by the real command'), res.stderr);
+  } finally {
+    rmDir(root);
+    rmDir(elsewhere);
+  }
+});
+
 test('a token merely NAMED none is still a token', () => {
   for (const line of ['- none: #B00020', '- none-accent: #B00020', '- none = #B00020']) {
     expectInvalid(
