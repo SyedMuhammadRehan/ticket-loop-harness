@@ -198,12 +198,19 @@ function main() {
     process.exit(1);
   }
   const out = flag(argv, '--out');
-  if (out && keyPem) fs.writeFileSync(out, JSON.stringify(countersign(result, keyPem), null, 2) + '\n');
+  let outRefused = null;
+  if (out && keyPem) {
+    // The job runs in a checkout of the pull request, which can commit a link under this name.
+    const existing = fs.lstatSync(out, { throwIfNoEntry: false });
+    if (existing && !existing.isFile()) outRefused = `${out} already exists and is not a plain file, so the countersignature was not written through it`;
+    else fs.writeFileSync(out, JSON.stringify(countersign(result, keyPem), null, 2) + '\n');
+  }
   console.log(`ci_check: ticket ${result.ticket} at ${result.head.slice(0, 12)} against ${result.base}: ${result.pass ? 'PASS' : 'FAIL'}`);
   for (const r of result.ran) console.log(`  ran verify.${r.step}: ${r.command} -> ${r.timedOut ? 'timed out' : `exit ${r.exit}`} (${r.ms} ms)`);
   for (const f of result.failures) console.log(`  - ${f}`);
   if (out && !keyPem) console.log(`  (no ${KEY_PEM_ENV} in this job, so nothing was countersigned)`);
-  process.exit(result.pass ? 0 : 2);
+  if (outRefused) console.log(`  - ${outRefused}`);
+  process.exit(result.pass && !outRefused ? 0 : 2);
 }
 
 if (require.main === module) main();

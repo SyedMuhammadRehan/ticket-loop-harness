@@ -111,6 +111,32 @@ test('each tampering an auditor must catch is caught', (t) => {
   }
 });
 
+// Each inconsistency is signed properly, so the signature check cannot be what catches it.
+test('a properly signed bundle whose parts disagree is invalid, each for its own reason', (t) => {
+  const { bundle } = exported(t);
+  const crypto = require('node:crypto');
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+  const pem = publicKey.export({ type: 'spki', format: 'pem' });
+  const keyId = require(path.join(SCRIPTS_DIR, 'attest.js')).keyIdOf(pem);
+  const signed = (change) => {
+    const attestation = { ...bundle.attestation, keyId, ...change };
+    return { ...bundle, attestation, publicKey: pem, signature: crypto.sign(null, Buffer.from(canonical(attestation)), privateKey).toString('base64') };
+  };
+  assert.deepStrictEqual(verifyBundle(signed({})).problems, [], 'the unchanged re-signed bundle is consistent');
+  const cases = [
+    [{ keyId: 'f'.repeat(32) }, /the attestation names key f+ but the bundle carries key/],
+    [{ lastSeal: 'not-the-last-seal' }, /the last record is not the one the attestation names/],
+    [{ verdict: 'BLOCK' }, /states verdict BLOCK but the records end on APPROVE/],
+    [{ records: bundle.records.length + 1 }, /the attestation signed \d+/],
+  ];
+  for (const [change, why] of cases) {
+    const { valid, problems } = verifyBundle(signed(change));
+    assert.strictEqual(valid, false, JSON.stringify(change));
+    assert.strictEqual(problems.length, 1, problems.join('\n'));
+    assert.match(problems[0], why);
+  }
+});
+
 test('a bundle re-signed with another key verifies only as untrusted', (t) => {
   const { bundle, keyId } = exported(t);
   const crypto = require('node:crypto');

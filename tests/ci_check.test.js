@@ -259,6 +259,23 @@ test('a base branch with no test command, or a rerun that never finishes, is not
   assert.ok(!fs.existsSync(path.join(slow.root, 'finished.txt')), 'the timed-out command was ended with its process tree');
 });
 
+test('the countersignature is never written through a link or a directory the pull request put there', (t) => {
+  const { root } = setup(t);
+  const victim = path.join(root, '..', `victim-${path.basename(root)}.txt`);
+  fs.writeFileSync(victim, 'untouched\n');
+  t.after(() => fs.rmSync(victim, { force: true }));
+  const planted = process.platform === 'win32' ? [] : ['link'];
+  for (const kind of ['dir', ...planted]) {
+    const out = path.join(root, `ci-${kind}.json`);
+    if (kind === 'dir') fs.mkdirSync(out);
+    else fs.symlinkSync(victim, out);
+    const res = ci(root, ['--out', out], { TICKET_LOOP_CI_KEY: ciKeyPem() });
+    assert.strictEqual(res.status, 2, `${kind}: ${res.stdout}`);
+    assert.match(res.stdout, /not a plain file/);
+  }
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'untouched\n');
+});
+
 test('a failing check is countersigned as a failure, over the attestation it judged', (t) => {
   const { root } = setup(t);
   fs.writeFileSync(path.join(root, 'FAIL'), '');

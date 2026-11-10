@@ -161,3 +161,13 @@ test('the org policy forces tests-first on, and a profile cannot turn it off', (
   assert.ok(applied.includes('requireTestFirst forced on'), JSON.stringify(applied));
   assert.strictEqual(policy.applyPolicy({}, null).cfg.requireTestFirst, undefined, 'with no policy the profile decides');
 });
+
+test('the org policy cuts what a repo may publish down to its own list', () => {
+  const policy = require(path.join(SCRIPTS_DIR, 'policy.js'));
+  const org = { policy: { publish: { allowed: ['push'] } } };
+  const cut = policy.applyPolicy({ publish: { allowed: ['push', 'pr', 'ticket'] } }, org);
+  assert.deepStrictEqual(cut.cfg.publish.allowed, ['push']);
+  assert.ok(cut.applied.some((a) => /publish\.allowed cut to \[push\]/.test(a)), JSON.stringify(cut.applied));
+  assert.deepStrictEqual(policy.applyPolicy({}, org).cfg.publish.allowed, [], 'a repo that asks for nothing gets nothing');
+  assert.deepStrictEqual(policy.applyPolicy({ publish: { allowed: ['pr'] } }, { policy: {} }).cfg.publish.allowed, ['pr'], 'a policy silent on publishing cuts nothing');
+});
