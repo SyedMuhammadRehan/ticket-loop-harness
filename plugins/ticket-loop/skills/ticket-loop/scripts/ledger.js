@@ -626,8 +626,19 @@ function cmdGate(runDir, stage, evidence) {
 
 // Every path that compares a sealed file against the one on disk resolves it the same way,
 // or an absolute receipt and a relative argument would name the same file and never match.
+// By real path where the file exists: a working directory reports its real path while an
+// argument keeps the spelling it was given, and on macOS the temp dir is itself a symlink.
 function samePath(a, b) {
-  return path.resolve(String(a)) === path.resolve(String(b));
+  return realOrResolved(a) === realOrResolved(b);
+}
+
+function realOrResolved(p) {
+  const abs = path.resolve(String(p));
+  try {
+    return fs.realpathSync.native(abs);
+  } catch {
+    return abs;
+  }
 }
 
 // Receipts that sealed this file, oldest first.

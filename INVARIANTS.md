@@ -334,6 +334,7 @@ uphold" and must stay there rather than migrating into this table:
 | 216 | The validator reads the run's own repo's profile | `validate_done.js` → `resolveConfig` | `validate_done.test.js` :: `the real-command rule holds when the validator is run from another directory` | From a directory with no profile the real-command rule was skipped |
 | 217 | A profile with a byte-order mark is read, by the scripts and the hooks | `load_config.js` → `resolve` | `ledger_binding.test.js` :: `a profile saved with a byte-order mark governs the run like any other` | It parsed as nothing: defaults at preflight, an empty profile sealed at init |
 | 218 | A ticket name is safe as a branch and in a pasted command | `ledger.js` → `TICKET_NAME` | `ledger_binding.test.js` :: `init refuses a ticket name that is not safe as a branch and in a pasted command` | The name reaches `git` and the handoff's printed commands unquoted |
+| 220 | A sealed file is the same file by its real path, however the run dir was spelled | `ledger.js` → `realOrResolved` | `ledger_binding.test.js` :: `a gate accepts its artifact when the run dir is reached through a link` | On macOS the temp dir is a symlink: a gate refused its own artifact because the working directory reported the real path |
 | 219 | An addition is one criterion on one line | `ledger.js` → `cmdAddition` | `ledger_binding.test.js` :: `an addition is one criterion on one line` | A second line rode into the additions file unchecked |
 
 ## Write guard: each route by its own rule
