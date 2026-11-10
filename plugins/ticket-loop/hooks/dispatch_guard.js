@@ -163,7 +163,7 @@ async function main() {
   const input = lib.readStdinJson();
   if (!input) process.exit(0);
 
-  const root = lib.findRepoRoot(input.cwd || process.cwd());
+  const root = lib.runRoot(input);
   const records = lib.runRecords(root);
   if (records.length === 0) process.exit(0); // not inside a ticket run — nothing to budget
 

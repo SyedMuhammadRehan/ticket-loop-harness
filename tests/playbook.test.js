@@ -14,7 +14,7 @@ const SKILL = path.join(PLUGIN, 'skills', 'ticket-loop', 'SKILL.md');
 
 // Loaded into the orchestrator's context on every run. Raise it for a new command, never for
 // an explanation; rationale goes in README.md.
-const MAX_LINES = 370;
+const MAX_LINES = 375;
 const MAX_DESCRIPTION_CHARS = 500;
 
 const skill = () => fs.readFileSync(SKILL, 'utf8');

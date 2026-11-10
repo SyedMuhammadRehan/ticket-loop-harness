@@ -95,7 +95,7 @@ test('a run that follows the playbook completes with an intact, fully-receipted 
     ok(['check', runDir, 'C2', 'FAIL', '--by', 'command', '--cwd', root, 'wrong copy']);
     fs.writeFileSync(path.join(root, 'pass.flag'), '');
     ok(['check', runDir, 'C2', 'PASS', '--by', 'command', '--cwd', root, 'fixed on attempt 2']);
-    ok(['check', runDir, 'C3', 'PASS', '--by', 'observed']);
+    ok(['check', runDir, 'C3', 'PASS', '--by', 'command', '--cwd', root]);
     ok(['gate', runDir, 'verify']);
 
     // Stage 9 — QA seals its own verdict over the contract it read

@@ -28,7 +28,10 @@ stop that.
 
    Store the contents of `ci-key.pem` as a masked CI secret named `TICKET_LOOP_CI_KEY` and delete
    the file. With it, the check countersigns what it ran into `ci-attestation.json`, a claim the
-   developer's machine could not have made. Publish its key id for auditors.
+   developer's machine could not have made. Publish its key id for auditors. `ci_check.js` reads
+   the key from that variable before it runs anything and withholds it from the test commands,
+   which execute the pull request's own code. Do not write the key to a file in the job: a file
+   the job user can read is a file the pull request's tests can read.
 3. **The toolchain.** The job reruns your tests, so its image needs your stack: a Flutter image for
    Flutter, Node for Node, and so on. The examples use `node:20`; swap in your own and make sure
    `node` is on it.
@@ -65,7 +68,6 @@ jobs:
         env:
           TICKET_LOOP_CI_KEY: ${{ secrets.TICKET_LOOP_CI_KEY }}
         run: |
-          if [ -n "$TICKET_LOOP_CI_KEY" ]; then printf '%s\n' "$TICKET_LOOP_CI_KEY" > /tmp/ci.pem; export TICKET_LOOP_SIGNING_KEY=/tmp/ci.pem; fi
           node /tmp/tlh/plugins/ticket-loop/skills/ticket-loop/scripts/ci_check.js --base "origin/${{ github.base_ref }}" --out ci-attestation.json
       - uses: actions/upload-artifact@v4
         if: always()
@@ -91,7 +93,6 @@ ticket-loop-merge-check:
     - git init -q /tmp/tlh
     - git -C /tmp/tlh fetch -q --depth 1 https://github.com/SyedMuhammadRehan/ticket-loop-harness.git <harness-commit>
     - git -C /tmp/tlh checkout -q FETCH_HEAD
-    - if [ -n "$TICKET_LOOP_CI_KEY" ]; then printf '%s\n' "$TICKET_LOOP_CI_KEY" > /tmp/ci.pem; export TICKET_LOOP_SIGNING_KEY=/tmp/ci.pem; fi
     - node /tmp/tlh/plugins/ticket-loop/skills/ticket-loop/scripts/ci_check.js --base "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --out ci-attestation.json
   artifacts:
     when: always
@@ -119,7 +120,6 @@ pipelines:
             - git init -q /tmp/tlh
             - git -C /tmp/tlh fetch -q --depth 1 https://github.com/SyedMuhammadRehan/ticket-loop-harness.git <harness-commit>
             - git -C /tmp/tlh checkout -q FETCH_HEAD
-            - if [ -n "$TICKET_LOOP_CI_KEY" ]; then printf '%s\n' "$TICKET_LOOP_CI_KEY" > /tmp/ci.pem; export TICKET_LOOP_SIGNING_KEY=/tmp/ci.pem; fi
             - node /tmp/tlh/plugins/ticket-loop/skills/ticket-loop/scripts/ci_check.js --base "origin/$BITBUCKET_PR_DESTINATION_BRANCH" --out ci-attestation.json
           artifacts:
             - ci-attestation.json
@@ -134,3 +134,13 @@ The rerun proves the tests pass at the merged head, by CI's own hand. The QA ver
 receipts and the criteria results inside the bundle are still the word of the machine that signed
 it: CI verifies that they were not changed after signing and that the run passed by its own
 record, not that the judgement was right. Review the pull request as you would any other.
+
+The CI key is withheld from the rerun's environment, not from the machine. Code that runs as the
+job's own user on the same runner can still reach a parent process's memory or environment where
+the operating system allows it (`/proc/<pid>/environ` on Linux). If the countersignature has to
+hold against a hostile pull request, run the check twice: once without the secret to rerun the
+tests, and once in a separate job with the secret and `--no-rerun`, which executes no repo code.
+That second signature attests the bundle and the head, not the rerun.
+
+`--base` is resolved as a branch before a tag, so a tag pushed under the base branch's name does
+not move the trust list or the test command.

@@ -46,7 +46,7 @@ function agentsWorking(root, runs) {
 async function main() {
   const input = lib.readStdinJson();
   if (!input) process.exit(0);
-  const root = lib.findRepoRoot(input.cwd || process.cwd());
+  const root = lib.runRoot(input);
   const runs = lib.activeRuns(root);
   if (runs.length === 0) process.exit(0);
   const msg = messageFor(input, root, runs);

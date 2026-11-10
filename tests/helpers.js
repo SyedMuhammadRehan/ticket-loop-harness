@@ -26,6 +26,9 @@ function rmDir(dir) {
 function runScript(scriptPath, args = [], opts = {}) {
   const env = { ...process.env, ...(opts.env || {}) };
   if (!opts.env || !('CLAUDE_PLUGIN_ROOT' in opts.env)) delete env.CLAUDE_PLUGIN_ROOT;
+  // The hooks also look for a run in the session's project dir, which is this repo when the
+  // suite runs inside Claude Code.
+  if (!opts.env || !('CLAUDE_PROJECT_DIR' in opts.env)) delete env.CLAUDE_PROJECT_DIR;
   // An org policy on the machine running the suite would change what every case resolves to.
   if (!opts.env || !('TICKET_LOOP_POLICY' in opts.env)) env.TICKET_LOOP_POLICY = path.join(os.tmpdir(), 'ticket-loop-no-policy.json');
   // Nor may a notify config on that machine send real messages from the suite.

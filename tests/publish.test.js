@@ -88,7 +88,7 @@ function finishedRun(t, opts = {}) {
   ok(['gate', runDir, 'qa', '--evidence', brief]);
   const report = write('report.md', '# Ticket Loop Report — T-1\n\nStatus: COMPLETE\n');
   ok(['gate', runDir, 'report', '--evidence', report]);
-  ok(['close', runDir]);
+  if (!opts.leaveOpen) ok(['close', runDir]);
   return { root, bare, wt, runDir, ledger };
 }
 
@@ -142,6 +142,32 @@ test('a run whose record does not say it passed is refused, whatever was consent
   assert.strictEqual(git(failing.bare, 'for-each-ref', 'refs/heads') + git(blocked.bare, 'for-each-ref', 'refs/heads'), '');
 });
 
+test('a run still open, or one whose sealed evidence changed, is not published even though it passed', (t) => {
+  const open = finishedRun(t, { leaveOpen: true });
+  const early = publish(open, 'push');
+  assert.strictEqual(early.status, 2, early.stderr);
+  assert.match(early.stderr, /the run is not closed/);
+
+  const tampered = finishedRun(t);
+  fs.appendFileSync(path.join(tampered.runDir, 'report.md'), '\nedited after the gate sealed it\n');
+  const res = publish(tampered, 'push');
+  assert.strictEqual(res.status, 2, res.stderr);
+  assert.match(res.stderr, /integrity check reports 1 problem\(s\): TAMPERED/);
+  assert.strictEqual(git(open.bare, 'for-each-ref', 'refs/heads') + git(tampered.bare, 'for-each-ref', 'refs/heads'), '');
+});
+
+test('the issue an update goes to is a bare number, never a URL or a flag', (t) => {
+  const s = finishedRun(t, { ticketSource: 'github' });
+  assert.strictEqual(publish(s, 'push').status, 0);
+  const cli = fakeCli(t, s.root);
+  for (const id of ['https://github.com/other/repo/issues/1', '--repo=other/repo', '12 --repo other/repo']) {
+    const res = publish(s, 'ticket', ['--ticket-id', id], cli.env);
+    assert.strictEqual(res.status, 2, `${id}: ${res.stderr}`);
+    assert.match(res.stderr, /digits only/);
+  }
+  assert.ok(!fs.existsSync(path.join(s.root, 'cli-calls.json')), 'nothing reached the CLI');
+});
+
 test('publishing refuses from a branch other than the ticket branch, or with uncommitted work', (t) => {
   const s = finishedRun(t);
   fs.writeFileSync(path.join(s.wt, 'a.js'), 'module.exports = 3;\n');
@@ -160,7 +186,7 @@ test('a PR before the push is refused, and a repo that does not allow an act can
   const narrow = finishedRun(t, { allowed: ['push'], consent: { push: 'yes', pr: 'no', ticket: 'no' } });
   const runDir2 = path.join(narrow.root, '.agents', 'ticket-runs', 'T-2');
   fs.mkdirSync(runDir2, { recursive: true });
-  assert.strictEqual(narrow.ledger(['init', runDir2, 'abc']).status, 0);
+  assert.strictEqual(narrow.ledger(['init', runDir2]).status, 0);
   const widen = narrow.ledger(['consent', runDir2, '--push', 'yes', '--pr', 'yes', '--ticket', 'no', 'asked']);
   assert.strictEqual(widen.status, 1);
   assert.match(widen.stderr, /does not allow "pr"/);

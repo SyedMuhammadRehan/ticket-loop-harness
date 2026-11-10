@@ -40,7 +40,7 @@ function frozenRun(profile = {}, c1, c2) {
   git(root, ['commit', '-qm', 'base']);
   const runDir = path.join(root, '.agents', 'ticket-runs', 'T-1');
   fs.mkdirSync(runDir, { recursive: true });
-  assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+  assert.strictEqual(ledger(root, ['init', runDir]).status, 0);
   freezeRun(root, runDir, draft(c1, c2));
   return { root, runDir };
 }

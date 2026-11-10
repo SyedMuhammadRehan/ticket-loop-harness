@@ -103,6 +103,23 @@ function commandFindings(root, cfg, add) {
   }
 }
 
+// `npm ci` exits non-zero without a lockfile, and the install runs at the start of every run.
+function installFindings(root, cfg, add) {
+  const install = cfg.verify && cfg.verify.pubGet;
+  if (typeof install !== 'string' || !/\bnpm\s+ci\b/.test(install)) return;
+  if (['package-lock.json', 'npm-shrinkwrap.json'].some((f) => fs.existsSync(path.join(root, f)))) return;
+  add('problem', 'verify.pubGet is npm ci, but the repo has no package-lock.json for it to install from', 'commit a lockfile (npm install writes one), or set verify.pubGet to npm install');
+}
+
+// A run reads the main checkout's profile, so an uncommitted one works here. The merge check
+// reads the base branch's.
+function committedFindings(root, cfg, add) {
+  const base = (cfg.hooks && cfg.hooks.stopGate && cfg.hooks.stopGate.baseRef) || null;
+  if (!base || git(root, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`]) === null) return;
+  if (git(root, ['cat-file', '-e', `${base}:.agents/ticket-loop.config.json`]) !== null) return;
+  add('note', `the profile is not committed on ${base}, so teammates and the CI merge check do not have it`, `commit .agents/ticket-loop.config.json and the .gitignore change to ${base}`);
+}
+
 function gitignoreFindings(root, add) {
   for (const probe of ['.agents/ticket-runs/probe', '.claude/hooks/state/probe']) {
     const res = spawnSync('git', ['-C', root, 'check-ignore', '-q', probe], { timeout: TIMEOUT_MS });
@@ -168,7 +185,11 @@ function diagnose(start) {
     return { root: null, findings };
   }
   const cfg = profileFindings(root, add);
-  if (cfg._meta && cfg._meta.configFound) commandFindings(root, cfg, add);
+  if (cfg._meta && cfg._meta.configFound) {
+    commandFindings(root, cfg, add);
+    installFindings(root, cfg, add);
+    committedFindings(root, cfg, add);
+  }
   gitignoreFindings(root, add);
   let lib = null;
   try {

@@ -558,7 +558,7 @@ async function main() {
   const deadline = Date.now() + HOOK_BUDGET_MS;
   const input = lib.readStdinJson() || {};
   const sessionId = input.session_id || 'no-session';
-  const { found, root, config, error } = lib.loadConfig();
+  const { found, root, config, error } = lib.loadConfig(lib.runRoot(input));
   if (error) console.error(`stop_gate: ${error} — gate is inert until the config parses.`);
   const conf = found && config.hooks && config.hooks.stopGate;
   const activeRuns = lib.runRecords(root);

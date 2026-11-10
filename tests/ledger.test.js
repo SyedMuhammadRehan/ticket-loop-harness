@@ -691,8 +691,12 @@ test('revise refuses frozen artifacts and the enforcement profile', () => {
       assert.match(res.stderr, /frozen/i);
     }
     const cfg = path.join(root, '.agents', 'ticket-loop.config.json');
+    // Changed first: an unchanged file is refused for that alone, which would hide whether the
+    // profile is refused for being the profile.
+    fs.appendFileSync(cfg, '\n');
     const res = ledger(root, ['revise', runDir, cfg, '--reason', 'a perfectly good reason']);
     assert.strictEqual(res.status, 1, res.stdout);
+    assert.match(res.stderr, /frozen — it may not be revised at all/);
   } finally {
     rmDir(root);
   }

@@ -59,8 +59,8 @@ function setup(t, opts = {}) {
   git(root, 'config', 'user.name', 't');
   fs.mkdirSync(path.join(root, '.agents'), { recursive: true });
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'check.js'), "process.exit(require('fs').existsSync('FAIL') ? 1 : 0);\n");
-  fs.writeFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), JSON.stringify({ verify: { test: 'node check.js' } }));
+  fs.writeFileSync(path.join(root, 'check.js'), opts.checkJs || "process.exit(require('fs').existsSync('FAIL') ? 1 : 0);\n");
+  fs.writeFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), typeof opts.profile === 'string' ? opts.profile : JSON.stringify(opts.profile || { verify: { test: 'node check.js' } }));
   fs.writeFileSync(path.join(root, '.agents', 'ticket-loop.trust'), `# reviewed signing keys\n${dev.id}\n`);
   fs.writeFileSync(path.join(root, 'src', 'a.js'), 'module.exports = 1;\n');
   git(root, 'add', '-A');
@@ -165,4 +165,115 @@ test('with a CI key the check countersigns exactly what it ran', (t) => {
   assert.strictEqual(sig.claim.ran[0].command, 'node check.js');
   assert.notStrictEqual(sig.claim.headSha, headSha, 'the head CI checked is the one carrying the bundle commit');
   assert.ok(crypto.verify(null, Buffer.from(canonical(sig.claim)), sig.publicKey, Buffer.from(sig.signature, 'base64')));
+});
+
+function ciKeyPem() {
+  return crypto.generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' });
+}
+
+// The rerun executes the pull request's own code, so whatever that code can read, it can take.
+test('the CI key is withheld from the commands CI reruns, and still countersigns', (t) => {
+  const dump = "require('fs').writeFileSync('seen.json', JSON.stringify(process.env));\n";
+  const { root } = setup(t, { checkJs: dump });
+  const out = path.join(root, '..', `ci-${path.basename(root)}.json`);
+  t.after(() => fs.rmSync(out, { force: true }));
+  const res = ci(root, ['--out', out], { TICKET_LOOP_CI_KEY: ciKeyPem(), TICKET_LOOP_SIGNING_KEY: path.join(root, 'unused.pem') });
+  assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+  const seen = JSON.parse(fs.readFileSync(path.join(root, 'seen.json'), 'utf8'));
+  assert.ok(!('TICKET_LOOP_CI_KEY' in seen), 'the PEM must not reach the test command');
+  assert.ok(!('TICKET_LOOP_SIGNING_KEY' in seen), 'nor the path of a key file');
+  assert.ok(!JSON.stringify(seen).includes('PRIVATE KEY'));
+  const sig = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.ok(crypto.verify(null, Buffer.from(canonical(sig.claim)), sig.publicKey, Buffer.from(sig.signature, 'base64')));
+});
+
+test('a tag named like the base branch does not replace it as the source of trust', (t) => {
+  const stranger = newKey();
+  const { root } = setup(t, { signer: stranger });
+  fs.appendFileSync(path.join(root, '.agents', 'ticket-loop.trust'), `${stranger.id}\n`);
+  git(root, 'commit', '-qam', 'trust myself');
+  git(root, 'tag', 'main', 'HEAD');
+  const res = ci(root, ['--no-rerun']);
+  assert.strictEqual(res.status, 2, res.stdout);
+  assert.match(res.stdout, /which main does not trust/);
+});
+
+test('a bundle altered after signing, or attesting another ticket, is refused by the merge check itself', (t) => {
+  const altered = setup(t);
+  const file = path.join(altered.root, BUNDLE);
+  const bundle = JSON.parse(fs.readFileSync(file, 'utf8'));
+  bundle.records[1].payload.verdict = 'BLOCK';
+  fs.writeFileSync(file, JSON.stringify(bundle));
+  git(altered.root, 'commit', '-qam', 'edit the bundle');
+  const res = ci(altered.root, ['--no-rerun']);
+  assert.strictEqual(res.status, 2, res.stdout);
+  assert.match(res.stdout, /- bundle: /);
+
+  const other = setup(t, { fields: { ticket: 'T-2' } });
+  const wrong = ci(other.root, ['--no-rerun']);
+  assert.strictEqual(wrong.status, 2);
+  assert.match(wrong.stdout, /bundle attests ticket T-2, not T-1/);
+});
+
+test('a bundle whose attested head or base is not in the branch history is refused', (t) => {
+  const { root, dev, baseSha } = setup(t);
+  git(root, 'checkout', '-q', '--orphan', 'unrelated');
+  git(root, 'commit', '-q', '--allow-empty', '-m', 'elsewhere');
+  const stray = git(root, 'rev-parse', 'HEAD');
+  git(root, 'checkout', '-q', '-f', 'ticket/T-1');
+  const attest = (fields) => {
+    fs.writeFileSync(path.join(root, BUNDLE), JSON.stringify(bundleFor(dev, fields)));
+    git(root, 'commit', '-qam', 'attest again');
+  };
+
+  attest({ baseSha, headSha: stray });
+  const head = ci(root, ['--no-rerun']);
+  assert.strictEqual(head.status, 2, head.stdout);
+  assert.match(head.stdout, /which is not in this branch's history/);
+
+  attest({ baseSha: stray, headSha: git(root, 'rev-parse', 'HEAD') });
+  const base = ci(root, ['--no-rerun']);
+  assert.strictEqual(base.status, 2, base.stdout);
+  assert.match(base.stdout, /the run's base \w+ is not in this branch's history/);
+});
+
+const SLOW_MS = 4000;
+
+test('a base branch with no test command, or a rerun that never finishes, is not a pass', async (t) => {
+  const bare = setup(t, { profile: { verify: {} } });
+  const none = ci(bare.root);
+  assert.strictEqual(none.status, 2, none.stdout);
+  assert.match(none.stdout, /names no verify\.test/);
+
+  const broken = setup(t, { profile: '{ not json' });
+  const unreadable = ci(broken.root);
+  assert.strictEqual(unreadable.status, 2, unreadable.stdout);
+  assert.match(unreadable.stdout, /carries no readable/);
+
+  const slow = setup(t, { checkJs: `setTimeout(() => {}, ${SLOW_MS});\n` });
+  const hung = ci(slow.root, ['--timeout-ms', '1000']);
+  assert.strictEqual(hung.status, 2, hung.stdout);
+  assert.match(hung.stdout, /verify\.test timed out in CI/);
+  // On Windows the timeout ends the shell, not the command under it, which holds the directory
+  // until it exits on its own.
+  for (let waited = 0; waited < SLOW_MS * 5; waited += 250) {
+    try {
+      rmDir(slow.root);
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+});
+
+test('a failing check is countersigned as a failure, over the attestation it judged', (t) => {
+  const { root } = setup(t);
+  fs.writeFileSync(path.join(root, 'FAIL'), '');
+  const out = path.join(root, '..', `ci-${path.basename(root)}.json`);
+  t.after(() => fs.rmSync(out, { force: true }));
+  assert.strictEqual(ci(root, ['--out', out], { TICKET_LOOP_CI_KEY: ciKeyPem() }).status, 2);
+  const sig = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.strictEqual(sig.claim.pass, false);
+  const attestation = JSON.parse(fs.readFileSync(path.join(root, BUNDLE), 'utf8')).attestation;
+  assert.strictEqual(sig.claim.attestationDigest, crypto.createHash('sha256').update(canonical(attestation)).digest('hex'));
 });

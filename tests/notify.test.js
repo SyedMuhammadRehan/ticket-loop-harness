@@ -346,6 +346,16 @@ test('an answer through any host but the service\'s own is never sealable', () =
   const discordHit = notify.discordAnswer(discord, [{ id: '2', author: { id: '9' }, content: 'ABC123 2' }], 'ABC123', 2);
   assert.strictEqual(notify.isSealable(discord, discordHit), true);
   assert.strictEqual(notify.isSealable({ ...discord, apiBase: 'http://localhost:1/api' }, discordHit), false);
+
+  // On the real host, with no user configured, whoever is in the channel answered.
+  const openSlack = { type: 'slack', botToken: 'x', channel: 'C1' };
+  const anyoneSlack = notify.slackAnswer(openSlack, [{ ts: '2', user: 'U9', text: 'ABC123 1' }], { ts: '1' }, 'ABC123', 2);
+  assert.strictEqual(anyoneSlack.choice, 1);
+  assert.strictEqual(notify.isSealable(openSlack, anyoneSlack), false);
+  const openDiscord = { type: 'discord', botToken: 'x', channelId: 'C1' };
+  const anyoneDiscord = notify.discordAnswer(openDiscord, [{ id: '2', author: { id: '5' }, content: 'ABC123 2' }], 'ABC123', 2);
+  assert.strictEqual(anyoneDiscord.choice, 2);
+  assert.strictEqual(notify.isSealable(openDiscord, anyoneDiscord), false);
   assert.strictEqual(notify.isSealable({ type: 'ntfy', topic: 't' }, { choice: 1, channel: 'ntfy' }), false);
 });
 

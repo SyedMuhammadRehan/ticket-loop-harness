@@ -44,8 +44,11 @@ worth checking on the first run after any upgrade:
 
 ```
 sed -n 4p .agents/ticket-runs/<TICKET>/ledger.md   # want: "counters: sealed receipt chain"
-ls .git/ticket-loop/                               # the sealed chain; absent before 0.4.0
 ```
+
+Run it in your own terminal, not through Claude Code: inside a session the write guard refuses
+commands that list the chain directory under `.git/ticket-loop/`, because the chain key lives
+there.
 
 ## 2. Global, by hand (no plugin system)
 
@@ -94,6 +97,14 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
 
 ## Every install — do these once per repo
 
+`<SKILL_DIR>` below is where the installed skill lives. As a plugin that is
+`~/.claude/plugins/cache/ticket-loop-harness/ticket-loop/<version>/skills/ticket-loop`
+(`claude plugin list` shows the version; use the newest folder). By hand it is
+`~/.claude/skills/ticket-loop` or the repo's `.claude/skills/ticket-loop`. Inside a session the
+quickest way is to ask Claude to run the step: the skill knows its own directory. Use the
+installed copy, not a checkout of this repo: once the plugin is installed, the write guard
+accepts harness commands only from the scripts beside its own hooks.
+
 1. **Add a profile.** From the repo, `node <SKILL_DIR>/scripts/init.js --dry-run` shows the
    profile it would write from your manifests, default branch and remote; run it without
    `--dry-run` to write it and gitignore run state, then review the lines it lists. Or copy one
@@ -103,8 +114,9 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
    stop-gate hooks; set `hooks.stopGate.baseRef` to your default branch so **committed** slice
    work is verified (the loop commits every green slice — without a base ref only uncommitted
    changes are seen). `freeze_guard` and `dispatch_guard` work with or without a profile.
-   **Commit the profile and the `.gitignore` change to your default branch**: each run works in
-   a worktree cut from it, so an uncommitted profile is not there, and the team shares one.
+   **Commit the profile and the `.gitignore` change to your default branch**: the team shares
+   one profile, and the CI merge check reads it from the base branch. A run on your own machine
+   reads the main checkout's copy either way; `doctor.js` notes an uncommitted one.
 2. **gitignore run state:** add `.agents/ticket-runs/` and `.claude/hooks/state/`. You do not
    need to ignore the receipt chain — it lives inside `.git/ticket-loop/`, which git never
    tracks. Do not delete it while a run is in flight: it holds the run's counters and receipts,
@@ -124,7 +136,7 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
    machine creates an Ed25519 key under `~/.claude/ticket-loop/signing/` and prints its key id.
    The loop then exports each closed run as a signed bundle; anyone can check one with
    `node verify_bundle.js <bundle> --trust <keyId>`, a single file that needs nothing else.
-   In CI, point `TICKET_LOOP_SIGNING_KEY` at a key the CI holds instead.
+   In CI, give the merge check its own key as the `TICKET_LOOP_CI_KEY` secret instead.
    To gate merges on it, list the trusted key ids in `.agents/ticket-loop.trust` on your default
    branch and add the merge check from [docs/ci.md](docs/ci.md) as a required status check.
 5. **Optional: an org policy.** Put a policy JSON at `~/.claude/ticket-loop/policy.json` (or set

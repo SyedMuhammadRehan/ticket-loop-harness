@@ -5,8 +5,10 @@
 //
 // Trust and the commands come from the BASE branch: a pull request cannot add its own key to the
 // trust list or swap the test command for one that always passes. When CI holds a signing key
-// (TICKET_LOOP_SIGNING_KEY), it countersigns what it ran, so the audit trail carries a claim the
-// developer's machine could not have made.
+// (TICKET_LOOP_CI_KEY, the PEM itself, or TICKET_LOOP_SIGNING_KEY, a file holding it), it
+// countersigns what it ran, so the audit trail carries a claim the developer's machine could not
+// have made. The key is read before anything runs and withheld from the commands CI reruns:
+// those execute the pull request's own code.
 //
 // usage: ci_check.js --base <ref> [--ticket <id>] [--bundle <path>] [--out <countersig.json>]
 //                    [--no-rerun] [--timeout-ms <n>]
@@ -23,6 +25,8 @@ const PROFILE_FILE = '.agents/ticket-loop.config.json';
 const ATTESTATIONS_DIR = '.agents/attestations';
 const PASSING_VERDICTS = ['APPROVE', 'APPROVE_WITH_COMMENTS'];
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+const KEY_PEM_ENV = 'TICKET_LOOP_CI_KEY';
+const KEY_FILE_ENV = 'TICKET_LOOP_SIGNING_KEY';
 const BRANCH_ENV = ['GITHUB_HEAD_REF', 'CI_MERGE_REQUEST_SOURCE_BRANCH_NAME', 'BITBUCKET_BRANCH', 'CI_COMMIT_REF_NAME'];
 
 function git(args, cwd) {
@@ -49,9 +53,26 @@ function ticketOf(argv, cwd) {
   return branch && branch.startsWith('ticket/') ? branch.slice('ticket/'.length) : null;
 }
 
+// A branch before a tag: git resolves a bare name to a tag first, and a tag named like the base
+// branch is outside branch protection.
+function resolveBase(base, cwd) {
+  for (const ref of [`refs/remotes/${base}`, `refs/heads/${base}`, base]) {
+    const res = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd);
+    if (res.ok && res.out) return res.out;
+  }
+  return null;
+}
+
+function withoutKeys(env) {
+  const out = { ...env };
+  delete out[KEY_PEM_ENV];
+  delete out[KEY_FILE_ENV];
+  return out;
+}
+
 function runCommand(command, cwd, timeoutMs) {
   const started = Date.now();
-  const res = spawnSync(command, { cwd, shell: true, encoding: 'utf8', timeout: timeoutMs });
+  const res = spawnSync(command, { cwd, shell: true, encoding: 'utf8', timeout: timeoutMs, env: withoutKeys(process.env) });
   const timedOut = res.error && res.error.code === 'ETIMEDOUT';
   return {
     command,
@@ -66,14 +87,17 @@ function check(argv, cwd = process.cwd()) {
   const failures = [];
   const base = flag(argv, '--base');
   if (!base) return { error: '--base <ref> is required: the branch this pull request merges into' };
-  if (!git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], cwd).ok) return { error: `base ref ${base} does not resolve; fetch it first` };
-  const head = git(['rev-parse', 'HEAD'], cwd).out;
+  const baseSha = resolveBase(base, cwd);
+  if (!baseSha) return { error: `base ref ${base} does not resolve; fetch it first` };
+  const headRev = git(['rev-parse', 'HEAD'], cwd);
+  if (!headRev.ok || !headRev.out) return { error: 'cannot read HEAD: run from a checkout of the pull request head' };
+  const head = headRev.out;
 
   const ticket = ticketOf(argv, cwd);
   if (!ticket) return { error: 'cannot tell the ticket: pass --ticket, or run on a ticket/<ID> branch' };
   const bundleRel = flag(argv, '--bundle') || `${ATTESTATIONS_DIR}/${ticket}.bundle.json`;
 
-  const trustText = git(['show', `${base}:${TRUST_FILE}`], cwd);
+  const trustText = git(['show', `${baseSha}:${TRUST_FILE}`], cwd);
   const trusted = trustText.ok ? trustedKeys(trustText.out) : [];
   if (!trusted.length) failures.push(`${base} carries no trusted keys in ${TRUST_FILE}, so no bundle can be trusted`);
 
@@ -108,9 +132,11 @@ function check(argv, cwd = process.cwd()) {
       if (!git(['merge-base', '--is-ancestor', attested, head], cwd).ok) {
         failures.push(`the bundle attests ${attested.slice(0, 12)}, which is not in this branch's history`);
       } else {
-        const extra = git(['diff', '--name-only', attested, head], cwd).out.split('\n').filter(Boolean);
-        const unattested = extra.filter((f) => f !== bundleRel);
-        if (unattested.length) {
+        const diff = git(['diff', '--name-only', attested, head], cwd);
+        const unattested = diff.out.split('\n').filter(Boolean).filter((f) => f !== bundleRel);
+        if (!diff.ok) {
+          failures.push(`could not compare the attested head ${attested.slice(0, 12)} with this one (${diff.err || 'git diff failed'}), so what changed after it is unknown`);
+        } else if (unattested.length) {
           failures.push(`commits after the attested head ${attested.slice(0, 12)} change files the run never saw: ${unattested.join(', ')}`);
         }
       }
@@ -122,7 +148,7 @@ function check(argv, cwd = process.cwd()) {
 
   const ran = [];
   if (!argv.includes('--no-rerun')) {
-    const profileText = git(['show', `${base}:${PROFILE_FILE}`], cwd);
+    const profileText = git(['show', `${baseSha}:${PROFILE_FILE}`], cwd);
     let verify = {};
     try {
       verify = JSON.parse(profileText.out).verify || {};
@@ -144,8 +170,8 @@ function check(argv, cwd = process.cwd()) {
 }
 
 // CI's own claim, signed with a key the developer's machine never held.
-function countersign(result, keyFile) {
-  const privateKey = crypto.createPrivateKey(fs.readFileSync(keyFile, 'utf8'));
+function countersign(result, keyPem) {
+  const privateKey = crypto.createPrivateKey(keyPem);
   const publicKey = crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'pem' });
   const der = crypto.createPublicKey(publicKey).export({ type: 'spki', format: 'der' });
   const claim = {
@@ -164,18 +190,24 @@ function countersign(result, keyFile) {
 
 function main() {
   const argv = process.argv.slice(2);
+  let keyPem = null;
+  try {
+    keyPem = process.env[KEY_PEM_ENV] || (process.env[KEY_FILE_ENV] ? fs.readFileSync(process.env[KEY_FILE_ENV], 'utf8') : null);
+  } catch (err) {
+    console.error(`ci_check: cannot read the signing key named by ${KEY_FILE_ENV} (${err.message})`);
+    process.exit(1);
+  }
   const result = check(argv);
   if (result.error) {
     console.error(`ci_check: ${result.error}`);
     process.exit(1);
   }
   const out = flag(argv, '--out');
-  const keyFile = process.env.TICKET_LOOP_SIGNING_KEY;
-  if (out && keyFile) fs.writeFileSync(out, JSON.stringify(countersign(result, keyFile), null, 2) + '\n');
+  if (out && keyPem) fs.writeFileSync(out, JSON.stringify(countersign(result, keyPem), null, 2) + '\n');
   console.log(`ci_check: ticket ${result.ticket} at ${result.head.slice(0, 12)} against ${result.base}: ${result.pass ? 'PASS' : 'FAIL'}`);
   for (const r of result.ran) console.log(`  ran verify.${r.step}: ${r.command} -> ${r.timedOut ? 'timed out' : `exit ${r.exit}`} (${r.ms} ms)`);
   for (const f of result.failures) console.log(`  - ${f}`);
-  if (out && !keyFile) console.log('  (no TICKET_LOOP_SIGNING_KEY in this job, so nothing was countersigned)');
+  if (out && !keyPem) console.log(`  (no ${KEY_PEM_ENV} in this job, so nothing was countersigned)`);
   process.exit(result.pass ? 0 : 2);
 }
 

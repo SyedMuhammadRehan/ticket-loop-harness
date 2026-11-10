@@ -127,7 +127,7 @@ test('doctor passes a freshly initialised repo, then finds stale copies, an aban
     fs.writeFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), JSON.stringify({ ...cfg, staleRunHours: 0 }));
     const runDir = path.join(root, '.agents', 'ticket-runs', 'T-9');
     fs.mkdirSync(runDir, { recursive: true });
-    assert.strictEqual(ledger(root, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(ledger(root, ['init', runDir]).status, 0);
     git(root, 'worktree', 'add', '-q', wt, '-b', 'ticket/OLD-1');
 
     const before = fs.readdirSync(path.join(root, '.claude', 'hooks'));
@@ -174,6 +174,51 @@ test('init proposes pytest only when the repo names it, and no install for a dep
     assert.strictEqual(profile.verify.test, 'python -m unittest discover');
     assert.strictEqual(profile.verify.pubGet, null);
     assert.match(res.stdout, /verify\.test was inferred from the tests\/ folder/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('init proposes no npm ci without a lockfile, and doctor reports a profile that asks for one', () => {
+  const pkg = { name: 'app', scripts: { test: 'node --test' } };
+  const bare = repo({ 'package.json': JSON.stringify(pkg) });
+  const withDeps = repo({ 'package.json': JSON.stringify({ ...pkg, dependencies: { leftpad: '1.0.0' } }) });
+  try {
+    const profileOf = (root) => {
+      const res = run(INIT, root, ['--dry-run']);
+      return { out: res.stdout, profile: JSON.parse(res.stdout.slice(res.stdout.indexOf('{'), res.stdout.lastIndexOf('}') + 1)) };
+    };
+    const none = profileOf(bare).profile;
+    assert.strictEqual(none.verify.pubGet, null, 'nothing to install, so no install command');
+    assert.deepStrictEqual(none.riskPaths, ['package.json']);
+    assert.strictEqual(none.deps.lockfile, null);
+    const some = profileOf(withDeps);
+    assert.strictEqual(some.profile.verify.pubGet, 'npm install');
+    assert.match(some.out, /no lockfile found/);
+
+    assert.strictEqual(run(INIT, bare).status, 0);
+    assert.strictEqual(run(DOCTOR, bare, ['--json']).status, 0);
+    const file = path.join(bare, '.agents', 'ticket-loop.config.json');
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(file, JSON.stringify({ ...cfg, verify: { ...cfg.verify, pubGet: 'npm ci' } }));
+    const res = run(DOCTOR, bare, ['--json']);
+    assert.strictEqual(res.status, 1, res.stdout);
+    assert.ok(JSON.parse(res.stdout).findings.some((f) => f.level === 'problem' && /npm ci, but the repo has no package-lock\.json/.test(f.what)), res.stdout);
+  } finally {
+    rmDir(bare);
+    rmDir(withDeps);
+  }
+});
+
+test('doctor says when the profile is not committed on the base branch, until it is', () => {
+  const root = repo(NODE_REPO);
+  try {
+    assert.strictEqual(run(INIT, root).status, 0);
+    const uncommitted = (r) => r.findings.some((f) => f.level === 'note' && /the profile is not committed on main/.test(f.what));
+    assert.ok(uncommitted(doctor(root)), JSON.stringify(doctor(root).findings));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'chore: ticket-loop profile');
+    assert.ok(!uncommitted(doctor(root)));
   } finally {
     rmDir(root);
   }
