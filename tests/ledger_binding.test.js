@@ -109,6 +109,24 @@ test('a profile saved with a byte-order mark governs the run like any other', ()
   }
 });
 
+test('a gate accepts its artifact when the run dir is reached through a link', () => {
+  const { root, runDir } = mkRun({ verify: VERIFY });
+  const link = `${root}-link`;
+  try {
+    // A junction on Windows needs no privilege; elsewhere a directory symlink.
+    fs.symlinkSync(root, link, process.platform === 'win32' ? 'junction' : 'dir');
+    const linkedRun = path.join(link, '.agents', 'ticket-runs', 'T-1');
+    assert.strictEqual(ledger(root, ['init', linkedRun, 'base123']).status, 0);
+    fs.writeFileSync(path.join(runDir, 'ticket-brief.md'), '# T-1\n');
+    const viaReal = ledger(root, ['gate', linkedRun, 'intake', '--evidence', path.join(runDir, 'ticket-brief.md')]);
+    assert.strictEqual(viaReal.status, 0, viaReal.stderr);
+    assert.deepStrictEqual(verifyOf(root, runDir).problems, [], 'and the same run verifies by its real path');
+  } finally {
+    fs.rmSync(link, { recursive: false, force: true });
+    rmDir(root);
+  }
+});
+
 test('an addition is one criterion on one line', () => {
   const { root, runDir } = mkRun({ verify: VERIFY });
   try {
