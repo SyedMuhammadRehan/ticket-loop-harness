@@ -203,7 +203,8 @@ model, prompt size, outcome and time, and the receipt timeline.
 It is read-only: it records nothing, never reads a run dir that has no chain on this machine, and
 reads each run in its own process so one unreadable run cannot take down the page. Recorded
 strings are escaped, because labels are whatever the orchestrator typed. `--serve` listens on
-loopback only. What it does not do: it is per machine, so a team-wide view means collecting each
+loopback only and answers only requests addressed to a loopback name, so a web page that points
+its own hostname at 127.0.0.1 gets a 403. What it does not do: it is per machine, so a team-wide view means collecting each
 machine's `--json` yourself.
 
 ## Cross-run memory
@@ -508,7 +509,8 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   record count, a digest over every record, the report's hash, the verdict and the integrity
   result, bundled with the records and the public key. `verify_bundle.js` is one file with no
   dependency on the harness; it checks the signature, recomputes the digest, walks the links and
-  compares the verdict, and with `--trust <keyId>` requires a key you named. Export refuses an
+  compares the verdict, and with `--trust <keyId>` or `--trust-file` requires a key you named; a
+  trust file that names none trusts nobody (exit 3). Export refuses an
   open run, a chain that does not verify, and a run whose sealed evidence was tampered with, and
   the attestation carries the run's `completeness`.
 - **A branch merges only on CI's own check** — `ci_check.js` runs in CI on a pull request and

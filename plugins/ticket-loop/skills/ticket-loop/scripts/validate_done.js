@@ -131,7 +131,9 @@ for (const l of nonManual) {
 
 // `run:` must name the command the repo actually verifies with, so a criterion cannot
 // self-certify via a stand-in like `run: true` or `run: echo ok`.
-const cfg = resolveConfig();
+// The run's own repo's profile: from any other directory there is no profile to compare against,
+// and the same-command rule below would be skipped.
+const cfg = resolveConfig(path.resolve(runDir));
 const firstToken = (cmd) => String(cmd).trim().split(/\s+/)[0].replace(/^.*[\/\\]/, '');
 const expectedFor = { test: cfg.verify && cfg.verify.test, analyzer: cfg.verify && cfg.verify.analyze };
 // The bare verify command reports absolute state, so against a non-empty baseline it fails

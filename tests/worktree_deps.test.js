@@ -53,6 +53,19 @@ test('an identical lockfile reuses the installed tree', () => {
   }
 });
 
+test('the worktree is the positional argument wherever --main sits', () => {
+  const env = mkPair();
+  try {
+    const res = runScript(SCRIPT, ['--main', env.root, env.tree], { cwd: env.root });
+    assert.strictEqual(res.status, 0, res.stderr);
+    const out = JSON.parse(res.stdout);
+    assert.strictEqual(out.action, 'linked', 'the main repo, named first, is not the worktree');
+    assert.ok(fs.existsSync(path.join(env.tree, 'node_modules', 'left-pad', 'index.js')));
+  } finally {
+    rmDir(env.base);
+  }
+});
+
 // The one case that must never be optimised away.
 test('a different lockfile installs instead of reusing', () => {
   const env = mkPair({ lockTree: '{"v":2}' });

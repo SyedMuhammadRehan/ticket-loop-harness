@@ -322,6 +322,19 @@ uphold" and must stay there rather than migrating into this table:
 | 204 | A failing check is countersigned as a failure, over the attestation it judged | `ci_check.js` → `countersign` | `ci_check.test.js` :: `a failing check is countersigned as a failure, over the attestation it judged` | Only a passing check had ever been countersigned in a test |
 | 205 | An open run, or one whose sealed evidence changed, is not published | `publish.js` → `readinessProblems` | `publish.test.js` :: `a run still open, or one whose sealed evidence changed, is not published even though it passed` | Row 114's test covered a failed criterion and a BLOCK only |
 | 206 | The issue an update goes to is a bare number | `publish.js` → `publish` | `publish.test.js` :: `the issue an update goes to is a bare number, never a URL or a flag` | `gh` reads a URL as an issue in another repo and a leading dash as a flag |
+| 212 | A rerun that times out in CI is ended with its process tree | `ci_check.js` → `runCriterion` | `ci_check.test.js` :: `a base branch with no test command, or a rerun that never finishes, is not a pass` | Ending only the shell left the suite running after the check had reported |
+| 213 | Asking for trust and naming no key trusts nobody | `verify_bundle.js` → `trustRequired` | `attest.test.js` :: `asking for trust and naming no key trusts nobody` | An empty trust file read as "no trust asked", so any self-signed bundle exited 0 |
+| 214 | The dashboard answers only requests addressed to a loopback name | `dashboard.js` → `isLoopbackHost` | `dashboard.test.js` :: `--serve answers on loopback only and refreshes itself` | Binding to loopback stops other machines, not a web page that points its own name there |
+| 215 | The worktree is the positional argument wherever `--main` sits | `worktree_deps.js` → `mainIdx` | `worktree_deps.test.js` :: `the worktree is the positional argument wherever --main sits` | With `--main` first, the main repo was taken for the worktree and reported `present` |
+
+## Setup that fails soft
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 216 | The validator reads the run's own repo's profile | `validate_done.js` → `resolveConfig` | `validate_done.test.js` :: `the real-command rule holds when the validator is run from another directory` | From a directory with no profile the real-command rule was skipped |
+| 217 | A profile with a byte-order mark is read, by the scripts and the hooks | `load_config.js` → `resolve` | `ledger_binding.test.js` :: `a profile saved with a byte-order mark governs the run like any other` | It parsed as nothing: defaults at preflight, an empty profile sealed at init |
+| 218 | A ticket name is safe as a branch and in a pasted command | `ledger.js` → `TICKET_NAME` | `ledger_binding.test.js` :: `init refuses a ticket name that is not safe as a branch and in a pasted command` | The name reaches `git` and the handoff's printed commands unquoted |
+| 219 | An addition is one criterion on one line | `ledger.js` → `cmdAddition` | `ledger_binding.test.js` :: `an addition is one criterion on one line` | A second line rode into the additions file unchecked |
 
 ## Write guard: each route by its own rule
 

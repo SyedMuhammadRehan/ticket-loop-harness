@@ -250,20 +250,13 @@ test('a base branch with no test command, or a rerun that never finishes, is not
   assert.strictEqual(unreadable.status, 2, unreadable.stdout);
   assert.match(unreadable.stdout, /carries no readable/);
 
-  const slow = setup(t, { checkJs: `setTimeout(() => {}, ${SLOW_MS});\n` });
+  // The suite would leave a marker if it were allowed to finish after the check reported.
+  const slow = setup(t, { checkJs: `setTimeout(() => require('fs').writeFileSync('finished.txt', 'x'), ${SLOW_MS});\n` });
   const hung = ci(slow.root, ['--timeout-ms', '1000']);
   assert.strictEqual(hung.status, 2, hung.stdout);
   assert.match(hung.stdout, /verify\.test timed out in CI/);
-  // On Windows the timeout ends the shell, not the command under it, which holds the directory
-  // until it exits on its own.
-  for (let waited = 0; waited < SLOW_MS * 5; waited += 250) {
-    try {
-      rmDir(slow.root);
-      break;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
+  await new Promise((resolve) => setTimeout(resolve, SLOW_MS + 1000));
+  assert.ok(!fs.existsSync(path.join(slow.root, 'finished.txt')), 'the timed-out command was ended with its process tree');
 });
 
 test('a failing check is countersigned as a failure, over the attestation it judged', (t) => {

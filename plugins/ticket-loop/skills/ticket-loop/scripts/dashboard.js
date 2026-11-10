@@ -176,7 +176,7 @@ function esc(v) {
 }
 
 const num = (n) => (Number.isFinite(n) ? n.toLocaleString('en-US') : '—');
-const when = (iso) => (iso ? esc(iso.replace('T', ' ').slice(0, 16)) : '—');
+const when = (iso) => (iso ? esc(String(iso).replace('T', ' ').slice(0, 16)) : '—');
 
 function minutes(ms) {
   if (!Number.isFinite(ms)) return '—';
@@ -311,9 +311,10 @@ details summary{cursor:pointer;margin-top:12px;color:var(--muted)}.timeline td{f
 
 function render(data, refreshS) {
   const sections = data.repos
-    .map((repo) => {
-      const rows = repo.runs.map((r, i) => runRow(r, `${repo.name}-${i}`)).join('');
-      const details = repo.runs.map((r, i) => runDetail(r, `${repo.name}-${i}`)).join('');
+    .map((repo, n) => {
+      // Anchors are numbered, not named: a directory name is text someone else chose.
+      const rows = repo.runs.map((r, i) => runRow(r, `${n}-${i}`)).join('');
+      const details = repo.runs.map((r, i) => runDetail(r, `${n}-${i}`)).join('');
       return `<h2 style="margin-top:28px">${esc(repo.name)} <small>${esc(repo.root)}</small></h2>
 ${tiles(repo.runs)}
 <div class="card"><table><tr><th>Ticket</th><th>State</th><th>Integrity</th><th>Outcome</th><th>Verdict</th><th>Criteria</th><th>Dispatches</th><th>Tokens</th><th>Last activity</th></tr>${rows || '<tr><td colspan="9" class="muted">No runs.</td></tr>'}</table></div>
@@ -337,6 +338,10 @@ function flag(argv, name) {
   return { present: true, value };
 }
 
+function isLoopbackHost(host) {
+  return /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(String(host || ''));
+}
+
 function main() {
   const argv = process.argv.slice(2);
   if (argv[0] === '--collect') {
@@ -356,6 +361,12 @@ function main() {
   }
   if (serve.present) {
     const server = http.createServer((req, res) => {
+      // Binding to loopback stops other machines, not other web pages: a page whose hostname is
+      // re-pointed at 127.0.0.1 reaches this port with its own name in Host.
+      if (!isLoopbackHost(req.headers.host)) {
+        res.writeHead(403).end();
+        return;
+      }
       if (req.url === '/favicon.ico') {
         res.writeHead(204).end();
         return;
@@ -364,8 +375,16 @@ function main() {
         res.writeHead(404).end();
         return;
       }
+      let page;
+      try {
+        page = render(collect(repos), refreshS);
+      } catch (err) {
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end(`ticket-loop dashboard: could not render (${err.message})`);
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(render(collect(repos), refreshS));
+      res.end(page);
     });
     server.listen(Number(serve.value) || 0, '127.0.0.1', () => {
       console.log(`ticket-loop dashboard: http://127.0.0.1:${server.address().port}/`);
@@ -378,4 +397,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { collect, render, esc, discover };
+module.exports = { collect, render, esc, discover, isLoopbackHost };

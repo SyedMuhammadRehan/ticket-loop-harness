@@ -81,6 +81,19 @@ test('a closed run exports a bundle that verifies with no secret, trusted by its
   assert.strictEqual(stranger.status, 3, 'valid but signed by a key nobody named');
 });
 
+test('asking for trust and naming no key trusts nobody', (t) => {
+  const { out, keys } = exported(t);
+  const empty = path.join(keys, 'trust-empty.txt');
+  fs.writeFileSync(empty, '# no keys reviewed yet\n\n');
+  const none = check(out, ['--trust-file', empty]);
+  assert.strictEqual(none.status, 3, none.stdout);
+  assert.strictEqual(JSON.parse(none.stdout).trustRequired, true);
+  assert.strictEqual(check(out, ['--trust']).status, 3, 'a --trust with no value is still a request for trust');
+  const missing = check(out, ['--trust-file', path.join(keys, 'no-such-file.txt')]);
+  assert.strictEqual(missing.status, 1);
+  assert.match(missing.stderr, /trust file could not be read/);
+});
+
 test('each tampering an auditor must catch is caught', (t) => {
   const { bundle } = exported(t);
   const clone = () => JSON.parse(JSON.stringify(bundle));

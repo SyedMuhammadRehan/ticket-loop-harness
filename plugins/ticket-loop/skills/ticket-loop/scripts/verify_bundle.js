@@ -101,13 +101,21 @@ function main() {
     console.error(`verify_bundle: ${file} could not be read as JSON (${err.message})`);
     process.exit(2);
   }
-  const trusted = trustList(argv);
+  let trusted;
+  try {
+    trusted = trustList(argv);
+  } catch (err) {
+    console.error(`verify_bundle: the trust file could not be read (${err.message})`);
+    process.exit(1);
+  }
+  // Asking for trust and naming no key trusts nobody: an empty trust file is not "no trust asked".
+  const trustRequired = argv.includes('--trust') || argv.includes('--trust-file');
   const result = verifyBundle(bundle, trusted);
   const a = bundle.attestation || {};
   const summary = { ticket: a.ticket, verdict: a.verdict, baseSha: a.baseSha, headSha: a.headSha, records: a.records, integrity: a.integrity, signedAt: a.signedAt };
-  process.stdout.write(JSON.stringify({ ...result, trustRequired: trusted.length > 0, summary }, null, 2) + '\n');
+  process.stdout.write(JSON.stringify({ ...result, trustRequired, summary }, null, 2) + '\n');
   if (!result.valid) process.exit(2);
-  if (trusted.length && !result.trusted) process.exit(3);
+  if (trustRequired && !result.trusted) process.exit(3);
   process.exit(0);
 }
 

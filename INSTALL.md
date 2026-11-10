@@ -56,16 +56,22 @@ Copy the skill and hooks into your user-level Claude dir so they load everywhere
 
 ```
 cp -r plugins/ticket-loop/skills/ticket-loop  ~/.claude/skills/ticket-loop
+cp -r plugins/ticket-loop/skills/qa-check     ~/.claude/skills/qa-check
 cp -r plugins/ticket-loop/hooks/*.js          ~/.claude/hooks/
+cp plugins/ticket-loop/agents/ticket-loop-qa.md ~/.claude/agents/
 # then merge settings.example.json's "hooks" block into ~/.claude/settings.json
-# (point the commands at ~/.claude/hooks/<script>.js)
+# (point the commands at ~/.claude/hooks/<script>.js, by absolute path)
 ```
+
+The agent file is not optional: Stage 9 dispatches the judge as `ticket-loop-qa`, and a verdict
+binds to no other agent type.
 
 ## 3. Per project
 
-Copy `plugins/ticket-loop/skills/ticket-loop` into the repo's `.claude/skills/` and the
-hooks into `.claude/hooks/`, then merge `settings.example.json`'s hooks block into the
-repo's `.claude/settings.json`.
+Copy `plugins/ticket-loop/skills/ticket-loop` (and `skills/qa-check`) into the repo's
+`.claude/skills/`, the hooks into `.claude/hooks/`, and `agents/ticket-loop-qa.md` into
+`.claude/agents/`, then merge `settings.example.json`'s hooks block into the repo's
+`.claude/settings.json`.
 
 ## Security — read this before installing globally
 
