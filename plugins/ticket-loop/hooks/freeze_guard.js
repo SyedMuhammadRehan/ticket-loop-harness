@@ -87,7 +87,9 @@ function main() {
   const toolInput = input.tool_input || {};
   if (READ_TOOLS.has(input.tool_name)) judgeRead(input, toolInput);
 
-  const root = lib.findRepoRoot(input.cwd || process.cwd());
+  const target = toolInput.file_path || toolInput.notebook_path;
+  const named = [target, ...(typeof toolInput.command === 'string' ? lib.commandPaths(toolInput.command) : [])];
+  const root = lib.runRoot(input, named);
   const runs = activeRuns(root);
   const runActive = runs.length > 0;
   // Only touch the profile when a run is in flight — outside one this hook does no I/O
@@ -95,7 +97,6 @@ function main() {
   const config = runActive ? lib.loadConfig(root).config : {};
   const arming = () => (runActive ? armingRuns(root, runs, input.session_id, config.staleRunHours) : []);
 
-  const target = toolInput.file_path || toolInput.notebook_path;
   if (target) {
     const verdict = policy.pathVerdict(target, { runActive });
     if (verdict) deny(`${target} is a ${verdict.reason}.`, arming());
@@ -123,9 +124,12 @@ function main() {
       deny(
         `${verdict.reason}.\n` +
           `  Read-only inspection (cat / git diff / grep) is allowed. Writes go through the harness:\n` +
-          `    criteria      -> done-additions.md (additive only)\n` +
+          `    criteria      -> done-additions.md, through node <scripts>/ledger.js addition <runDir> "<criterion line>"\n` +
           `    counters/gates-> node <scripts>/ledger.js <cmd> <runDir>\n` +
-          `    clean restart -> node <scripts>/ledger.js archive <runDir>`,
+          `    clean restart -> node <scripts>/ledger.js archive <runDir>\n` +
+          `  A harness call passes only as one bare command: node, then the installed script by its\n` +
+          `  full path (${harnessDirs()[0]}), then its arguments.\n` +
+          `  No variable for the path, nothing chained after it with ; && or |, and not a copy of the script elsewhere.`,
         arming()
       );
     }

@@ -94,7 +94,7 @@ review were interactions between two rows below, which the code alone did not ma
 |---|---|---|---|---|
 | 13 | A receipt costs the artifact it claims | `ledger.js` → `STAGE_PROOF` | `ledger.test.js` :: `every stage gate must attach the artifact the stage produces` | Ten gates would otherwise be ten free commands |
 | 14 | Sealed evidence that changes is TAMPERED | `ledger.js` → `cmdVerify` | `ledger.test.js` :: `evidence sealed by a gate is reported as TAMPERED when it changes afterwards` | A receipt over a file that then changed attests to nothing |
-| 15 | An UNRECORDED edit to a sealed file is still TAMPERED | `ledger.js` → `integrityReport` | `ledger.test.js` :: `an unrecorded edit to a sealed file is still TAMPERED` | Revisions must not become a general amnesty (see 16) |
+| 15 | An UNRECORDED edit to a sealed file is still TAMPERED, a revision before it included | `ledger.js` → `integrityReport` | `ledger.test.js` :: `editing again after a revision is TAMPERED` | Revisions must not become a general amnesty (see 16) |
 | 16 | The frozen contract can never be revised | `ledger.js` → `UNREVISABLE` | `ledger.test.js` :: `revise refuses frozen artifacts and the enforcement profile` | A contract restatable after the freeze is not a contract |
 | 44 | A result must name how it was established | `ledger.js` → `CHECK_METHODS` | `ledger.test.js` :: `check refuses a result with no method named` | PASS|FAIL|SKIPPED cannot distinguish a suite that ran from source that was read |
 | 45 | Concluding something works is not a pass | `ledger.js` → `cmdCheck` | `ledger.test.js` :: `an asserted PASS is refused; an asserted SKIPPED is accepted` | SKIPPED already says "not established" without claiming it holds |
@@ -281,3 +281,54 @@ uphold" and must stay there rather than migrating into this table:
 | 178 | With requireTestFirst, a run passes only when every test criterion has proven tests-first | `ledger.js` → `completeness` | `ledger_red.test.js` :: `with requireTestFirst, a run whose test criteria lack a red run has not passed` | Tests-first was a prompt line nothing recorded |
 | 179 | The org policy can force tests-first on, and a profile cannot turn it off | `policy.js` → `applyPolicy` | `policy.test.js` :: `the org policy forces tests-first on, and a profile cannot turn it off` | A rule each repo can opt out of is a suggestion |
 | 180 | doctor reports a verify command whose program is not on PATH, or is the Store python stub, without running it | `doctor.js` → `commandFindings` | `setup_tools.test.js` :: `doctor reports a verify command whose program is not on PATH, and skips shell builtins` | The profile freezes at run start, so a command that cannot start costs the whole run; a newcomer's first profile named an uninstalled pytest and doctor called it clean |
+| 197 | init proposes no `npm ci` without a lockfile, and doctor reports a profile that asks for one | `doctor.js` → `installFindings` | `setup_tools.test.js` :: `init proposes no npm ci without a lockfile, and doctor reports a profile that asks for one` | A lockfile-less Node repo got a profile whose install could not run, and doctor called it ready |
+| 198 | doctor says when the profile is not on the base branch | `doctor.js` → `committedFindings` | `setup_tools.test.js` :: `doctor says when the profile is not committed on the base branch, until it is` | The merge check reads the base branch's profile; an uncommitted one reaches nobody else |
+
+## The run, wherever the session is
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 181 | A linked worktree and a subfolder at any depth resolve to the main checkout | `hook_lib.js` → `mainCheckoutOf` | `hooks_root.test.js` :: `a linked worktree, a deep subfolder and the repo root all resolve to the main checkout` | A worktree's `.git` is a pointer file; stopping at it found no run dirs and no run |
+| 182 | The write guard is armed from the ticket worktree | `hook_lib.js` → `repoRootAbove` | `hooks_root.test.js` :: `the write guard is armed from the ticket worktree and from deep inside the repo` | Risk paths, the profile and `git push` were all open from the directory the work happens in |
+| 183 | From outside the repo, a path the call names locates the run | `hook_lib.js` → `commandPaths` | `hooks_root.test.js` :: `from the folder above the repo, an edit or a command that names the repo is still judged by its run` | A session opened in a parent folder edited a frozen profile by absolute path |
+| 184 | A dispatch is counted and a red suite blocks the stop from any of those directories | `hook_lib.js` → `runRoot` | `hooks_root.test.js` :: `a dispatch is counted, and a red suite blocks the stop, from the worktree as from the root` | Three of four dispatches went uncounted; the stop gate exited 0 without running |
+| 185 | The session's project directory locates the run when nothing else does | `hook_lib.js` → `runRoot` | `hooks_root.test.js` :: `the session project dir locates the run when the working directory is outside the repo` | A dispatch names no path at all |
+
+## A run bound to its own repo
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 186 | init seals the profile of the repo that owns the run dir | `ledger.js` → `cmdInit` | `ledger_binding.test.js` :: `init seals the profile of the repo that owns the run dir, whatever directory it is run from` | Run from a directory holding a lenient profile, init sealed that one: no ceiling, no tests-first |
+| 187 | A run dir the hooks would never find is refused | `ledger.js` → `runDirProblem` | `ledger_binding.test.js` :: `init refuses a run dir the hooks would never find` | A run nothing arms is counted by nothing |
+| 188 | A base commit the repo does not have is refused | `ledger.js` → `baseProblem` | `ledger_binding.test.js` :: `init refuses a base commit the repo does not have` | A relative run dir resolved in the wrong repo and init reported success |
+| 189 | A criterion command runs only at the top of a checkout of the run's own repo | `ledger.js` → `checkoutProblem` | `ledger_binding.test.js` :: `in a real repo the command runs at the top of the main checkout or a worktree of it, nowhere else` | The frozen command, run in a scratch directory with a green suite, sealed PASS over a red one |
+| 190 | Outside git, only the repo root qualifies | `ledger.js` → `checkoutProblem` | `ledger_binding.test.js` :: `a criterion command is refused in a directory that is not the run's repo, or not its top` | A subfolder carrying its own `tests.js` answers the same command line |
+| 191 | A criterion with a frozen command passes only by that command | `ledger.js` → `cmdCheck` | `ledger_binding.test.js` :: `a criterion with a frozen command passes only by that command` | `PASS --by observed` over a red linter verified as passed |
+| 192 | An approved run with an unchecked criterion has not passed | `ledger.js` → `completeness` | `ledger_binding.test.js` :: `an approved run with a criterion nobody checked has not passed` | The row's old test never tried APPROVE over an unchecked criterion |
+| 193 | A judge dispatched before the freeze backs no verdict | `ledger.js` → `judgeDispatch` | `ledger_binding.test.js` :: `a judge dispatched before the contract was frozen cannot seal a verdict over it` | A judge launched before there was a contract judged nothing |
+| 194 | The machine's policy cannot be displaced through the environment at init | `ledger.js` → `policyDisplaced` | `ledger_binding.test.js` :: `the machine's policy file cannot be displaced through the environment at init` | A variable naming a missing file started a run with no floor |
+| 195 | A raise never lifts the ceiling past the org cap | `ledger.js` → `orgTokenCap` | `ledger_binding.test.js` :: `a raise lifts the profile ceiling up to the org cap and never past it` | One unapproved raise took a 1,000 cap to a billion |
+| 196 | A restart needs an archive first, and verify names it | `ledger.js` → `restartOf` | `ledger_binding.test.js` :: `a restart is refused until the run is archived, and verify names the restart` | `--restart` over a live run zeroed five dispatches and verify said nothing |
+
+## The merge check and publishing
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 199 | The CI key is withheld from the commands CI reruns | `ci_check.js` → `withoutKeys` | `ci_check.test.js` :: `the CI key is withheld from the commands CI reruns, and still countersigns` | The rerun executes the pull request's own code with the job's environment |
+| 200 | A tag named like the base branch does not move the trust list | `ci_check.js` → `resolveBase` | `ci_check.test.js` :: `a tag named like the base branch does not replace it as the source of trust` | Git resolves a bare name to a tag first, and tags sit outside branch protection |
+| 201 | A bundle altered after signing, or for another ticket, fails the merge check itself | `ci_check.js` → `check` | `ci_check.test.js` :: `a bundle altered after signing, or attesting another ticket, is refused by the merge check itself` | Only `verifyBundle` was tested; the check's own use of its result was not |
+| 202 | An attested head or base outside the branch history is refused | `ci_check.js` → `check` | `ci_check.test.js` :: `a bundle whose attested head or base is not in the branch history is refused` | A bundle for unrelated history attests nothing about this branch |
+| 203 | No test command on the base, or a rerun that never finishes, is not a pass | `ci_check.js` → `runCommand` | `ci_check.test.js` :: `a base branch with no test command, or a rerun that never finishes, is not a pass` | A rerun that proved nothing must not read as one that passed |
+| 204 | A failing check is countersigned as a failure, over the attestation it judged | `ci_check.js` → `countersign` | `ci_check.test.js` :: `a failing check is countersigned as a failure, over the attestation it judged` | Only a passing check had ever been countersigned in a test |
+| 205 | An open run, or one whose sealed evidence changed, is not published | `publish.js` → `readinessProblems` | `publish.test.js` :: `a run still open, or one whose sealed evidence changed, is not published even though it passed` | Row 114's test covered a failed criterion and a BLOCK only |
+| 206 | The issue an update goes to is a bare number | `publish.js` → `publish` | `publish.test.js` :: `the issue an update goes to is a bare number, never a URL or a flag` | `gh` reads a URL as an issue in another repo and a leading dash as a flag |
+
+## Write guard: each route by its own rule
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 207 | A write inside a command substitution is refused behind any read-only verb | `guard_policy.js` → `isReadOnly` | `guard_bypass.test.js` :: `a write hidden in a command substitution is refused behind any read-only verb` | The corpus covered `$()` only behind a harness call |
+| 208 | Only node runs a harness script as a sanctioned call | `guard_policy.js` → `isSanctioned` | `guard_bypass.test.js` :: `only node may run a harness script as a sanctioned call` | Row 119's test never tried another verb |
+| 209 | The trust list, the settings and the enforcement sources are each refused to shell writes mid-run | `guard_policy.js` → `PROTECTED_REFS` | `guard_bypass.test.js` :: `the control plane is refused to shell writes mid-run, each file by its own rule` | Each entry could be deleted with the suite still green |
+| 210 | The fallback chain directory is frozen | `guard_policy.js` → `PROTECTED_REFS` | `guard_bypass.test.js` :: `the fallback chain directory is frozen like the one under .git` | Outside git the chain lives there |
+| 211 | stash -u, an MR, a moded reset and a worktree removal are refused by name | `guard_policy.js` → `DESTRUCTIVE_REPO` | `guard_bypass.test.js` :: `stash -u, an MR, a moded reset and a worktree removal are each refused mid-run by name` | Each entry could be deleted with the suite still green |

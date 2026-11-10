@@ -35,6 +35,7 @@
 'use strict';
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const chain = require('./chain.js');
@@ -269,7 +270,15 @@ function tokenCeiling(runDir) {
   const base = Number((readConfig(runDir).dispatchPolicy || {}).maxRunTokens);
   if (!Number.isInteger(base) || base <= 0) return { tokensUsed: used, tokensFloor: stats.floor, maxRunTokens: null };
   const raised = chain.ofKind(runDir, 'raise').reduce((n, r) => n + (Number(r.payload.tokens) || 0), 0);
-  return { tokensUsed: used, tokensFloor: stats.floor, maxRunTokens: base + raised };
+  const orgCap = orgTokenCap(runDir);
+  return { tokensUsed: used, tokensFloor: stats.floor, maxRunTokens: orgCap === null ? base + raised : Math.min(base + raised, orgCap) };
+}
+
+// The most the org policy lets one run spend, or null. A raise never lifts it.
+function orgTokenCap(runDir) {
+  const loaded = chain.exists(runDir) ? runPolicy(runDir) : policy.readPolicy();
+  const cap = loaded && loaded.policy && loaded.policy.dispatchPolicy && loaded.policy.dispatchPolicy.maxRunTokens;
+  return Number.isInteger(cap) && cap > 0 ? cap : null;
 }
 
 // budget.json exists so a human can read the state without a tool. It is never read back.
@@ -351,12 +360,18 @@ function requireOpen(runDir, what) {
 // on carried a field run's unrelated commits into its ticket branch and its recorded base.
 // Null when the base is right, cannot be judged (no base ref, or git cannot resolve one), or a
 // person gave a reason to start elsewhere.
-function baseProblem(baseSha, offBase) {
-  if (offBase || !baseSha) return null;
-  const ref = ((readConfig().hooks || {}).stopGate || {}).baseRef;
+function baseProblem(runDir, baseSha, offBase) {
+  if (!baseSha) return null;
+  const root = repoRootOf(runDir);
+  const given = gitLines(root, ['rev-parse', '--verify', '--quiet', `${baseSha}^{commit}`]);
+  // A base this repo has never held means the run dir resolved in the wrong repo.
+  if (gitLines(root, ['rev-parse', '--git-dir']) && (!given || !given[0])) {
+    return `base ${String(baseSha).slice(0, 12)} is not a commit of the repo at ${root}. Check the run dir names the repo you mean.`;
+  }
+  if (offBase) return null;
+  const ref = ((readJson(path.join(root, PROFILE_REL)).hooks || {}).stopGate || {}).baseRef;
   if (!ref) return null;
-  const tip = gitLines('.', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
-  const given = gitLines('.', ['rev-parse', '--verify', '--quiet', `${baseSha}^{commit}`]);
+  const tip = gitLines(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
   if (!tip || !tip[0] || !given || !given[0]) return null;
   if (tip[0].trim() === given[0].trim()) return null;
   return (
@@ -366,10 +381,34 @@ function baseProblem(baseSha, offBase) {
   );
 }
 
+// The hooks find a run only at <repo>/.agents/ticket-runs/<TICKET>.
+function runDirProblem(runDir) {
+  const abs = path.resolve(runDir);
+  const runs = path.dirname(abs);
+  if (path.basename(runs) === 'ticket-runs' && path.basename(path.dirname(runs)) === '.agents') return null;
+  return `${abs} is not <repo>/.agents/ticket-runs/<TICKET>, where the hooks look for a run.`;
+}
+
+// The environment may name a policy only where the machine has none of its own.
+function policyDisplaced() {
+  const machine = path.join(os.homedir(), '.claude', 'ticket-loop', 'policy.json');
+  const named = policy.policyPath();
+  if (path.resolve(machine) === named || !fs.existsSync(machine)) return null;
+  return `this machine has an org policy at ${machine}, but ${policy.ENV_POLICY} names ${named}. Unset it; the machine's policy governs.`;
+}
+
 function cmdInit(runDir, baseSha, opts) {
-  const wrongBase = baseProblem(baseSha, opts.offBase);
-  if (wrongBase) {
-    console.error(`ledger init: ${wrongBase}`);
+  const refusal = runDirProblem(runDir) || baseProblem(runDir, baseSha, opts.offBase) || policyDisplaced();
+  if (refusal) {
+    console.error(`ledger init: ${refusal}`);
+    process.exit(1);
+  }
+  // Rotating the chain under a live run dir would zero a run still in flight.
+  if (opts.restart && chain.exists(runDir) && fs.existsSync(budgetPath(runDir))) {
+    console.error(
+      `ledger init: ${runDir} still holds its run. A restart begins with "ledger.js archive ${runDir}", ` +
+        `then "ledger.js init ${runDir} <baseSha> --restart".`
+    );
     process.exit(1);
   }
   // The run dir is a protected namespace: the write guard refuses a plain mkdir under it, so
@@ -421,7 +460,8 @@ function cmdInit(runDir, baseSha, opts) {
   // a mid-run edit (extensions that match nothing, a no-op verify.test, a deleted stopGate
   // block) is a way to disarm the gates. Sealing it here makes that edit show up as
   // TAMPERED in `ledger.js verify` instead of passing as "verified".
-  const configRel = path.join('.agents', 'ticket-loop.config.json');
+  // The run's own repo's profile, never the working directory's.
+  const configRel = path.join(repoRootOf(runDir), PROFILE_REL);
   const configSealed = fs.existsSync(configRel) ? chain.hashEvidence([configRel]) : [];
   // The org policy governs the profile, so it is sealed beside it, by path as well as content.
   const policyFile = policy.policyPath();
@@ -1080,6 +1120,37 @@ function runCriterion(command, cwd, timeoutMs) {
   };
 }
 
+// A criterion's command runs at the top of a checkout of the run's own repo: the main checkout
+// or a worktree of it. Anywhere else, a subfolder included, the same command line can find a
+// different suite. Outside git there are no worktrees, so only the repo root qualifies.
+function checkoutProblem(runDir, cwd) {
+  const root = repoRootOf(runDir);
+  const real = (p) => {
+    try {
+      const r = fs.realpathSync.native(p);
+      return process.platform === 'win32' ? r.toLowerCase() : r;
+    } catch {
+      return null;
+    }
+  };
+  const gitPath = (dir, flag) => {
+    const out = gitLines(dir, ['rev-parse', flag]);
+    return out && out[0] ? real(path.resolve(dir, out[0].trim())) : null;
+  };
+  const here = real(cwd);
+  const repoGit = gitPath(root, '--git-common-dir');
+  if (!repoGit) {
+    return here === real(root) ? null : `--cwd ${cwd} is not the run's repo (${root}); the command must run where the ticket's code is`;
+  }
+  if (gitPath(cwd, '--git-common-dir') !== repoGit) {
+    return `--cwd ${cwd} is not a checkout of the run's repo (${root}); the command must run where the ticket's code is`;
+  }
+  if (gitPath(cwd, '--show-toplevel') !== here) {
+    return `--cwd ${cwd} is a folder inside a checkout, not its top; the command runs from the worktree root`;
+  }
+  return null;
+}
+
 // Runs the criterion for `--by command` and refuses a claimed result its exit code contradicts.
 function commandResult(runDir, criterion, claimed, opts) {
   const refuse = (why) => {
@@ -1093,6 +1164,8 @@ function commandResult(runDir, criterion, claimed, opts) {
   if (!opts.cwd || !fs.existsSync(opts.cwd) || !fs.statSync(opts.cwd).isDirectory()) {
     refuse(`--cwd <dir> must name the directory the command runs in (the ticket worktree)${opts.cwd ? `; ${opts.cwd} is not one` : ''}`);
   }
+  const elsewhere = checkoutProblem(runDir, opts.cwd);
+  if (elsewhere) refuse(elsewhere);
   let timeoutMs = DEFAULT_CHECK_TIMEOUT_MS;
   if (opts.timeoutMs !== undefined) {
     if (!/^\d+$/.test(String(opts.timeoutMs)) || Number(opts.timeoutMs) <= 0) refuse(`--timeout-ms must be a whole number above zero, got "${opts.timeoutMs}"`);
@@ -1146,6 +1219,8 @@ function cmdRed(runDir, id, opts = {}) {
   if (!opts.cwd || !fs.existsSync(opts.cwd) || !fs.statSync(opts.cwd).isDirectory()) {
     refuse(`--cwd <dir> must name the worktree the test runs in${opts.cwd ? `; ${opts.cwd} is not one` : ''}`);
   }
+  const elsewhere = checkoutProblem(runDir, opts.cwd);
+  if (elsewhere) refuse(elsewhere);
   let timeoutMs = DEFAULT_CHECK_TIMEOUT_MS;
   if (opts.timeoutMs !== undefined) {
     if (!/^\d+$/.test(String(opts.timeoutMs)) || Number(opts.timeoutMs) <= 0) refuse(`--timeout-ms must be a whole number above zero, got "${opts.timeoutMs}"`);
@@ -1213,6 +1288,14 @@ function cmdCheck(runDir, id, result, method, note, opts = {}) {
     console.error(
       `ledger check: ${id} is a (manual) criterion in the frozen contract, so a pass needs ` +
         `--by human. A command cannot stand in for the person the criterion asks for.`
+    );
+    process.exit(1);
+  }
+  // Where the contract froze a command, only that command decides the pass.
+  if (normalized === 'PASS' && by !== 'command' && kind !== 'manual' && criterion.run && !NON_COMMAND_RUNNERS.test(criterion.run)) {
+    console.error(
+      `ledger check: refusing "${id} PASS --by ${by}" — the frozen contract gives ${criterion.id} a command ` +
+        `(${criterion.run}), so it passes --by command --cwd <wt>. If the command cannot run here, record SKIPPED.`
     );
     process.exit(1);
   }
@@ -1482,6 +1565,15 @@ function cmdRaise(runDir, tokensArg, reason, approvalSeq) {
   }
   if (!reason || !reason.trim()) {
     console.error('ledger raise: need a reason — who agreed to spend more, and on what');
+    process.exit(1);
+  }
+  const orgCap = orgTokenCap(runDir);
+  const before = tokenCeiling(runDir).maxRunTokens;
+  if (orgCap !== null && before !== null && before + tokens > orgCap) {
+    console.error(
+      `ledger raise: the org policy caps a run at ${orgCap} tokens and this run's ceiling is ${before}; ` +
+        `a raise of ${tokens} would pass it. ${orgCap - before > 0 ? `At most ${orgCap - before} more can be raised.` : 'Nothing more can be raised.'}`
+    );
     process.exit(1);
   }
   const approval = approvalSeq !== undefined ? usableApproval(runDir, approvalSeq, 'raise') : null;
@@ -2062,10 +2154,17 @@ function integrityReport(runDir) {
     problems,
     // Accounted-for edits to sealed documents — not problems, but the report prints them.
     revisions,
+    // A restart zeroes the counters, so the report says this run is not a first pass.
+    restartedFrom: v.ok ? restartOf(runDir) : null,
     counters: v.ok ? counters(runDir) : null,
     completeness: v.ok ? completeness(runDir) : null,
   };
   return report;
+}
+
+function restartOf(runDir) {
+  const p = (chain.first(runDir, 'init') || { payload: {} }).payload;
+  return p.restartedFrom ? { retired: p.restartedFrom, retiredRecords: p.retiredRecords ?? null, retiredSeal: p.retiredSeal ?? null } : null;
 }
 
 // Whether the run did what it set out to, which `intact` does not say: a run that closed with

@@ -148,7 +148,7 @@ function git(cwd, ...args) {
 function markRunActive(main) {
   const runDir = path.join(main, '.agents', 'ticket-runs', 'T-1');
   fs.mkdirSync(runDir, { recursive: true });
-  const res = ledger(main, ['init', runDir, 'abc']);
+  const res = ledger(main, ['init', runDir]);
   assert.strictEqual(res.status, 0, res.stderr);
   return runDir;
 }
@@ -514,7 +514,7 @@ test('a turn may end while agents work, but a dispatch gone quiet past the thres
   try {
     const runDir = path.join(env.main, '.agents', 'ticket-runs', 'T-1');
     fs.mkdirSync(runDir, { recursive: true });
-    assert.strictEqual(ledger(env.main, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(ledger(env.main, ['init', runDir]).status, 0);
     assert.strictEqual(gate(env.main).status, 0, 'a run with no dispatches has nothing open');
 
     assert.strictEqual(ledger(env.main, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']).status, 0);
@@ -528,7 +528,7 @@ test('a turn may end while agents work, but a dispatch gone quiet past the thres
     fs.writeFileSync(profile, JSON.stringify({ ...JSON.parse(fs.readFileSync(profile, 'utf8')), dispatchPolicy: { stallMinutes: 0 } }));
     const quiet = path.join(env.main, '.agents', 'ticket-runs', 'T-2');
     fs.mkdirSync(quiet, { recursive: true });
-    assert.strictEqual(ledger(env.main, ['init', quiet, 'abc']).status, 0);
+    assert.strictEqual(ledger(env.main, ['init', quiet]).status, 0);
     assert.strictEqual(ledger(env.main, ['dispatch', quiet, 'implementer: C1', '--source', 'hook']).status, 0);
     const blocked = gate(env.main);
     assert.strictEqual(blocked.status, 2, blocked.stderr);
@@ -546,7 +546,7 @@ test('a stop in a repo whose open run belongs to another session says whose it i
   try {
     const runDir = path.join(env.main, '.agents', 'ticket-runs', 'T-1');
     fs.mkdirSync(runDir, { recursive: true });
-    assert.strictEqual(ledger(env.main, ['init', runDir, 'abc']).status, 0);
+    assert.strictEqual(ledger(env.main, ['init', runDir]).status, 0);
     assert.strictEqual(ledger(env.main, ['dispatch', runDir, 'implementer: C1', '--source', 'hook', '--session', 's1']).status, 0);
     assert.strictEqual(ledger(env.main, ['outcome', runDir, '2', 'ok']).status, 0);
     const own = gate(env.main, { session_id: 's1' });

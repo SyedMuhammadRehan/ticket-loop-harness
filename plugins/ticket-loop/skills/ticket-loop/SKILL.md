@@ -20,8 +20,11 @@ Reasons for every rule are in README.md ("How the loop stays honest"); this file
 results, verdicts and gates live in a sealed chain under `<gitdir>/ticket-loop/<TICKET>/`,
 written only by `<SKILL_DIR>/scripts/ledger.js`; `budget.json` is a read-only mirror and
 `ledger.md` the human narrative.
-**Working directory:** run every command from the MAIN repo root; reach the worktree with
-`git -C <wt>` or absolute paths, never `cd`, and never prefix a harness command with `cd X &&`.
+**`<SKILL_DIR>`** is this skill's base directory (the absolute path shown when it loaded); the
+write guard refuses the scripts from anywhere else. Each harness call is one bare command,
+`node <SKILL_DIR>/scripts/<script> <args>` with `<runDir>` absolute: no variable for the path,
+nothing chained with `&&`, `;` or `|`. **Working directory:** the MAIN repo root; reach the
+worktree with `git -C <wt>` or absolute paths, never `cd`.
 Run every `{verify.*}` command in the worktree as `node <SKILL_DIR>/scripts/run_in.js <wt> <command>`.
 **Config keys:** `{verify.test}`, `{verify.analyze}`, `{verify.pubGet}`, `{verify.codegen}`
 mean the profile's resolved values. Substitute them; never infer a stack from the files you see.
@@ -224,6 +227,7 @@ One slice per AC, or per criterion when finer, in `approach.md`'s `## Slice orde
 Stage 9 lists every changed file outside all declared scopes; needing one is allowed and
 recorded, not hidden.
 
+**Red run** (a `(test)` criterion, its test written, nothing implemented): `node <SKILL_DIR>/scripts/ledger.js red <runDir> <C-id> --cwd <wt>`.
 **Inline or dispatch.** Do a slice yourself, with the same TDD discipline and red run, the implementer
 prompt's ladder, and the same ledger entry, when it is test-only or a one-file change expected
 under `dispatchPolicy.minSliceLines` (default 50). Dispatch when the slice is feature-sized,
@@ -263,12 +267,12 @@ any kind when null. Commits happen only in the worktree; never push or touch mai
 
 Record every result as you go, naming how it was established:
 `node <SKILL_DIR>/scripts/ledger.js check <runDir> <C-id> PASS|FAIL|SKIPPED --by <method> "<note>"`
-Methods: `command` (add `--cwd <wt>`: the ledger runs the frozen `run:` command and its exit
-code decides), `observed` (the running system
-was exercised and seen), `human` (a person confirmed; the only way a `(manual)` criterion
-passes), `asserted` (concluded from source or a summary; can back only SKIPPED). Read the
-command's own exit code, never a pipe's: redirect output to a file if it is long. Mirror each
-result into `ledger.md`'s check-history table.
+Methods: `command` (add `--cwd <wt>`: the ledger runs the frozen `run:` command at the worktree
+root and prints the exit code that decides; a criterion with a shell `run:` passes no other
+way), `observed` (the running system was exercised and seen; `playwright:`/`browser:` criteria),
+`human` (a person confirmed; the only way a `(manual)` criterion passes), `asserted` (concluded
+from source or a summary; can back only SKIPPED). Mirror each result into `ledger.md`'s
+check-history table.
 
 1. `{verify.analyze}` → zero errors (skip when null).
 2. `{verify.test}` → full suite green. Goldens or snapshots excluded from it are SKIPPED
@@ -291,8 +295,9 @@ result into `ledger.md`'s check-history table.
    read), `why`, `outsideScope`, `consumerFiles` and `label`. Use the label verbatim in `ledger.js dispatch`.
 2. Dispatch ONE judge with **`subagent_type: ticket-loop-qa`** (no Write or Edit; a verdict
    binds to no other type) using `prompts/qa_agent.md`. Fill `{TICKET}`,
-   `{RUN_DIR}` (`<runDir>`), `{SCRIPTS_DIR}` (`<SKILL_DIR>/scripts`), `{DIFF}`
-   (`git -C <wt> diff <base>..HEAD`, `git -C <wt> status --porcelain`, `git -C <wt> diff HEAD`;
+   `{RUN_DIR}`, `{SCRIPTS_DIR}` (`<SKILL_DIR>/scripts`), `{WORKTREE_PATH}` (`<wt>`), all absolute,
+   `{BASE_SHA}` (`baseSha` in `ledger.js status`), `{DIFF}` (`git -C <wt> diff <base>..HEAD`,
+   `git -C <wt> status --porcelain`, `git -C <wt> diff HEAD`;
    say when status is non-empty; past `dispatchPolicy.promptBudgetChars`, give the `--stat`
    plus those commands for the judge to run itself), `{CHECK_RESULTS}` (from `ledger.js status`),
    `{CONVENTIONS}` (codebase-map.md plus `stack`, or "the conventions evident in the

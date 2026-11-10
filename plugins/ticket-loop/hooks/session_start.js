@@ -28,7 +28,7 @@ function runLines(root, records, sessionId, staleHours) {
 }
 
 function notice(input) {
-  const root = lib.findRepoRoot(input.cwd || process.cwd());
+  const root = lib.runRoot(input);
   const runs = lib.runRecords(root);
   const stale = lib.staleCopies(root);
   if (runs.length === 0 && stale.length === 0) return null;

@@ -79,20 +79,30 @@ function detectStack(root) {
       scripts = {};
     }
     const hasTest = typeof scripts.test === 'string' && !/no test specified/.test(scripts.test);
-    const lock = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'].find((f) => read(root, f) !== null) || 'package-lock.json';
+    // null with no lockfile: `npm ci` refuses to run without one.
+    const lock = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'].find((f) => read(root, f) !== null) || null;
     const runner = lock === 'pnpm-lock.yaml' ? 'pnpm' : lock === 'yarn.lock' ? 'yarn' : 'npm';
+    let hasDeps = false;
+    try {
+      const pkg = JSON.parse(pkgText);
+      hasDeps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).length > 0;
+    } catch {
+      hasDeps = false;
+    }
+    const install = !lock ? (hasDeps ? 'npm install' : null) : runner === 'npm' ? 'npm ci' : `${runner} install --frozen-lockfile`;
     found.push({
       stack: 'node',
       verify: {
         analyze: scripts.lint ? `${runner} run lint` : scripts.typecheck ? `${runner} run typecheck` : null,
         test: hasTest ? `${runner} test` : null,
-        pubGet: runner === 'npm' ? 'npm ci' : `${runner} install --frozen-lockfile`,
+        pubGet: install,
         codegen: null,
       },
+      inferred: lock || !hasDeps ? [] : ['no lockfile found, so verify.pubGet is npm install; commit a lockfile and switch to npm ci so every run installs the same tree'],
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'],
       exclude: '\\.d\\.ts$',
       postEdit: null,
-      riskPaths: ['package.json', lock],
+      riskPaths: lock ? ['package.json', lock] : ['package.json'],
       deps: { dir: 'node_modules', lockfile: lock },
     });
   }

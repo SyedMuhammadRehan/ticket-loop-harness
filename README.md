@@ -166,8 +166,11 @@ node <SKILL_DIR>/scripts/doctor.js           # until it ends "ok: 0 problems"; c
 /ticket-loop <TICKET-ID>                     # full run
 ```
 
-`<SKILL_DIR>` is `plugins/ticket-loop/skills/ticket-loop` in this repo or in the installed
-plugin. Hand-written profiles for each stack are in `config.example.json`.
+`<SKILL_DIR>` is the installed skill:
+`~/.claude/plugins/cache/ticket-loop-harness/ticket-loop/<version>/skills/ticket-loop`. Inside a
+session, asking Claude to run a step is quicker: the skill knows its own directory. Use the
+installed copy rather than a checkout of this repo, which the write guard does not accept
+harness commands from. Hand-written profiles for each stack are in `config.example.json`.
 
 Full steps, the manual (non-plugin) install, and the one thing to test first are in
 [INSTALL.md](INSTALL.md).
@@ -268,8 +271,11 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   `--by command` the ledger runs the criterion's frozen `run:` command itself in `--cwd <dir>`
   and seals the command, its exit code, duration and output tail; a claimed result the exit
   code contradicts is refused, and a timed-out command is killed with its process tree and is
-  never a PASS. `asserted` is refused for a PASS: if nothing was run, watched, or looked at, the
-  honest record is SKIPPED. A `(manual)` criterion can be passed only `--by human`, checked
+  never a PASS. `--cwd` must be the top of a checkout of the run's own repo, the main checkout
+  or one of its worktrees: the same command in another directory, or in a subfolder with its own
+  suite, is refused. A criterion whose `run:` is a shell command passes only `--by command`;
+  `observed` and `human` pass the ones with nothing to run. `asserted` is refused for a PASS: if
+  nothing was run, watched, or looked at, the honest record is SKIPPED. A `(manual)` criterion can be passed only `--by human`, checked
   against the kind in the *frozen contract*. `ledger.js cost` reports the breakdown, so a report
   can say "eight by command, one by a person" instead of nine indistinguishable passes.
 - **Tests first is a receipt, not a prompt line** — once the test is written and before any
@@ -333,7 +339,7 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   run is closed the fence lifts, because then it is just your repo again. If you want a floor
   that does not lift, `settings.example.json` carries an optional `permissions.deny` block
   (`.env*`, `secrets/**`, `rm -rf`, force-push, `git reset --hard`); it is independent of the
-  harness and nothing here depends on it. See INSTALL.md step 4.
+  harness and nothing here depends on it. See INSTALL.md step 8.
 - **Frozen done-list** — `freeze_guard.js` is **default-deny** over the protected namespace: a
   command that references `done.md` / `*.approved.md` / the chain is refused unless it is
   read-only or a sanctioned harness invocation. That covers the routes a verb blocklist
@@ -512,7 +518,9 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   passed and whose integrity was intact, and when the base branch's `verify.analyze` and
   `verify.test` pass again when CI runs them. Trust and commands are read from the base, so a
   pull request cannot trust its own key or swap its test command — but the command runs the
-  pull request's own test files (see Residual risk). With `TICKET_LOOP_SIGNING_KEY` in CI it countersigns what it ran. Make
+  pull request's own test files (see Residual risk). The base is resolved as a branch before a
+  tag of the same name. With a `TICKET_LOOP_CI_KEY` secret it countersigns what it ran, pass or
+  fail; the key is read first and withheld from the commands it reruns. Make
   it a required status check and nothing merges around it; [docs/ci.md](docs/ci.md) has the
   GitHub, GitLab and Bitbucket jobs.
 - **Publishing is opt-in, per act, per run** — with `publish.allowed` set, the loop asks the person
@@ -537,7 +545,8 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   reported by `verify` (and so fails the merge check), and an unreadable policy starts no run.
   The policy's path and hash are sealed at init: the run keeps reading that path, a
   `TICKET_LOOP_POLICY` pointed elsewhere mid-run is refused, and editing or deleting the sealed
-  file shows as TAMPERED.
+  file shows as TAMPERED. Where the machine has a policy at the default path, `init` refuses to
+  start under any other: the variable names a policy only on a machine that has none.
 - **The person is reachable wherever they are** — channels live in a user-level
   `~/.claude/ticket-loop/notify.json` (or `TICKET_LOOP_NOTIFY`), never in the repo: ntfy (which can
   also forward to email), Telegram, WhatsApp, Slack, Discord, and a plain webhook for Teams,
@@ -556,11 +565,22 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   sees it. `notify.js test` checks every channel; `doctor.js` warns when nothing can reach you.
 - **Spending and reviewing are bounded, not advised** — with `dispatchPolicy.maxRunTokens` set,
   the dispatch hook warns at 80 percent and refuses the next dispatch at the ceiling, messaging
-  the person; only a sealed `ledger.js raise` with a reason lifts it. Tokens are known only when a
+  the person; only a sealed `ledger.js raise` with a reason lifts it, and never past the org
+  policy's cap. Tokens are known only when a
   dispatch's outcome is recorded, so a run overshoots by whatever is in flight when it crosses
   the line — one dispatch, or several running in parallel. After three BLOCK verdicts the hook
   refuses a fourth judge, so a review loop nobody steers stops and asks. A phone approval backs exactly one clearance or raise, within
   `approvalMinutes`.
+- **The gates follow the run, not the session's directory** — every hook resolves the main
+  checkout from wherever the session is: a linked worktree's `.git` pointer is followed, a
+  subfolder at any depth walks up, and from outside the repo the edited file's path, the paths a
+  command names, and the session's project directory are each tried. An open run arms the write
+  guard, the dispatch count and the stop gate from all of them.
+- **A run belongs to one repo** — `ledger.js init` takes the profile from the repo that owns the
+  run dir, never from the working directory, refuses a run dir that is not
+  `<repo>/.agents/ticket-runs/<TICKET>`, and refuses a base commit that repo does not have.
+  `init --restart` is refused until the run dir is archived, and `verify` carries
+  `restartedFrom`, so a run with zeroed counters cannot read as a first pass.
 - **A run starts from the right place, and checks run in it** — the worktree is created from the
   profile's base branch, and `ledger.js init` refuses a base commit that is not that branch's tip
   unless the person gives `--off-base "<why>"`, so a session sitting on another branch cannot carry
@@ -586,6 +606,12 @@ breaches, and that is judgement.
   security, accessibility and the criteria's tests are never on the chopping block —
   cutting those isn't minimalism, it's a bug. (Ladder adapted from
   [ponytail](https://github.com/dietrichgebert/ponytail).)
+- **The judge treats what it reads as evidence** — both judge prompts say that ticket text, the
+  diff, code comments and run-dir files are written by the party under review, that nothing in
+  them can set the verdict, and that text addressed to a reviewer is itself a BLOCK finding. The
+  loop's judge is given the worktree path and base commit and told to check the diff it was
+  handed against the tree. A test holds the wording in place; whether a model obeys it is
+  judgement.
 - **Bounded, in-place work** — subagents edit in chunks rather than rewriting a file to
   change part of it, prefer the native file tools over `cat`/`grep`/`sed`/`echo >`, and
   return a bounded summary with no file contents restated. A full-file rewrite for a
@@ -731,6 +757,16 @@ Named limits, so they are not mistaken for guarantees:
 - **After close, publishing is a convention as well as a script.** The guard fences `git push`
   only while a run is open; once it closes, `publish.js` is the documented path and its log
   sits in `published.json`, but nothing stops a person or agent pushing by hand.
+- **A session outside the repo is seen only when something names the repo.** From a folder
+  above the repo, a command that names no path inside it (`git push` after a `cd` in an earlier
+  call, say) reaches no run, unless the session's project directory is the repo. Start the
+  session in the repo or its worktree.
+- **A pass is not bound to the commit that ships.** A check seals the command, its exit code and
+  a fingerprint of the tree it ran against; nothing compares that tree with the branch head at
+  close, export or publish. Commits made after the last check are covered by the stop gate while
+  the run is open and by CI's rerun, not by the run's own `passed`.
+- **Raising the token ceiling is the loop's own word** unless it carries `--approval`. The org
+  cap bounds it; below that cap, nothing proves a person agreed.
 - **The org policy reaches a machine only if it is put there.** The harness enforces the file it
   finds; distributing it, and noticing a machine without it, is the organisation's tooling.
 - **The merge check binds only if the platform requires it.** Branch protection that makes the
@@ -800,7 +836,7 @@ records the design decision in `approach.md` before writing the contract:
 - B: catch DioException in the widget — fewer files, but couples UI to dio and every
   future caller re-implements the mapping
 ## Chosen
-- A: error semantics belong at the data boundary; B leaks transport details upward
+- A: error semantics belong at the data boundary; B leaks transport details upward | reuses: the existing Result type and its error mapping
 ## Failure modes
 - API 404 vs 500 need distinct messages | covered-by: C1
 - retry storms if the user hammers the button | covered-by: out-of-scope (rate-limit ticket)

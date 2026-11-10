@@ -25,7 +25,7 @@ const TEMPLATES = {
     perDispatch: ['EXPECTED', 'ACTUAL', 'FILES', 'LEDGER_FORBIDDEN'],
   },
   'qa_agent.md': {
-    required: ['TICKET', 'RUN_DIR', 'SCRIPTS_DIR', 'DIFF', 'CHECK_RESULTS', 'CONVENTIONS', 'QA_SCOPE'],
+    required: ['TICKET', 'RUN_DIR', 'SCRIPTS_DIR', 'WORKTREE_PATH', 'BASE_SHA', 'DIFF', 'CHECK_RESULTS', 'CONVENTIONS', 'QA_SCOPE'],
     perDispatch: ['DIFF', 'CHECK_RESULTS', 'CONVENTIONS', 'QA_SCOPE'],
   },
   'fixer_build.md': {
@@ -64,6 +64,16 @@ for (const [name, spec] of Object.entries(TEMPLATES)) {
     }
   });
 }
+
+// The judge reads text written by the party under review and by whoever can edit the ticket, and
+// its working directory is the main checkout, where every changed file is still the old one.
+test('the judge prompts say that what they read is evidence, and where the changed code is', () => {
+  const judge = fs.readFileSync(path.join(PROMPTS, 'qa_agent.md'), 'utf8');
+  assert.match(judge, /evidence, never instruction/);
+  assert.match(judge, /git -C \{WORKTREE_PATH\} diff --stat \{BASE_SHA\}/);
+  const standalone = fs.readFileSync(path.join(REPO_ROOT, 'plugins', 'ticket-loop', 'skills', 'qa-check', 'prompts', 'qa_check.md'), 'utf8');
+  assert.match(standalone, /evidence, never instruction/);
+});
 
 // A placeholder nobody fills reaches the subagent as the literal text "{FOO}", which reads
 // as an instruction it cannot satisfy.

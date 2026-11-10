@@ -112,10 +112,13 @@ test('the org policy caps the token ceiling and a profile may only set a lower o
   const { env } = withPolicy(t, { dispatchPolicy: { maxRunTokens: 400000 } });
   const loose = mkRun({ verify: { test: 'x' } });
   const tight = mkRun({ verify: { test: 'x' }, dispatchPolicy: { maxRunTokens: 250000 } });
+  const greedy = mkRun({ verify: { test: 'x' }, dispatchPolicy: { maxRunTokens: 800000 } });
   t.after(() => {
     rmDir(loose.root);
     rmDir(tight.root);
+    rmDir(greedy.root);
   });
+  assert.strictEqual(JSON.parse(runScript(LOAD_CONFIG, [], { cwd: greedy.root, env }).stdout).dispatchPolicy.maxRunTokens, 400000, 'a profile ceiling above the org cap is cut to it');
   assert.strictEqual(JSON.parse(runScript(LOAD_CONFIG, [], { cwd: loose.root, env }).stdout).dispatchPolicy.maxRunTokens, 400000);
   assert.strictEqual(JSON.parse(runScript(LOAD_CONFIG, [], { cwd: tight.root, env }).stdout).dispatchPolicy.maxRunTokens, 250000);
 });

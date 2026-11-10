@@ -47,10 +47,10 @@ function forGrep(toolInput, root) {
 function main() {
   const input = lib.readStdinJson();
   if (!input) process.exit(0);
-  const root = lib.findRepoRoot(input.cwd || process.cwd());
+  const toolInput = input.tool_input || {};
+  const root = lib.runRoot(input, [toolInput.file_path, toolInput.path]);
   if (!activeRuns(root).length) process.exit(0);
 
-  const toolInput = input.tool_input || {};
   const found = input.tool_name === 'Read' ? forRead(toolInput) : input.tool_name === 'Grep' ? forGrep(toolInput, root) : null;
   if (!found) process.exit(0);
 

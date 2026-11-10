@@ -137,7 +137,8 @@ function publish(argv, cwd = process.cwd()) {
   const source = cfg.ticketSource;
   const note = `ticket-loop finished ${ticket}: ${ledger.counters(absRun).verdict}, branch ${branch} is ready for review.`;
   if (source === 'github' || source === 'gitlab') {
-    if (!ticketId) return refuse('pass --ticket-id <issue number>');
+    // A number only: gh and glab read a URL as an issue in another repo, and a leading dash as a flag.
+    if (!/^\d+$/.test(String(ticketId || ''))) return refuse('pass --ticket-id <issue number>, digits only');
     const res = source === 'github' ? cli('gh', ['issue', 'comment', ticketId, '--body', note], { cwd: wt }) : cli('glab', ['issue', 'note', ticketId, '--message', note], { cwd: wt });
     if (!res.ok) return { error: `updating the issue failed: ${res.err}` };
     logAct(absRun, { act, source, ticketId });

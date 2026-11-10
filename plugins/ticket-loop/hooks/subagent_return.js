@@ -17,7 +17,7 @@ const lib = require('./hook_lib.js');
 const LEDGER_TIMEOUT_MS = 15000;
 
 function recordReturn(input) {
-  const root = lib.findRepoRoot(input.cwd || process.cwd());
+  const root = lib.runRoot(input);
   const records = lib.runRecords(root);
   if (records.length === 0) return null;
   const run = records.find((r) => !r.orphaned);

@@ -315,3 +315,75 @@ test('moving a ref by another name than rebase is refused mid-run', () => {
     assert.ok(!denied(cmd), `should allow mid-run: ${cmd}`);
   }
 });
+
+// --- 9. each route named by what refuses it ---
+
+// A denial for the wrong reason would hide a rule that no longer fires.
+const hitOf = (cmd, runActive = true) => (policy.commandVerdict(cmd, { runActive }) || { hit: null }).hit;
+
+test('a write hidden in a command substitution is refused behind any read-only verb', () => {
+  const hidden = [
+    `echo $(${RM} ${RUN})`,
+    `cat ${RUN}/ledger.md; ${RM} $(printf '\\x2eagents')`,
+    `ls \`${RM} ${RUN}\``,
+  ];
+  for (const cmd of hidden) {
+    assert.strictEqual(hitOf(cmd), 'a ticket run directory', cmd);
+    assert.strictEqual(hitOf(cmd, false), 'a ticket run directory', `idle: ${cmd}`);
+    assert.strictEqual(policy.isReadOnly(cmd), false, `not read-only: ${cmd}`);
+  }
+  assert.strictEqual(hitOf(`cat ${RUN}/ledger.md`), null, 'the plain read still passes');
+});
+
+test('only node may run a harness script as a sanctioned call', () => {
+  for (const cmd of [
+    `rm scripts/ledger.js ${RUN}/done.md`,
+    `python scripts/ledger.js status ${RUN}`,
+    `bash scripts/ledger.js status ${RUN}`,
+    `nodejs-wrapper scripts/ledger.js status ${RUN}`,
+  ]) {
+    assert.strictEqual(policy.isSanctioned(cmd), false, cmd);
+    assert.strictEqual(hitOf(cmd), 'a ticket run directory', cmd);
+  }
+  assert.strictEqual(policy.isSanctioned(`node scripts/ledger.js status ${RUN}`), true);
+});
+
+test('the control plane is refused to shell writes mid-run, each file by its own rule', () => {
+  const cases = [
+    ['echo abc >> .agents/ticket-loop.trust', 'the trusted signing keys'],
+    ['cp /tmp/s.json .claude/settings.json', 'Claude Code settings'],
+    ['cp /tmp/s.json .claude/settings.local.json', 'Claude Code settings'],
+    ['cp /tmp/h.js src/hook_lib.js', 'an enforcement hook source'],
+    ['cp /tmp/l.js src/validate_done.js', 'an enforcement script source'],
+  ];
+  for (const [cmd, hit] of cases) {
+    assert.strictEqual(hitOf(cmd), hit, cmd);
+    assert.strictEqual(hitOf(cmd, false), null, `outside a run a repo edits its own files: ${cmd}`);
+  }
+  assert.strictEqual(hitOf('cat .agents/ticket-loop.trust'), null, 'reading the trust list is not writing it');
+});
+
+test('the fallback chain directory is frozen like the one under .git', () => {
+  for (const cmd of ['rm .ticket-loop-chain/T-1/head.json', 'echo x >> .ticket-loop-chain/T-1/chain.jsonl']) {
+    assert.strictEqual(hitOf(cmd), 'the receipt chain directory', cmd);
+    assert.strictEqual(hitOf(cmd, false), 'the receipt chain directory', `idle: ${cmd}`);
+  }
+  assert.strictEqual(hitOf('cat .ticket-loop-chain/T-1/chain.jsonl'), null);
+});
+
+test('stash -u, an MR, a moded reset and a worktree removal are each refused mid-run by name', () => {
+  const cases = [
+    ['git stash -u', 'destructive repo command'],
+    ['git stash --include-untracked', 'destructive repo command'],
+    ['glab mr create --fill', 'publishing command'],
+    ['glab mr merge 7', 'publishing command'],
+    ['git reset --soft main', 'history rewrite'],
+    ['git reset --keep main', 'history rewrite'],
+  ];
+  for (const [cmd, hit] of cases) {
+    assert.strictEqual(hitOf(cmd), hit, cmd);
+    assert.strictEqual(hitOf(cmd, false), null, `idle: ${cmd}`);
+  }
+  assert.strictEqual(hitOf(`git worktree remove ${RUN}`), 'a ticket run directory');
+  for (const cmd of ['git stash', 'glab mr list', 'git worktree list']) assert.strictEqual(hitOf(cmd), null, cmd);
+});

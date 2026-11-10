@@ -26,21 +26,71 @@ try {
 }
 const CHAIN_FILE = 'chain.jsonl';
 const LEDGER_REL = path.join('skills', 'ticket-loop', 'scripts', 'ledger.js');
-const MAX_ROOT_SEARCH_DEPTH = 8;
 const DEFAULT_TIMEOUT_MS = 120000;
 
 // cmd.exe metacharacters that make the win32 shell fallback unsafe to attempt.
 const WIN_SHELL_UNSAFE = /[&|<>^"%]/;
 
-function findRepoRoot(start) {
-  let dir = start;
-  for (let i = 0; i < MAX_ROOT_SEARCH_DEPTH; i++) {
-    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+// The main checkout at or above `start`, or null outside any repo. The run dirs and the profile
+// live in the main checkout, so a linked worktree's `.git` pointer file is followed to it.
+function repoRootAbove(start) {
+  let dir = path.resolve(start);
+  for (;;) {
+    const marker = path.join(dir, '.git');
+    if (fs.existsSync(marker)) return mainCheckoutOf(dir, marker);
     const parent = path.dirname(dir);
-    if (parent === dir) break;
+    if (parent === dir) return null;
     dir = parent;
   }
-  return start;
+}
+
+// A submodule's `.git` is a pointer too, but it has no `commondir`: it is its own repo.
+function mainCheckoutOf(dir, marker) {
+  try {
+    if (fs.statSync(marker).isDirectory()) return dir;
+    const pointer = fs.readFileSync(marker, 'utf8').match(/^gitdir:\s*(.+)$/m);
+    if (!pointer) return dir;
+    const gitDir = path.resolve(dir, pointer[1].trim());
+    const common = path.resolve(gitDir, fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim());
+    return path.basename(common) === '.git' ? path.dirname(common) : dir;
+  } catch {
+    return dir;
+  }
+}
+
+function findRepoRoot(start) {
+  return repoRootAbove(start) || start;
+}
+
+// The repo whose open run governs this hook call. A session may sit in the ticket worktree, or
+// outside the repo while it edits a file inside it; with no run anywhere, the cwd's repo.
+function runRoot(input, paths = []) {
+  const cwd = (input && input.cwd) || process.cwd();
+  const starts = [cwd, process.env.CLAUDE_PROJECT_DIR, ...paths].filter((s) => typeof s === 'string' && s);
+  const seen = new Set();
+  for (const start of starts) {
+    const root = repoRootAbove(path.resolve(cwd, start));
+    if (!root || seen.has(root)) continue;
+    seen.add(root);
+    if (runRecords(root).length > 0) return root;
+  }
+  return findRepoRoot(cwd);
+}
+
+// Words of a command that may name the repo: those with a separator, and the directory after
+// `cd` or `-C`. Bounded, because this runs on every command.
+const MAX_COMMAND_PATHS = 24;
+const DIR_ARGUMENT = /^(cd|pushd|chdir|set-location|sl|-c)$/i;
+function commandPaths(command) {
+  const words = String(command).split(/[\s"'=;|&<>()]+/).filter(Boolean);
+  const out = [];
+  for (let i = 0; i < words.length && out.length < MAX_COMMAND_PATHS; i++) {
+    const word = words[i];
+    if (!/[\/\\]/.test(word) && !(i > 0 && DIR_ARGUMENT.test(words[i - 1]))) continue;
+    // Git Bash spells C:\x as /c/x.
+    out.push(process.platform === 'win32' ? word.replace(/^\/([a-z])(?=\/)/i, '$1:') : word);
+  }
+  return out;
 }
 
 // Returns { found, root, config, error? }. A missing or unparsable config means the
@@ -365,6 +415,8 @@ function tail(text, lines) {
 module.exports = {
   CONFIG_REL_PATH,
   findRepoRoot,
+  runRoot,
+  commandPaths,
   loadConfig,
   activeRuns,
   runRecords,
