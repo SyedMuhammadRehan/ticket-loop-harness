@@ -363,6 +363,14 @@ test('the control plane is refused to shell writes mid-run, each file by its own
   assert.strictEqual(hitOf('cat .agents/ticket-loop.trust'), null, 'reading the trust list is not writing it');
 });
 
+test('the signing directory is refused to Edit and Write with no run active', () => {
+  for (const p of ['C:/Users/dev/.claude/ticket-loop/signing/key.pem', '/home/dev/.claude/ticket-loop/signing/key.pub']) {
+    assert.ok(deniedPath(p, false), `idle: ${p}`);
+    assert.ok(deniedPath(p, true), `mid-run: ${p}`);
+  }
+  assert.ok(!deniedPath('/home/dev/.claude/ticket-loop/notify.json', false), 'the rest of that folder is the person\'s own config when idle');
+});
+
 test('the fallback chain directory is frozen like the one under .git', () => {
   for (const cmd of ['rm .ticket-loop-chain/T-1/head.json', 'echo x >> .ticket-loop-chain/T-1/chain.jsonl']) {
     assert.strictEqual(hitOf(cmd), 'the receipt chain directory', cmd);

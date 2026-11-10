@@ -27,7 +27,7 @@ function git(root, args) {
 }
 
 // A real git repo, because tests-first is proven by the worktree changing between the red run and the pass.
-function frozenRun(profile = {}, c1, c2) {
+function frozenRun(profile = {}, c1, c2, text) {
   const root = mkTmpDir('tl-red');
   spawnSync('git', ['init', '-q', root]);
   fs.mkdirSync(path.join(root, '.agents'), { recursive: true });
@@ -41,9 +41,47 @@ function frozenRun(profile = {}, c1, c2) {
   const runDir = path.join(root, '.agents', 'ticket-runs', 'T-1');
   fs.mkdirSync(runDir, { recursive: true });
   assert.strictEqual(ledger(root, ['init', runDir]).status, 0);
-  freezeRun(root, runDir, draft(c1, c2));
+  freezeRun(root, runDir, text || draft(c1, c2));
   return { root, runDir };
 }
+
+// Two test criteria and one with nothing a shell can run.
+const THREE =
+  `# Done\n## Criteria\n- [ ] C1 (test): the feature exists | run: ${FEATURE_TEST}\n` +
+  `- [ ] C2 (analyzer): clean | run: ${PASSES}\n` +
+  `- [ ] C3 (test): the feature is wired in | run: ${FEATURE_TEST}\n` +
+  `- [ ] C4 (test): the screen shows it | run: playwright: open /feature\n` +
+  `## Tokens\n- none\n## Out of scope\n- the offline banner\n`;
+
+test('a red run proves tests-first for its own criterion and no other', () => {
+  const { root, runDir } = frozenRun({}, undefined, undefined, THREE);
+  try {
+    assert.strictEqual(red(root, runDir, 'C1').status, 0);
+    fs.writeFileSync(path.join(root, 'feature.js'), 'module.exports = 1;\n');
+    assert.strictEqual(pass(root, runDir, 'C1').status, 0);
+    assert.strictEqual(pass(root, runDir, 'C3').status, 0);
+    assert.strictEqual(criterion(root, runDir, 'C1').testFirst, 'proven');
+    assert.strictEqual(criterion(root, runDir, 'C3').testFirst, 'missing', 'C1 failing first says nothing about C3');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('a red run that never finishes, or a test criterion with nothing to run, seals nothing', () => {
+  const hang = 'node -e "setTimeout(() => {}, 20000)"';
+  const { root, runDir } = frozenRun({}, hang, undefined, THREE.replace(FEATURE_TEST, hang));
+  try {
+    const slow = ledger(root, ['red', runDir, 'C1', '--cwd', root, '--timeout-ms', '700']);
+    assert.strictEqual(slow.status, 1, 'a command that timed out showed no failure');
+    assert.match(slow.stderr, /did not finish with an exit code/);
+    const nothing = red(root, runDir, 'C4');
+    assert.strictEqual(nothing.status, 1);
+    assert.match(nothing.stderr, /no shell command to run/);
+    assert.strictEqual(chain.ofKind(runDir, 'red').length, 0);
+  } finally {
+    rmDir(root);
+  }
+});
 
 const red = (root, runDir, id = 'C1') => ledger(root, ['red', runDir, id, '--cwd', root]);
 const pass = (root, runDir, id) => ledger(root, ['check', runDir, id, 'PASS', '--by', 'command', '--cwd', root]);

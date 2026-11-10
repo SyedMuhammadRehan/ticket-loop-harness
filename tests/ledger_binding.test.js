@@ -127,6 +127,46 @@ test('a gate accepts its artifact when the run dir is reached through a link', (
   }
 });
 
+test('the implement gate seals something, and edited mirror caps are reported', () => {
+  const { root, runDir } = mkRun({ verify: VERIFY });
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'base123']).status, 0);
+    const bare = ledger(root, ['gate', runDir, 'implement']);
+    assert.notStrictEqual(bare.status, 0, 'an implement receipt over nothing proves nothing was implemented');
+    fs.writeFileSync(path.join(root, 'feature.js'), 'module.exports = 1;\n');
+    assert.strictEqual(ledger(root, ['gate', runDir, 'implement', '--evidence', path.join(root, 'feature.js')]).status, 0);
+
+    const mirror = path.join(runDir, 'budget.json');
+    const budget = JSON.parse(fs.readFileSync(mirror, 'utf8'));
+    fs.writeFileSync(mirror, JSON.stringify({ ...budget, maxDispatches: 999 }));
+    assert.ok(verifyOf(root, runDir).problems.some((p) => /budget\.json caps were edited/.test(p)));
+  } finally {
+    rmDir(root);
+  }
+});
+
+// The mark arrives well after the launch here, so "quiet since the launch" and "quiet since the
+// last sign of life" give different answers at the moment the stall threshold passes.
+test('a dispatch is stalled by time since its last sign of life, not since its launch', async () => {
+  const { root, runDir } = mkRun({ verify: VERIFY, dispatchPolicy: { stallMinutes: 1 } });
+  const { openDispatches } = require(LEDGER);
+  const chainLib = require(path.join(SCRIPTS_DIR, 'chain.js'));
+  try {
+    assert.strictEqual(ledger(root, ['init', runDir, 'base123']).status, 0);
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']).status, 0);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.strictEqual(ledger(root, ['returned', runDir, '--agent', 'bg1']).status, 0);
+    const launchedAt = Date.parse(chainLib.last(runDir, 'dispatch').at);
+    const justPastLaunchThreshold = launchedAt + 60000 + 500;
+    const [open] = openDispatches(runDir, justPastLaunchThreshold);
+    assert.strictEqual(open.stalled, false, 'a minute since launch, but under a minute since it was last seen');
+    const [later] = openDispatches(runDir, launchedAt + 60000 + 5000);
+    assert.strictEqual(later.stalled, true, 'a minute since it was last seen');
+  } finally {
+    rmDir(root);
+  }
+});
+
 test('an addition is one criterion on one line', () => {
   const { root, runDir } = mkRun({ verify: VERIFY });
   try {

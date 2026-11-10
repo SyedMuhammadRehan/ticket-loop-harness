@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
-const { HOOKS_DIR, mkTmpDir, rmDir, runScript, mkFakeRepo, ledger } = require('./helpers.js');
+const { HOOKS_DIR, SCRIPTS_DIR, mkTmpDir, rmDir, runScript, mkFakeRepo, ledger } = require('./helpers.js');
+const chain = require(path.join(SCRIPTS_DIR, 'chain.js'));
 
 const SCRIPT = path.join(HOOKS_DIR, 'stop_gate.js');
 const {
@@ -97,6 +98,12 @@ test('escape-valve state from another session does not carry over', () => {
     // A hand-seeded file with no session marker is not trusted.
     fs.writeFileSync(p, JSON.stringify({ consecutiveBlocks: 99 }));
     assert.strictEqual(readState(root, 'session-A').consecutiveBlocks, 0);
+
+    // A seeded count is only ever a whole number of real blocks, and never more than the valve needs.
+    for (const [seeded, read] of [[-5, 0], ['many', 0], [2.5, 0], [99, 3]]) {
+      fs.writeFileSync(p, JSON.stringify({ sessionId: 'session-A', consecutiveBlocks: seeded }));
+      assert.strictEqual(readState(root, 'session-A').consecutiveBlocks, read, `seeded ${seeded}`);
+    }
   } finally {
     rmDir(root);
   }
@@ -497,9 +504,29 @@ test('clean trees pass without running anything; escape valve releases after 3 b
     for (let i = 0; i < 3; i++) {
       assert.strictEqual(gate(env.main, { session_id: 's1' }).status, 2);
     }
+    // The valve is for a session already being held open by this hook; a fresh stop still blocks.
+    assert.strictEqual(gate(env.main, { session_id: 's1' }).status, 2, 'three blocks alone do not open the valve');
     const res = gate(env.main, { session_id: 's1', stop_hook_active: true });
     assert.strictEqual(res.status, 0);
     assert.ok(res.stderr.includes('NOT verified') && res.stderr.includes('NOT a pass'), res.stderr);
+  } finally {
+    teardown(env);
+  }
+});
+
+test('a run whose dispatch record cannot be read blocks the "done" claim', () => {
+  const env = setupRepo();
+  const runDir = markRunActive(env.main);
+  try {
+    assert.strictEqual(gate(env.main).status, 0, 'a clean tree and a readable record pass');
+    const file = chain.chainPath(runDir);
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+    const first = JSON.parse(lines[0]);
+    first.payload.maxDispatches = 9999;
+    fs.writeFileSync(file, [JSON.stringify(first), ...lines.slice(1)].join('\n') + '\n');
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 2, res.stderr);
+    assert.match(res.stderr, /cannot read the dispatch record/);
   } finally {
     teardown(env);
   }
