@@ -363,7 +363,8 @@ test('a test command that cannot start blocks the "done" claim mid-run', () => {
     fs.writeFileSync(
       path.join(env.main, '.agents', 'ticket-loop.config.json'),
       JSON.stringify({
-        verify: { test: 'node -e process.exit(127)' },
+        // Quoted: an unquoted parenthesis is a syntax error to a POSIX shell, which exits 2.
+        verify: { test: 'node -e "process.exit(127)"' },
         hooks: { stopGate: { extensions: ['.py'], mode: 'full', baseRef: 'main' } },
       })
     );

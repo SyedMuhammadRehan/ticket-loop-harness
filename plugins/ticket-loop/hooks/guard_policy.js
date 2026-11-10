@@ -100,12 +100,14 @@ const CONTROL_PLANE_PATTERNS = [
 const GLOB_CHAR = /[*?[\]{}]/;
 const MAX_BRACE_EXPANSIONS = 64;
 
-// One path segment of a shell glob against one name, by state-set simulation: linear in the
-// pattern times the name, whatever the pattern holds.
-function globSegmentMatches(pattern, name) {
+// One path segment of a shell glob against a few names, by state-set simulation: linear in the
+// pattern times the name, whatever the pattern holds. Compiled once for all the names, because
+// the segment can be the whole command.
+function globSegmentReaches(pattern, names) {
   const alts = expandBraces(pattern);
   if (alts === null) return true;
-  return alts.some((alt) => simulateSegment(compileSegment(alt), name));
+  const compiled = alts.map(compileSegment);
+  return names.some((name) => compiled.some((tokens) => simulateSegment(tokens, name)));
 }
 
 // For each position, where the next `ch` at or after it is (-1 if none): one pass, so finding
@@ -194,7 +196,7 @@ function globReachesNamespace(probe) {
       if (!GLOB_CHAR.test(seg)) continue;
       const dotted = /^[.[{]/.test(seg);
       if (!dotted && seg.search(GLOB_CHAR) < MIN_PLAIN_PREFIX) continue;
-      if ((dotted ? DOT_TARGETS : PLAIN_TARGETS).some((t) => globSegmentMatches(seg, t))) return true;
+      if (globSegmentReaches(seg, dotted ? DOT_TARGETS : PLAIN_TARGETS)) return true;
     }
   }
   return false;
@@ -548,7 +550,8 @@ function protectedRefs(cmd, runActive) {
   const probe = stripQuotes(String(cmd).toLowerCase());
   const unescaped = probe.replace(/\\/g, '');
   const hits = (p, s) => (p.re ? p.re.test(s) : p.test(s));
-  return PROTECTED_REFS.filter((p) => (p.tier !== 'control' || runActive) && (hits(p, probe) || hits(p, unescaped)));
+  const escaped = unescaped !== probe;
+  return PROTECTED_REFS.filter((p) => (p.tier !== 'control' || runActive) && (hits(p, probe) || (escaped && hits(p, unescaped))));
 }
 
 // A risk path written through the shell is the same edit the Edit tool is refused.
