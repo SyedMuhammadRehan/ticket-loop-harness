@@ -66,6 +66,18 @@ test('the worktree is the positional argument wherever --main sits', () => {
   }
 });
 
+test('the worktree alone is enough, with the main repo taken from the profile', () => {
+  const env = mkPair();
+  try {
+    const res = runScript(SCRIPT, [env.tree], { cwd: env.root });
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(JSON.parse(res.stdout).action, 'linked', res.stdout);
+    assert.ok(fs.existsSync(path.join(env.tree, 'node_modules', 'left-pad', 'index.js')));
+  } finally {
+    rmDir(env.base);
+  }
+});
+
 // The one case that must never be optimised away.
 test('a different lockfile installs instead of reusing', () => {
   const env = mkPair({ lockTree: '{"v":2}' });

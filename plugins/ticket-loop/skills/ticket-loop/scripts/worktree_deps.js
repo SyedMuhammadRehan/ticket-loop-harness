@@ -38,10 +38,16 @@ function sameFile(a, b) {
   }
 }
 
+// Without --main there is no value slot to skip: index -1 + 1 is the first argument.
+function worktreeArg(argv, mainIdx) {
+  const mainValueIdx = mainIdx === -1 ? -1 : mainIdx + 1;
+  return argv.find((a, i) => !a.startsWith('--') && i !== mainValueIdx);
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const mainIdx = argv.indexOf('--main');
-  const worktree = argv.find((a, i) => !a.startsWith('--') && i !== mainIdx + 1);
+  const worktree = worktreeArg(argv, mainIdx);
   if (!worktree) {
     console.error('worktree_deps: usage: worktree_deps.js <worktreePath> [--main <repoRoot>]');
     process.exit(1);
