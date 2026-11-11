@@ -29,7 +29,12 @@ report by accident, and that a deliberate one leaves marks. See
 [Residual risk](#residual-risk-stated-plainly).
 
 Something refused or stuck? [TROUBLESHOOTING.md](TROUBLESHOOTING.md) is indexed by the exact
-message you were shown.
+message you were shown. New here? [docs/first-run.md](docs/first-run.md) walks a first run on a
+sample repo that `node examples/new-sample.js <folder>` makes for you. What a model actually
+does with the plugin loaded, against the same model without it, is measured by the
+[behaviour evals](docs/evals.md). Whether a whole run gets a ticket right is scored on
+[the Depot bench](bench/README.md): eight tickets against a project built for it, checked by
+tests the agent never sees.
 
 ![ticket-loop pipeline: preflight → intake → design → freeze spec → implement → verify → adversarial QA → report, with human gates and a retry loop](assets/ticket-loop-flow.svg)
 

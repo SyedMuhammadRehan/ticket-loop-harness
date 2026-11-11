@@ -1,0 +1,42 @@
+name: plugin evals
+
+# Every run is real model calls on the account behind ANTHROPIC_API_KEY, so this never runs on
+# its own: start it by hand from the Actions tab, with a cost ceiling.
+on:
+  workflow_dispatch:
+    inputs:
+      max_cost_usd:
+        description: Stop before the next run once spend reaches this
+        default: '3'
+      threshold:
+        description: A case scoring below this fails the job
+        default: '0.8'
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Run the eval suite
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          claude plugin eval plugins/ticket-loop \
+            --scaffold --allow-tools Edit Write \
+            --trust-plugin --no-publish \
+            --threshold "${{ inputs.threshold }}" \
+            --max-cost-usd "${{ inputs.max_cost_usd }}" \
+            --json results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: |
+            results.json
+            plugins/ticket-loop/evals/results/
+          if-no-files-found: ignore

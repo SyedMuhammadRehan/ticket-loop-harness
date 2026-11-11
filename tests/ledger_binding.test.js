@@ -156,11 +156,14 @@ test('a dispatch is stalled by time since its last sign of life, not since its l
     assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C1', '--source', 'hook']).status, 0);
     await new Promise((resolve) => setTimeout(resolve, 1500));
     assert.strictEqual(ledger(root, ['returned', runDir, '--agent', 'bg1']).status, 0);
+    // Both moments come from the sealed records, so a slow machine only widens the gap between them.
     const launchedAt = Date.parse(chainLib.last(runDir, 'dispatch').at);
-    const justPastLaunchThreshold = launchedAt + 60000 + 500;
-    const [open] = openDispatches(runDir, justPastLaunchThreshold);
+    const seenAt = Date.parse(chainLib.last(runDir, 'returned').at);
+    assert.ok(seenAt - launchedAt >= 1000, 'the mark came well after the launch');
+    const STALL_MS = 60000;
+    const [open] = openDispatches(runDir, launchedAt + STALL_MS + 1);
     assert.strictEqual(open.stalled, false, 'a minute since launch, but under a minute since it was last seen');
-    const [later] = openDispatches(runDir, launchedAt + 60000 + 5000);
+    const [later] = openDispatches(runDir, seenAt + STALL_MS);
     assert.strictEqual(later.stalled, true, 'a minute since it was last seen');
   } finally {
     rmDir(root);

@@ -1,0 +1,10 @@
+{
+  "name": "depot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A small inventory and orders service. No dependencies.",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node scripts/lint.js"
+  }
+}
