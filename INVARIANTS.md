@@ -341,6 +341,7 @@ uphold" and must stay there rather than migrating into this table:
 | 213 | Asking for trust and naming no key trusts nobody | `verify_bundle.js` → `trustRequired` | `attest.test.js` :: `asking for trust and naming no key trusts nobody` | An empty trust file read as "no trust asked", so any self-signed bundle exited 0 |
 | 214 | The dashboard answers only requests addressed to a loopback name | `dashboard.js` → `isLoopbackHost` | `dashboard.test.js` :: `--serve answers on loopback only and refreshes itself` | Binding to loopback stops other machines, not a web page that points its own name there |
 | 215 | The worktree is the positional argument wherever `--main` sits | `worktree_deps.js` → `mainIdx` | `worktree_deps.test.js` :: `the worktree is the positional argument wherever --main sits` | With `--main` first, the main repo was taken for the worktree and reported `present` |
+| 245 | The worktree alone is a complete call | `worktree_deps.js` → `worktreeArg` | `worktree_deps.test.js` :: `the worktree alone is enough, with the main repo taken from the profile` | Stage 0 gives the one-argument form; with no `--main` the first argument was skipped as its value and the script exited 1 |
 
 ## Setup that fails soft
 
