@@ -258,9 +258,15 @@ test('choose writes the model and publishing choices and leaves the rest of the 
     assert.deepStrictEqual(shown.models, { survey: 'inherit', implementer: 'inherit', fixer: 'inherit', qa: 'inherit' });
     assert.deepStrictEqual(shown.publish, []);
 
+    assert.strictEqual(shown.remote, null, 'a repo with no origin has nowhere to publish to, and setup is told so');
+
     const res = run(CHOOSE, root, ['--model', 'survey=haiku', '--model', 'implementer=sonnet', '--publish', 'push,pr']);
     assert.strictEqual(res.status, 0, res.stderr);
     assert.match(res.stdout, /each run still asks before it publishes/);
+    assert.match(res.stdout, /no "origin" remote yet/);
+    git(root, 'remote', 'add', 'origin', 'https://example.invalid/acme/app.git');
+    assert.strictEqual(JSON.parse(run(CHOOSE, root, ['--show']).stdout).remote, 'https://example.invalid/acme/app.git');
+    assert.doesNotMatch(run(CHOOSE, root, ['--publish', 'push,pr']).stdout, /no "origin" remote/);
     const after = profileOf(root);
     assert.deepStrictEqual(after.models, { survey: 'haiku', implementer: 'sonnet' });
     assert.deepStrictEqual(after.publish.allowed, ['push', 'pr']);
@@ -346,6 +352,18 @@ test('the setup skill asks both questions and writes the answers through choose'
   assert.match(skill, /What may a finished run publish\?/);
   assert.match(skill, /every run still asks before each\s+act, and never merges/);
   assert.match(skill, /Never choose for them/);
+  assert.match(skill, /"remote": null/, 'with nowhere to push to, the publishing question is skipped');
+});
+
+// A run that could not push was told "handoff.js prints the PR commands" and nothing else, so it
+// could not run it: the script needs the worktree and somewhere to write the body.
+test('the close stage gives the handoff command with every argument it requires', () => {
+  const stage = fs.readFileSync(path.join(SCRIPTS_DIR, '..', 'stages', '11-report-and-close.md'), 'utf8');
+  const usage = runScript(path.join(SCRIPTS_DIR, 'handoff.js'), [], {}).stderr;
+  for (const flag of ['--worktree', '--out']) {
+    assert.ok(usage.includes(flag), `handoff.js no longer takes ${flag}`);
+    assert.match(stage, new RegExp(`handoff\\.js <runDir>[^\\n]*${flag}`), `the stage file runs handoff.js without ${flag}`);
+  }
 });
 
 test('the canary reports a gate that refuses nothing', () => {

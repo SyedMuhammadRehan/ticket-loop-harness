@@ -9,6 +9,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const policy = require('./policy.js');
 const { withoutBom } = require('./load_config.js');
 
@@ -38,6 +39,12 @@ function openRun(root) {
   } catch {
     return null;
   }
+}
+
+// Where a push would go, or null: publishing needs somewhere to publish to.
+function originOf(root) {
+  const res = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', timeout: 15000 });
+  return res.status === 0 && res.stdout.trim() ? res.stdout.trim() : null;
 }
 
 function current(profile) {
@@ -107,7 +114,7 @@ function main() {
   }
 
   if (args.length === 1 && args[0] === '--show') {
-    process.stdout.write(JSON.stringify({ ...current(profile), roles: ROLES, modelChoices: MODELS, publishChoices: ACTS, orgPolicy: limits() }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ ...current(profile), roles: ROLES, modelChoices: MODELS, publishChoices: ACTS, remote: originOf(root), orgPolicy: limits() }, null, 2) + '\n');
     return;
   }
 
@@ -128,6 +135,7 @@ function main() {
   console.log(`  models:  ${ROLES.map((role) => `${role} ${now.models[role]}`).join(', ')}`);
   console.log(`  publish: ${now.publish.length ? now.publish.join(', ') : 'nothing — the loop hands you a branch'}`);
   if (now.publish.length) console.log('  each run still asks before it publishes; this only sets what may be asked for');
+  if (now.publish.length && !originOf(root)) console.log('  note: this repo has no "origin" remote yet, so a push has nowhere to go until one is added');
 }
 
 if (require.main === module) main();

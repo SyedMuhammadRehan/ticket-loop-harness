@@ -17,6 +17,7 @@
    <runDir> --out <wt>/.agents/attestations/<TICKET>.bundle.json`; commit it alone: `chore(<TICKET>): attest`. Then,
    for each act consented to, in order push, pr, ticket: `node <SKILL_DIR>/scripts/publish.js <runDir> --worktree <wt> --act <act>`.
 4. Final message, also sent with `notify.js send "<status, branch, what waits on you>"`: status (COMPLETE, or INCOMPLETE and why), report path, branch name, the
-   integrity line from `ledger.js verify`, what `publish.js` did or refused (else `handoff.js` prints the PR
-   commands), that merge and golden regeneration are manual, and plainly what was NOT verified: excluded goldens, every SKIPPED criterion, every
+   integrity line from `ledger.js verify`, what `publish.js` did or refused (when nothing was pushed, or a push failed,
+   `node <SKILL_DIR>/scripts/handoff.js <runDir> --worktree <wt> --out <runDir>/pr-body.md` prints the commands
+   to push and open it), that merge and golden regeneration are manual, and plainly what was NOT verified: excluded goldens, every SKIPPED criterion, every
    stop_gate "NOT verified" note, and on a LOGIC-ONLY run every visual and contract check.
