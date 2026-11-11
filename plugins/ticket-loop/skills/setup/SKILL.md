@@ -65,7 +65,8 @@ to keep it.
 - *Their own pick* per role: `survey`, `implementer`, `fixer`, `qa`, each one of `inherit`,
   `haiku`, `sonnet`, `opus`, `fable`.
 
-**What may a finished run publish?**
+**What may a finished run publish?** When `--show` reports `"remote": null` the repo has
+nowhere to push to: say so, leave publishing at nothing, and skip this question.
 - *Nothing* (the default): the loop hands over a branch and the commands to open a pull request.
 - *Push the ticket branch.*
 - *Push, and open the pull or merge request.*
