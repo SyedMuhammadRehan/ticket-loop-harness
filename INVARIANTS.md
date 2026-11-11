@@ -284,6 +284,17 @@ uphold" and must stay there rather than migrating into this table:
 | 197 | init proposes no `npm ci` without a lockfile, and doctor reports a profile that asks for one | `doctor.js` → `installFindings` | `setup_tools.test.js` :: `init proposes no npm ci without a lockfile, and doctor reports a profile that asks for one` | A lockfile-less Node repo got a profile whose install could not run, and doctor called it ready |
 | 198 | doctor says when the profile is not on the base branch | `doctor.js` → `committedFindings` | `setup_tools.test.js` :: `doctor says when the profile is not committed on the base branch, until it is` | The merge check reads the base branch's profile; an uncommitted one reaches nobody else |
 
+## Setup that proves itself, and a playbook that knows where it is
+
+| # | Invariant | Enforced by | Killed by | Why it exists |
+|---|---|---|---|---|
+| 232 | The canary gives each gate a real violation and reports one that lets it through | `canary.js` → `runCanary` | `setup_tools.test.js` :: `the canary reports a gate that refuses nothing` | A health check that reads configuration says the plugin is installed, not that it enforces |
+| 233 | doctor --canary tries the gates outside the repo and says whether they held | `doctor.js` → `canaryFindings` | `setup_tools.test.js` :: `doctor --canary tries each gate in a throwaway repo and reports that they held` | Install trouble is the first thing a newcomer meets |
+| 234 | The setup skill's live canary is a command the write guard refuses with no run open | `guard_policy.js` → `PROTECTED_REFS` | `setup_tools.test.js` :: `the setup skill's live canary is a command the write guard refuses with no run open` | The skill reads that refusal as proof Claude Code is calling the hooks |
+| 235 | The stage a run is at is read from its sealed chain | `next.js` → `decide` | `next.test.js` :: `next walks a run from preflight to closed, naming each stage file in turn` | A compaction keeps only the start of a skill, so a run's place cannot live in the orchestrator's memory |
+| 236 | A stage is passed over only with a sealed reason, and only survey, design or approach | `ledger.js` → `cmdSkip` | `next.test.js` :: `a stage is passed over only with a sealed reason, and only the three that may be` | A skip was a line in a narrative file; nothing could tell it from a stage not reached |
+| 237 | Every stage file `next` can name ships with the plugin | `next.js` → `stageFilesMissing` | `next.test.js` :: `every stage file next can name ships, and the playbook router names the command` | A router pointing at a missing file strands the run |
+
 ## The run, wherever the session is
 
 | # | Invariant | Enforced by | Killed by | Why it exists |

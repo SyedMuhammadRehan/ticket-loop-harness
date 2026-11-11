@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Read-only health check of a repo's ticket-loop setup: what is wrong, and the fix for each.
-// It never writes. Exit 1 when there is a problem, 0 when there are only notes or nothing.
+// It never writes to the repo. Exit 1 when there is a problem, 0 when there are only notes or
+// nothing. With --canary it also tries each gate against a violation, in a throwaway repo under
+// the temp dir.
 //
-// usage: doctor.js [--json]      run from anywhere inside the repo
+// usage: doctor.js [--json] [--canary]      run from anywhere inside the repo
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -176,9 +178,22 @@ function worktreeFindings(root, cfg, openRuns, add) {
   }
 }
 
-function diagnose(start) {
+// Tries the gates in a throwaway repo outside this one, so "installed" is not taken for "enforcing".
+function canaryFindings(add, opts) {
+  const result = require('./canary.js').runCanary(opts);
+  if (!result.ran) {
+    add('problem', `the gates could not be tried: ${result.problem}`, 'fix that, then run doctor.js --canary again');
+    return;
+  }
+  const failed = result.checks.filter((c) => !c.ok);
+  for (const c of failed) add('problem', `the ${c.name} did not hold in a trial run: ${c.detail}`, 'reinstall or update the plugin, then run doctor.js --canary again');
+  if (!failed.length) add('note', `tried in a throwaway repo: the ${result.checks.map((c) => c.name).join(', the ')} each held`, null);
+}
+
+function diagnose(start, opts = {}) {
   const findings = [];
   const add = (level, what, fix) => findings.push({ level, what, fix: fix || null });
+  if (opts.canary) canaryFindings(add, opts.canary === true ? {} : opts.canary);
   const root = findRoot(start);
   if (!root) {
     add('problem', 'not inside a git repository', 'run doctor.js from the repo the loop works in');
@@ -207,7 +222,7 @@ function diagnose(start) {
 
 function main() {
   const json = process.argv.includes('--json');
-  const report = diagnose(process.cwd());
+  const report = diagnose(process.cwd(), { canary: process.argv.includes('--canary') });
   const problems = report.findings.filter((f) => f.level === 'problem').length;
   if (json) {
     process.stdout.write(JSON.stringify({ ...report, problems }, null, 2) + '\n');
