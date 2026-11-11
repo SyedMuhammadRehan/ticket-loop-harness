@@ -129,7 +129,8 @@ function main() {
           `    clean restart -> node <scripts>/ledger.js archive <runDir>\n` +
           `  A harness call passes only as one bare command: node, then the installed script by its\n` +
           `  full path (${harnessDirs()[0]}), then its arguments.\n` +
-          `  No variable for the path, nothing chained after it with ; && or |, and not a copy of the script elsewhere.`,
+          `  No variable for the path, nothing chained after it with ; && or |, and not a copy of the script elsewhere.\n` +
+          `  TROUBLESHOOTING.md in the plugin's repository explains each refusal by its wording.`,
         arming()
       );
     }

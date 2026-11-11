@@ -1,6 +1,39 @@
 # ticket-loop — a loop-engineering harness for Claude Code
 
+Give Claude Code a ticket and get back a reviewed branch with the evidence for it: a definition
+of done frozen before any code, tests run by the harness rather than reported to it, an
+independent QA judge, and a sealed record of every step.
+
+```
+/plugin marketplace add SyedMuhammadRehan/ticket-loop-harness
+/plugin install ticket-loop@ticket-loop-harness
+```
+
+Then open a new session in your repo:
+
+```
+/ticket-loop:setup                  # writes the profile and proves the gates block on your machine
+/ticket-loop <TICKET-ID> --dry-run  # plans the ticket, touches no code
+/ticket-loop <TICKET-ID>            # the full run
+```
+
+| | What it covers | How far to trust it |
+|---|---|---|
+| **Enforced by code** | the frozen contract, the dispatch and token budgets, the stop gate's test run, risk-path edits, no push or merge mid-run, the sealed record | A hook or script refuses the violation, and a test fails if that code is removed. [INVARIANTS.md](INVARIANTS.md) lists every one. |
+| **Checked by a model** | whether the work meets the ticket, test quality, scope, design drift | A fresh-context QA judge that cannot edit files. It is a judgement, and it can be wrong. |
+| **Yours to uphold** | whether a human was really asked, whether the tests can fail, merging | Listed plainly under [Yours to uphold](#yours-to-uphold--and-visible-in-the-report-if-you-dont). |
+
+**It is not a sandbox.** An agent with a shell can get past the write guard on purpose. What
+the harness guarantees is that a careless or drifting run cannot produce a clean-looking
+report by accident, and that a deliberate one leaves marks. See
+[Residual risk](#residual-risk-stated-plainly).
+
+Something refused or stuck? [TROUBLESHOOTING.md](TROUBLESHOOTING.md) is indexed by the exact
+message you were shown.
+
 ![ticket-loop pipeline: preflight → intake → design → freeze spec → implement → verify → adversarial QA → report, with human gates and a retry loop](assets/ticket-loop-flow.svg)
+
+## What it does
 
 Turn a ticket into a **verified, spec-bound** change with minimal babysitting. You give it a
 ticket; it studies the ticket, pulls the referenced design (optional), writes a
@@ -18,18 +51,19 @@ memory of what already failed, an independent judge, and a budget.
 ```mermaid
 flowchart TD
     A["/ticket-loop TICKET"] --> S0["0 · Preflight — load profile, create worktree"]
-    S0 --> S1{"1 · Intake — Gate A"}
+    S0 --> S1{"1 · Intake — Gate A · 2 fast-track check"}
     S1 -->|no spec / risky path| H(["ask human"])
-    S1 --> S2{"2 · Design — Gate B"}
-    S2 --> S25["2.5 · Approach — options · failure modes · slice order"]
-    S25 --> S3["3 · Freeze done-list 🔒"]
-    S3 --> S4["4 · Implement (TDD) — Gate C"]
-    S4 --> S5["5 · Verify — analyze, tests, runtime"]
-    S5 -->|fail| LOOP["↺ Loop — ledger · 3 strikes → re-plan · 2 re-plans → stop"]
-    S5 --> QA{"5.5 · Adversarial QA"}
+    S1 --> S3["3 · Survey — the code the ticket touches"]
+    S3 --> S4{"4 · Design — Gate B"}
+    S4 --> S5["5 · Approach — options · failure modes · slice order"]
+    S5 --> S6["6 · Define done — validate, freeze 🔒"]
+    S6 --> S7["7 · Implement (TDD) — Gate C"]
+    S7 --> S8["8 · Verify — analyze, tests, runtime"]
+    S8 -->|fail| LOOP["10 · Failure loop — ledger · 3 strikes → re-plan · 2 re-plans → stop"]
+    S8 --> QA{"9 · Adversarial QA"}
     QA -->|BLOCK| LOOP
-    QA -->|approve| R["7 · Report — branch + evidence"]
-    LOOP --> S4
+    QA -->|approve| R["11 · Report and close — branch + evidence"]
+    LOOP --> S7
     R --> M(["human reviews & merges"])
 ```
 
@@ -158,7 +192,7 @@ With no config, the loop degrades honestly (asks / logic-only) — it never sile
 
 ```
 /plugin marketplace add SyedMuhammadRehan/ticket-loop-harness
-/plugin install ticket-loop
+/plugin install ticket-loop@ticket-loop-harness
 ```
 
 Then, in a new session inside the repo:
