@@ -234,11 +234,118 @@ test('doctor --canary tries each gate in a throwaway repo and reports that they 
     assert.strictEqual(res.status, 0, res.stdout);
     const tried = JSON.parse(res.stdout).findings.find((f) => /tried in a throwaway repo/.test(f.what));
     assert.ok(tried, res.stdout);
-    assert.match(tried.what, /the write guard, the dispatch count, the stop gate each held/);
+    assert.match(tried.what, /every gate held: an edit to a frozen contract, an edit under a risk path and a git push were each refused, .*a dispatch was counted.*a "done" claim over a failing suite was blocked/);
     assert.strictEqual(git(root, 'status', '--porcelain', '--', '.').includes('CANARY'), false, 'the trial run is nowhere in this repo');
+    const summary = JSON.parse(res.stdout).findings.find((f) => /^the profile: /.test(f.what));
+    assert.ok(summary, 'doctor says what the profile will make a run do');
+    assert.match(summary.what, /node; tests run with "npm test", analysis with "npm run lint"; every role on the session model; a run publishes nothing/);
   } finally {
     rmDir(root);
   }
+});
+
+// --- the two choices that are the person's ---
+
+const CHOOSE = path.join(SCRIPTS_DIR, 'choose.js');
+const profileOf = (root) => JSON.parse(fs.readFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), 'utf8'));
+
+test('choose writes the model and publishing choices and leaves the rest of the profile alone', () => {
+  const root = repo(NODE_REPO);
+  try {
+    assert.strictEqual(run(INIT, root).status, 0);
+    const before = profileOf(root);
+    const shown = JSON.parse(run(CHOOSE, root, ['--show']).stdout);
+    assert.deepStrictEqual(shown.models, { survey: 'inherit', implementer: 'inherit', fixer: 'inherit', qa: 'inherit' });
+    assert.deepStrictEqual(shown.publish, []);
+
+    const res = run(CHOOSE, root, ['--model', 'survey=haiku', '--model', 'implementer=sonnet', '--publish', 'push,pr']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.match(res.stdout, /each run still asks before it publishes/);
+    const after = profileOf(root);
+    assert.deepStrictEqual(after.models, { survey: 'haiku', implementer: 'sonnet' });
+    assert.deepStrictEqual(after.publish.allowed, ['push', 'pr']);
+    for (const key of Object.keys(before)) {
+      if (key !== 'models' && key !== 'publish') assert.deepStrictEqual(after[key], before[key], `${key} was not part of the choice`);
+    }
+
+    const cfg = JSON.parse(run(LOAD_CONFIG, root).stdout);
+    assert.deepStrictEqual(cfg._meta.warnings, [], cfg._meta.warnings.join('\n'));
+    assert.strictEqual(cfg.models.qa, 'inherit', 'a role nobody chose stays on the session model');
+    const summary = doctor(root).findings.find((f) => /^the profile: /.test(f.what)).what;
+    assert.match(summary, /survey on haiku, implementer on sonnet; a run may publish: push, pr/);
+
+    assert.strictEqual(run(CHOOSE, root, ['--publish', 'none']).status, 0);
+    assert.deepStrictEqual(profileOf(root).publish.allowed, []);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('choose refuses a choice that is not one, a pull request with no push, and any change mid-run', () => {
+  const root = repo(NODE_REPO);
+  try {
+    assert.strictEqual(run(CHOOSE, root, ['--publish', 'push']).status, 1, 'no profile yet');
+    assert.strictEqual(run(INIT, root).status, 0);
+    const text = fs.readFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), 'utf8');
+    for (const [args, why] of [
+      [['--model', 'judge=opus'], /is not a role/],
+      [['--model', 'qa=gpt-9'], /is not a model this can set/],
+      [['--publish', 'pr'], /needs the branch pushed/],
+      [['--publish', 'push,merge'], /--publish takes none, or a list of push, pr, ticket/],
+      [['--verify', 'x'], /unknown argument/],
+      [[], /nothing to change/],
+    ]) {
+      const res = run(CHOOSE, root, args);
+      assert.strictEqual(res.status, 2, args.join(' '));
+      assert.match(res.stderr, why);
+    }
+    assert.strictEqual(fs.readFileSync(path.join(root, '.agents', 'ticket-loop.config.json'), 'utf8'), text, 'a refused choice writes nothing');
+
+    const runDir = path.join(root, '.agents', 'ticket-runs', 'T-1');
+    fs.mkdirSync(runDir, { recursive: true });
+    assert.strictEqual(ledger(root, ['init', runDir]).status, 0);
+    const midRun = run(CHOOSE, root, ['--publish', 'push']);
+    assert.strictEqual(midRun.status, 1);
+    assert.match(midRun.stderr, /the profile is frozen while a run is active/);
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('choose never writes past the org policy', () => {
+  const root = repo(NODE_REPO);
+  const policyDir = mkTmpDir('tl-policy');
+  try {
+    assert.strictEqual(run(INIT, root).status, 0);
+    const policyFile = path.join(policyDir, 'policy.json');
+    fs.writeFileSync(policyFile, JSON.stringify({ allowedModels: { qa: ['inherit', 'opus'] }, publish: { allowed: ['push'] } }));
+    const under = (args) => runScript(CHOOSE, args, { cwd: root, env: { HOME: home, USERPROFILE: home, TICKET_LOOP_POLICY: policyFile } });
+
+    const model = under(['--model', 'qa=haiku']);
+    assert.strictEqual(model.status, 1);
+    assert.match(model.stderr, /the org policy does not allow this/);
+    const publish = under(['--publish', 'push,pr']);
+    assert.strictEqual(publish.status, 1);
+    assert.match(publish.stderr, /does not let this repo publish: pr/);
+    assert.deepStrictEqual(profileOf(root).models, undefined, 'nothing was written');
+
+    assert.strictEqual(under(['--model', 'qa=opus', '--publish', 'push']).status, 0);
+    const shown = JSON.parse(under(['--show']).stdout);
+    assert.deepStrictEqual(shown.orgPolicy.models, { qa: ['inherit', 'opus'] });
+    assert.deepStrictEqual(shown.orgPolicy.publish, ['push']);
+  } finally {
+    rmDir(root);
+    rmDir(policyDir);
+  }
+});
+
+test('the setup skill asks both questions and writes the answers through choose', () => {
+  const skill = fs.readFileSync(path.join(SCRIPTS_DIR, '..', '..', 'setup', 'SKILL.md'), 'utf8');
+  assert.match(skill, /choose\.js --show/);
+  assert.match(skill, /Which model does each kind of work run on\?/);
+  assert.match(skill, /What may a finished run publish\?/);
+  assert.match(skill, /every run still asks before each\s+act, and never merges/);
+  assert.match(skill, /Never choose for them/);
 });
 
 test('the canary reports a gate that refuses nothing', () => {

@@ -135,6 +135,7 @@ plugins/ticket-loop/
       init.js                        # writes a starter profile detected from the repo; never overwrites one
       doctor.js                      # read-only health check: profile, gitignore, stale hook copies, open runs, worktrees
       canary.js                      # tries each gate against a real violation in a throwaway repo (doctor.js --canary)
+      choose.js                      # writes the person's model-per-role and publishing choices into the profile
       next.js                        # where a run stands and which stage file to read, from the sealed chain (ledger.js next)
       attest.js                      # Ed25519 signing key and signatures for run attestations (Node crypto)
       verify_bundle.js               # self-contained: checks a signed run bundle with no secret and no harness
@@ -214,6 +215,14 @@ to each gate in a throwaway repo (an edit to a frozen contract, an edit under a 
 `git push`, a dispatch, a "done" claim over a red suite), and it makes one tool call the write
 guard has to refuse, which shows this session is actually running the hooks. It reports "not
 ready, because …" when any of that fails.
+
+It then asks the two things detection cannot decide. **Which model each kind of work runs
+on**: everything on your session's model (the default), an economy split that moves the survey
+and the implementer down and leaves the QA judge where it is, or your own pick per role.
+**What a finished run may publish**: nothing (the default), the ticket branch, the pull or
+merge request, a comment on the ticket. That second answer is only what a run may *ask* for:
+every run still asks before each act, and nothing ever merges. `choose.js` writes the answers,
+only to those keys, never mid-run, and never past the org policy.
 
 The same steps by hand are `init.js`, then `doctor.js --canary`, under `<SKILL_DIR>/scripts/`.
 `<SKILL_DIR>` is the installed skill:

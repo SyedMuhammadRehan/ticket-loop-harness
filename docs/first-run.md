@@ -43,16 +43,22 @@ Then it runs the health check with the gates tried for real:
 
 ```
 ticket-loop doctor: /home/you/todo-sample
-  note: tried in a throwaway repo: the write guard, the dispatch count, the stop gate each held
+  note: tried in a throwaway repo, and every gate held: an edit to a frozen contract, an edit under a risk path and a git push were each refused, and an ordinary edit was let through; a dispatch was counted in the sealed record; a "done" claim over a failing suite was blocked
+  note: the profile: node; tests run with "npm test", no analysis command; every role on the session model; a run publishes nothing
   note: no notify channel is set, so a run that gets stuck while you are away cannot tell you
   note: the profile is not committed on main, so teammates and the CI merge check do not have it
-  ok: 0 problems, 3 notes
+  ok: 0 problems, 4 notes
 ```
 
 The first note is the one that matters: each gate was handed a real violation in a throwaway
-repo and refused it. Last, the session itself makes one tool call the write guard must refuse.
+repo and refused it. Next the session itself makes one tool call the write guard must refuse.
 You should see it blocked with a message starting `BLOCKED:`. If it is not blocked, the hooks
 are not running in this session; [TROUBLESHOOTING.md](../TROUBLESHOOTING.md) has the causes.
+
+Last, it asks you two things detection cannot decide: which model each kind of work runs on,
+and what a finished run may publish. The defaults are every role on your session's model and
+nothing published, which is the right place to start. Whatever you allow, every run still asks
+before it pushes or opens a pull request, and it never merges.
 
 Commit the profile when it asks you to: `git add -A && git commit -m "chore: ticket-loop profile"`.
 
