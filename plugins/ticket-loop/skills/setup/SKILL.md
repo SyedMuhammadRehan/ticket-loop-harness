@@ -49,12 +49,42 @@ Run exactly this one Bash command, and nothing else with it:
 The command cannot do damage either way: the directory does not exist, so with no guard it
 fails on its own.
 
-## 4. Tell the user where they stand
+## 4. The two choices that are the person's
 
-In a few lines: the stack and test command the profile holds; what doctor and both canaries
-showed; anything from the review list still unanswered; and that the profile and the
-`.gitignore` change should be committed to the default branch so teammates and the CI merge
-check have them. Then the next command: `/ticket-loop <ticket> --dry-run` on a small ticket,
+Detection cannot make these, so ask. `node <SCRIPTS>/choose.js --show` prints what the profile
+holds now and what the org policy leaves open; offer only what it allows. Ask both questions
+together, with the AskUserQuestion tool when you have it, and put the current setting first.
+If the profile already holds a choice the person made before, say what it is and ask whether
+to keep it.
+
+**Which model does each kind of work run on?**
+- *Everything on this session's model* (the default, and the right start): no surprises.
+- *Economy*: the codebase survey on `haiku`, the implementer and fixer on `sonnet`, and the QA
+  judge left on the session's model. The judge is the backstop for everything before it, so it
+  is the last role to move down.
+- *Their own pick* per role: `survey`, `implementer`, `fixer`, `qa`, each one of `inherit`,
+  `haiku`, `sonnet`, `opus`, `fable`.
+
+**What may a finished run publish?**
+- *Nothing* (the default): the loop hands over a branch and the commands to open a pull request.
+- *Push the ticket branch.*
+- *Push, and open the pull or merge request.*
+- *Push, open it, and comment on the ticket.*
+
+Whatever they choose here is only what a run may *ask* for: every run still asks before each
+act, and never merges. Then write the answers in one call, for example:
+
+`node <SCRIPTS>/choose.js --model survey=haiku --model implementer=sonnet --model fixer=sonnet --publish push,pr`
+
+Run nothing when they keep what is there. Never choose for them, and never widen a choice
+later because a run would be easier with it.
+
+## 5. Tell the user where they stand
+
+In a few lines: the stack and test command the profile holds; the model and publishing choices
+as they now stand; what doctor and both canaries showed; anything from the review list still
+unanswered; and that the profile and the `.gitignore` change should be committed to the
+default branch so teammates and the CI merge check have them. Then the next command: `/ticket-loop <ticket> --dry-run` on a small ticket,
 which plans without touching code.
 
 Say only what the steps showed. If step 2 or 3 failed, the answer is "not ready, because …".

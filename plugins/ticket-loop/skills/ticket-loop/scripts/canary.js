@@ -73,7 +73,7 @@ function standUp(base) {
 function gateChecks(root, runDir, hooks) {
   const payload = (tool, toolInput) => ({ tool_name: tool, tool_input: toolInput, cwd: root, session_id: 'canary' });
   const out = [];
-  const record = (name, ok, detail) => out.push({ name, ok, detail });
+  const record = (name, ok, detail, tried) => out.push({ name, ok, detail, tried });
 
   const frozen = hook(hooks.freeze_guard, payload('Edit', { file_path: path.join(runDir, 'done.md') }), root);
   const ordinary = hook(hooks.freeze_guard, payload('Edit', { file_path: path.join(root, 'app.js') }), root);
@@ -82,7 +82,8 @@ function gateChecks(root, runDir, hooks) {
   record(
     'write guard',
     frozen.status === BLOCKED && risky.status === BLOCKED && pushed.status === BLOCKED && ordinary.status === 0,
-    `frozen contract exit ${frozen.status}, risk path exit ${risky.status}, git push exit ${pushed.status} (each should be ${BLOCKED}); an ordinary edit exit ${ordinary.status} (should be 0)`
+    `frozen contract exit ${frozen.status}, risk path exit ${risky.status}, git push exit ${pushed.status} (each should be ${BLOCKED}); an ordinary edit exit ${ordinary.status} (should be 0)`,
+    'an edit to a frozen contract, an edit under a risk path and a git push were each refused, and an ordinary edit was let through'
   );
 
   const dispatched = hook(hooks.dispatch_guard, payload('Agent', { subagent_type: 'general-purpose', description: 'canary', prompt: 'canary dispatch' }), root);
@@ -92,11 +93,11 @@ function gateChecks(root, runDir, hooks) {
   } catch {
     counted = null;
   }
-  record('dispatch count', dispatched.status === 0 && counted === 1, `a dispatch exit ${dispatched.status} (should be 0), counted in the sealed chain: ${counted} (should be 1)`);
+  record('dispatch count', dispatched.status === 0 && counted === 1, `a dispatch exit ${dispatched.status} (should be 0), counted in the sealed chain: ${counted} (should be 1)`, 'a dispatch was counted in the sealed record');
 
   fs.writeFileSync(path.join(root, 'app.js'), 'module.exports = 2;\n');
   const stop = hook(hooks.stop_gate, { cwd: root, session_id: 'canary', hook_event_name: 'Stop' }, root);
-  record('stop gate', stop.status === BLOCKED, `a "done" claim over a red suite exit ${stop.status} (should be ${BLOCKED})${stop.status === BLOCKED ? '' : `: ${firstLine(stop.stderr)}`}`);
+  record('stop gate', stop.status === BLOCKED, `a "done" claim over a red suite exit ${stop.status} (should be ${BLOCKED})${stop.status === BLOCKED ? '' : `: ${firstLine(stop.stderr)}`}`, 'a "done" claim over a failing suite was blocked');
   return out;
 }
 

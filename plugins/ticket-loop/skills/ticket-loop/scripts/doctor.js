@@ -32,6 +32,18 @@ function findRoot(start) {
   return null;
 }
 
+// What the profile will make a run do, in one line a person can check at a glance.
+function profileSummary(cfg) {
+  const models = Object.entries(cfg.models || {}).filter(([, model]) => model && model !== 'inherit').map(([role, model]) => `${role} on ${model}`);
+  const publish = ((cfg.publish || {}).allowed || []).join(', ');
+  return (
+    `the profile: ${cfg.stack || 'no stack named'}; tests run with "${cfg.verify.test}"` +
+    `${cfg.verify.analyze ? `, analysis with "${cfg.verify.analyze}"` : ', no analysis command'}; ` +
+    `${models.length ? models.join(', ') : 'every role on the session model'}; ` +
+    `${publish ? `a run may publish: ${publish}` : 'a run publishes nothing'}`
+  );
+}
+
 function profileFindings(root, add) {
   const res = spawnSync(process.execPath, [LOAD_CONFIG], { encoding: 'utf8', cwd: root, timeout: TIMEOUT_MS });
   let cfg;
@@ -46,6 +58,7 @@ function profileFindings(root, add) {
     return cfg;
   }
   if (!cfg.verify || !cfg.verify.test) add('problem', 'the profile has no verify.test', 'set the command that runs this repo\'s tests');
+  else add('note', profileSummary(cfg), null);
   const n = cfg._meta.notify;
   if (n && n.error) add('problem', `the notify config cannot be used: ${n.error}`, 'fix ~/.claude/ticket-loop/notify.json; notify.js test sends a test message');
   else if (!n || !n.configured) add('note', 'no notify channel is set, so a run that gets stuck while you are away cannot tell you', 'add one in ~/.claude/ticket-loop/notify.json (see notify.js); notify.js test checks it');
@@ -187,7 +200,7 @@ function canaryFindings(add, opts) {
   }
   const failed = result.checks.filter((c) => !c.ok);
   for (const c of failed) add('problem', `the ${c.name} did not hold in a trial run: ${c.detail}`, 'reinstall or update the plugin, then run doctor.js --canary again');
-  if (!failed.length) add('note', `tried in a throwaway repo: the ${result.checks.map((c) => c.name).join(', the ')} each held`, null);
+  if (!failed.length) add('note', `tried in a throwaway repo, and every gate held: ${result.checks.map((c) => c.tried).join('; ')}`, null);
 }
 
 function diagnose(start, opts = {}) {
