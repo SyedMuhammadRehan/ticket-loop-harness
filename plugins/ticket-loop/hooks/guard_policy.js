@@ -262,8 +262,17 @@ const PROTECTED_REFS = [
 // The harness's own entry points. A sanctioned call is `node <script> <args>` and nothing
 // else: no node flag (`-e`, `-r`, `--import` run other code first), the script first, and the
 // script one of these by exact name.
-const HARNESS_SCRIPTS = new Set(['freeze_done.js', 'validate_done.js', 'ledger.js', 'chain.js', 'survey.js', 'publish.js', 'notify.js']);
-const HARNESS_SCRIPT = /\b(freeze_done|validate_done|ledger|chain|survey|publish|notify)\.js\b/;
+// Scripts that act on a run: they are handed its directory, and their own checks decide what
+// they do with it.
+const RUN_SCRIPTS = new Set(['freeze_done.js', 'validate_done.js', 'ledger.js', 'chain.js', 'survey.js', 'publish.js', 'notify.js', 'handoff.js']);
+// Scripts the playbook runs that take no run dir. The installed plugin's own path is control
+// plane mid-run, so without this the guard refuses the harness its own tools. Two of them write
+// to a path they are given (memory.js, dashboard.js --out), so none may be handed a protected one.
+const TOOL_SCRIPTS = new Set([
+  'load_config.js', 'worktree_deps.js', 'memory.js', 'doctor.js', 'outline.js', 'importers.js', 'canary.js', 'dashboard.js', 'verify_bundle.js',
+]);
+const RUN_IN = 'run_in.js';
+const HARNESS_SCRIPT = new RegExp(String.raw`\b(${[...RUN_SCRIPTS, ...TOOL_SCRIPTS, RUN_IN].map((f) => f.replace('.js', '')).join('|')})\.js\b`);
 // Records only the harness's own processes write: a phone answer and a subagent's return.
 const HARNESS_ONLY_SUBCOMMANDS = new Set(['approval', 'returned']);
 // `$` ( ) and backtick are refused because $(...) / `...` execute inside an otherwise
@@ -287,12 +296,28 @@ function isSanctioned(statement, opts = {}) {
   if (words.length < 2 || !/^node(\.exe)?$/i.test(baseName(words[0]))) return false;
   const script = words[1];
   const name = baseName(script).toLowerCase();
-  if (!HARNESS_SCRIPTS.has(name)) return false;
+  if (!RUN_SCRIPTS.has(name) && !TOOL_SCRIPTS.has(name)) return false;
   const args = words.slice(2).map((w) => w.toLowerCase());
+  if (TOOL_SCRIPTS.has(name) && protectedRefs(args.join(' '), !!opts.runActive).length > 0) return false;
   if (name === 'ledger.js' && HARNESS_ONLY_SUBCOMMANDS.has(args[0])) return false;
   if (args.some((a) => a === '--source' || a.startsWith('--source='))) return false;
   const dirs = opts.harnessDirs || [];
   return dirs.length === 0 || insideHarness(script, dirs, opts);
+}
+
+// `node <harness>/run_in.js <dir> <command>` runs the command in that directory, so it is
+// sanctioned for exactly what the command would be allowed on its own. Null when the statement
+// is not that call.
+function runInCall(statement, opts = {}) {
+  const s = stripNullRedirection(statement);
+  if (/["']/.test(s.replace(/"[^"]*"|'[^']*'/g, ''))) return null;
+  if (SHELL_META.test(maskQuoted(s))) return null;
+  const words = shellWords(s);
+  if (words.length < 4 || !/^node(\.exe)?$/i.test(baseName(words[0]))) return null;
+  if (baseName(words[1]).toLowerCase() !== RUN_IN) return null;
+  const dirs = opts.harnessDirs || [];
+  if (dirs.length > 0 && !insideHarness(words[1], dirs, opts)) return null;
+  return { dir: words[2], command: words.slice(3).join(' ') };
 }
 
 // The script must be the installed harness's own file, not one that shares its name.
@@ -610,6 +635,14 @@ function commandVerdict(cmd, opts = {}) {
       reason: `this command references ${secret.what}, which no command may read or write; the harness's own scripts use it`,
       hit: secret.what,
     };
+  }
+
+  const wrapped = runInCall(raw, opts);
+  if (wrapped) {
+    if (protectedRefs(wrapped.dir.toLowerCase(), runActive).length > 0) {
+      return { reason: 'run_in.js is for the ticket worktree; it may not run a command inside a protected directory', hit: 'run_in directory' };
+    }
+    return commandVerdict(wrapped.command, opts);
   }
 
   if (isSanctioned(raw, opts)) return null;

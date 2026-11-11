@@ -363,6 +363,74 @@ test('the control plane is refused to shell writes mid-run, each file by its own
   assert.strictEqual(hitOf('cat .agents/ticket-loop.trust'), null, 'reading the trust list is not writing it');
 });
 
+// --- 10. the harness's own tools, mid-run ---
+
+// The installed plugin's path is control plane while a run is open, and every harness call names
+// it. A first field run on the bench had `run_in.js` refused, so the model ran the suite another way.
+const fs = require('node:fs');
+const INSTALLED = { runActive: true, harnessDirs: [SCRIPTS_DIR], cwd: path.dirname(SCRIPTS_DIR) };
+const tool = (name, rest = '') => `node "${path.join(SCRIPTS_DIR, name)}"${rest ? ` ${rest}` : ''}`;
+const midRun = (cmd) => policy.commandVerdict(cmd, INSTALLED);
+
+test('every script the playbook tells the model to run is allowed while a run is open', () => {
+  const skill = path.join(SCRIPTS_DIR, '..');
+  const text = [
+    fs.readFileSync(path.join(skill, 'SKILL.md'), 'utf8'),
+    ...fs.readdirSync(path.join(skill, 'stages')).map((f) => fs.readFileSync(path.join(skill, 'stages', f), 'utf8')),
+    ...fs.readdirSync(path.join(skill, 'prompts')).map((f) => fs.readFileSync(path.join(skill, 'prompts', f), 'utf8')),
+  ].join('\n');
+  const named = [...new Set([...text.matchAll(/scripts\/([a-z_]+\.js)/g)].map((m) => m[1]))];
+  assert.ok(named.includes('run_in.js') && named.includes('memory.js'), named.join(', '));
+  // init.js writes the profile, which is frozen mid-run: it is a before-the-run step and refuses itself.
+  for (const name of named.filter((n) => n !== 'init.js')) {
+    const call = name === 'run_in.js' ? tool(name, '../depot-ticket-T01 npm test') : tool(name);
+    assert.strictEqual(midRun(call), null, `the guard refuses the playbook's own ${name}: ${JSON.stringify(midRun(call))}`);
+  }
+  for (const name of ['init.js', 'choose.js', 'ci_check.js']) {
+    assert.notStrictEqual(midRun(tool(name)), null, `${name} must not be a sanctioned call mid-run`);
+  }
+});
+
+test('run_in is allowed exactly what its command would be allowed on its own', () => {
+  const wt = '../depot-ticket-T01';
+  for (const cmd of [
+    tool('run_in.js', `${wt} npm test`),
+    tool('run_in.js', `${wt} "npm run lint && npm test"`),
+    tool('run_in.js', `${wt} npx eslint src`),
+  ]) {
+    assert.strictEqual(midRun(cmd), null, cmd);
+  }
+  const cases = [
+    [tool('run_in.js', `${wt} git push origin ticket/T01`), 'publishing command'],
+    [tool('run_in.js', `${wt} "npm test && git push"`), 'publishing command'],
+    [tool('run_in.js', `${wt} ${RM} ../depot/${RUN}`), 'a ticket run directory'],
+    [tool('run_in.js', `${wt} git reset --hard HEAD~1`), 'destructive repo command'],
+    [tool('run_in.js', `${RUN} ${RM} done.md`), 'run_in directory'],
+    [tool('run_in.js', `.git ${RM} ticket-loop`), 'run_in directory'],
+  ];
+  for (const [cmd, hit] of cases) assert.strictEqual((midRun(cmd) || {}).hit, hit, cmd);
+  assert.notStrictEqual(midRun(`${tool('run_in.js', `${wt} npm test`)} && ${RM} ${RUN}`), null, 'what follows the call is judged as its own statement');
+  // The inner command here is a read the guard would allow, so only the script's own identity
+  // can refuse it: a file of that name elsewhere runs whatever it holds, with the run dir as input.
+  const inner = `cat ${RUN}/ledger.md`;
+  assert.strictEqual(midRun(tool('run_in.js', `${wt} ${inner}`)), null, 'through the installed script, a read is a read');
+  assert.notStrictEqual(midRun(`node /tmp/elsewhere/run_in.js ${wt} ${inner}`), null, 'a run_in.js that is not the installed one wraps nothing');
+});
+
+test('a tool script is not sanctioned when it is handed a protected path', () => {
+  assert.strictEqual(midRun(tool('memory.js', 'add .agents/ticket-loop-memory.md fix T01 "pin the page size"')), null);
+  for (const cmd of [
+    tool('memory.js', `add ${RUN}/done.md fix T01 note`),
+    tool('memory.js', 'add .agents/ticket-loop.config.json fix T01 note'),
+    tool('dashboard.js', `. --out ${RUN}/budget.json`),
+    tool('outline.js', '.git/ticket-loop/T-1/key'),
+  ]) {
+    assert.notStrictEqual(midRun(cmd), null, cmd);
+  }
+  assert.strictEqual(midRun(tool('handoff.js', RUN)), null, 'handoff is handed the run dir, like the ledger');
+  assert.notStrictEqual(midRun(`node /tmp/elsewhere/memory.js add ${RUN}/done.md x y z`), null);
+});
+
 test('the signing directory is refused to Edit and Write with no run active', () => {
   for (const p of ['C:/Users/dev/.claude/ticket-loop/signing/key.pem', '/home/dev/.claude/ticket-loop/signing/key.pub']) {
     assert.ok(deniedPath(p, false), `idle: ${p}`);
