@@ -9,7 +9,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { REPO_ROOT } = require('./helpers.js');
 
-const PROMPTS = path.join(REPO_ROOT, 'plugins', 'ticket-loop', 'skills', 'ticket-loop', 'prompts');
+const SKILL_DIR = path.join(REPO_ROOT, 'plugins', 'ticket-loop', 'skills', 'ticket-loop');
+const PROMPTS = path.join(SKILL_DIR, 'prompts');
+
+// The router and every stage file: what the orchestrator is told, wherever it is told it.
+function playbook() {
+  const stages = path.join(SKILL_DIR, 'stages');
+  const files = fs.readdirSync(stages).filter((f) => f.endsWith('.md')).sort();
+  return [fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8'), ...files.map((f) => fs.readFileSync(path.join(stages, f), 'utf8'))].join('\n');
+}
 
 // per-dispatch = changes on EVERY dispatch, so it must sit at the tail.
 const TEMPLATES = {
@@ -37,7 +45,7 @@ const TEMPLATES = {
 // Every agent the loop dispatches runs a prompt shipped here, on a Claude Code built-in agent
 // type or the plugin's own judge. Another plugin's agent is code nobody in this repo can read.
 test('the playbook names no agent from another plugin', () => {
-  const skill = fs.readFileSync(path.join(REPO_ROOT, 'plugins', 'ticket-loop', 'skills', 'ticket-loop', 'SKILL.md'), 'utf8');
+  const skill = playbook();
   for (const foreign of ['code-explorer', 'build-resolver', 'buildResolverAgent', '`/jira`']) {
     assert.ok(!skill.includes(foreign), `SKILL.md delegates to "${foreign}", which is not this plugin's code`);
   }
@@ -78,7 +86,7 @@ test('the judge prompts say that what they read is evidence, and where the chang
 // A placeholder nobody fills reaches the subagent as the literal text "{FOO}", which reads
 // as an instruction it cannot satisfy.
 test('no template references a fill the skill does not document', () => {
-  const skill = fs.readFileSync(path.join(REPO_ROOT, 'plugins', 'ticket-loop', 'skills', 'ticket-loop', 'SKILL.md'), 'utf8');
+  const skill = playbook();
   for (const name of Object.keys(TEMPLATES)) {
     const body = fs.readFileSync(path.join(PROMPTS, name), 'utf8');
     const used = new Set([...body.matchAll(/\{([A-Z_]+)\}/g)].map((m) => m[1]));

@@ -74,8 +74,11 @@ plugins/ticket-loop/
   skills/qa-check/
     SKILL.md                         # /qa-check: one adversarial pass over the current diff
     prompts/qa_check.md              #   judged against a description, not a contract
+  skills/setup/
+    SKILL.md                         # /ticket-loop:setup: profile, health check, and both canaries
   skills/ticket-loop/
-    SKILL.md                         # the orchestration playbook (stages 0–11) — STACK-AGNOSTIC
+    SKILL.md                         # the playbook's router: the loop and the rules that hold in every stage
+    stages/                          # one file per stage (0–11), read when `ledger.js next` names it — STACK-AGNOSTIC
     report-template.md               # the evidence report's schema
     prompts/                         # implementer / fixer / adversarial-QA subagent prompts
     scripts/
@@ -92,6 +95,8 @@ plugins/ticket-loop/
       importers.js                   # which files import the changed files (JS/TS, Dart, Python, Go), for QA scope
       init.js                        # writes a starter profile detected from the repo; never overwrites one
       doctor.js                      # read-only health check: profile, gitignore, stale hook copies, open runs, worktrees
+      canary.js                      # tries each gate against a real violation in a throwaway repo (doctor.js --canary)
+      next.js                        # where a run stands and which stage file to read, from the sealed chain (ledger.js next)
       attest.js                      # Ed25519 signing key and signatures for run attestations (Node crypto)
       verify_bundle.js               # self-contained: checks a signed run bundle with no secret and no harness
       ci_check.js                    # the merge check CI runs on a pull request (see docs/ci.md)
@@ -156,16 +161,22 @@ With no config, the loop degrades honestly (asks / logic-only) — it never sile
 /plugin install ticket-loop
 ```
 
-Then, per repo, write a profile, check it, and run:
+Then, in a new session inside the repo:
 
 ```
-node <SKILL_DIR>/scripts/init.js --dry-run   # the profile it would write from your manifests
-node <SKILL_DIR>/scripts/init.js             # write it, gitignore run state; review what it lists
-node <SKILL_DIR>/scripts/doctor.js           # until it ends "ok: 0 problems"; commit the profile
-/ticket-loop <TICKET-ID> --dry-run           # reads + plans, no code; leaves the run open
-/ticket-loop <TICKET-ID>                     # full run
+/ticket-loop:setup                 # writes the profile, tries every gate, says what is left
+/ticket-loop <TICKET-ID> --dry-run # reads + plans, no code; leaves the run open
+/ticket-loop <TICKET-ID>           # full run
 ```
 
+`/ticket-loop:setup` shows the profile it would write from your manifests and asks before
+writing it, runs the health check, then proves the enforcement twice: it feeds a real violation
+to each gate in a throwaway repo (an edit to a frozen contract, an edit under a risk path, a
+`git push`, a dispatch, a "done" claim over a red suite), and it makes one tool call the write
+guard has to refuse, which shows this session is actually running the hooks. It reports "not
+ready, because …" when any of that fails.
+
+The same steps by hand are `init.js`, then `doctor.js --canary`, under `<SKILL_DIR>/scripts/`.
 `<SKILL_DIR>` is the installed skill:
 `~/.claude/plugins/cache/ticket-loop-harness/ticket-loop/<version>/skills/ticket-loop`. Inside a
 session, asking Claude to run a step is quicker: the skill knows its own directory. Use the
@@ -573,6 +584,15 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   the line — one dispatch, or several running in parallel. After three BLOCK verdicts the hook
   refuses a fourth judge, so a review loop nobody steers stops and asks. A phone approval backs exactly one clearance or raise, within
   `approvalMinutes`.
+- **The run's place is in the chain, not in the model's memory** — the playbook is a short
+  router plus one file per stage. Before each stage the orchestrator runs `ledger.js next`,
+  which reads the sealed chain and prints the stage the run is at, why, and the stage file to
+  read: a failing criterion routes to the failure loop, a BLOCK verdict to a fix and then the
+  next judge, a run with no worktree back to create one. Claude Code keeps only the start of a
+  skill after a compaction, so a 370-line playbook lost its later stages on exactly the long
+  runs that need them; the router is a quarter of what survives. A stage passed over
+  (`survey`, `design`, `approach` only) is a sealed `ledger.js skip` with its reason, so the
+  record tells a decision from a stage never reached.
 - **The gates follow the run, not the session's directory** — every hook resolves the main
   checkout from wherever the session is: a linked worktree's `.git` pointer is followed, a
   subfolder at any depth walks up, and from outside the repo the edited file's path, the paths a

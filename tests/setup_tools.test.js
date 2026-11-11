@@ -224,6 +224,69 @@ test('doctor says when the profile is not committed on the base branch, until it
   }
 });
 
+// --- the gates, tried ---
+
+test('doctor --canary tries each gate in a throwaway repo and reports that they held', () => {
+  const root = repo(NODE_REPO);
+  try {
+    assert.strictEqual(run(INIT, root).status, 0);
+    const res = run(DOCTOR, root, ['--canary', '--json']);
+    assert.strictEqual(res.status, 0, res.stdout);
+    const tried = JSON.parse(res.stdout).findings.find((f) => /tried in a throwaway repo/.test(f.what));
+    assert.ok(tried, res.stdout);
+    assert.match(tried.what, /the write guard, the dispatch count, the stop gate each held/);
+    assert.strictEqual(git(root, 'status', '--porcelain', '--', '.').includes('CANARY'), false, 'the trial run is nowhere in this repo');
+  } finally {
+    rmDir(root);
+  }
+});
+
+test('the canary reports a gate that refuses nothing', () => {
+  const { runCanary } = require(path.join(SCRIPTS_DIR, 'canary.js'));
+  const dir = mkTmpDir('tl-stub');
+  try {
+    const stub = path.join(dir, 'allow-everything.js');
+    fs.writeFileSync(stub, 'process.exit(0);\n');
+    for (const gate of ['freeze_guard', 'dispatch_guard', 'stop_gate']) {
+      const result = runCanary({ hooks: { [gate]: stub } });
+      assert.strictEqual(result.ran, true, result.problem);
+      const failed = result.checks.filter((c) => !c.ok).map((c) => c.name);
+      const expected = { freeze_guard: 'write guard', dispatch_guard: 'dispatch count', stop_gate: 'stop gate' }[gate];
+      assert.deepStrictEqual(failed, [expected], `a ${gate} that allows everything`);
+    }
+    const missing = runCanary({ hooks: { stop_gate: path.join(dir, 'not-there.js') } });
+    assert.strictEqual(missing.ran, false);
+    assert.match(missing.problem, /stop_gate missing/);
+
+    // And doctor turns either into a problem, never a note.
+    const { diagnose } = require(DOCTOR);
+    const problems = (opts) => diagnose(dir, { canary: opts }).findings.filter((f) => f.level === 'problem').map((f) => f.what);
+    assert.ok(problems({ hooks: { freeze_guard: stub } }).some((p) => /the write guard did not hold in a trial run/.test(p)));
+    assert.ok(problems({ hooks: { stop_gate: path.join(dir, 'not-there.js') } }).some((p) => /the gates could not be tried/.test(p)));
+  } finally {
+    rmDir(dir);
+  }
+});
+
+// The setup skill tells the model to run one command and expect a refusal. If the guard let
+// that command through, the skill would report a working install as broken.
+test('the setup skill\'s live canary is a command the write guard refuses with no run open', () => {
+  const skill = fs.readFileSync(path.join(SCRIPTS_DIR, '..', '..', 'setup', 'SKILL.md'), 'utf8');
+  const command = (/^`(echo canary > [^`]+)`$/m.exec(skill) || [])[1];
+  assert.ok(command, 'the skill names its canary command on a line of its own');
+  assert.match(skill, /doctor\.js --canary/);
+  const root = repo(NODE_REPO);
+  try {
+    const guard = path.join(SCRIPTS_DIR, '..', '..', '..', 'hooks', 'freeze_guard.js');
+    const res = runScript(guard, [], { cwd: root, input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: root, session_id: 's' }) });
+    assert.strictEqual(res.status, 2, res.stderr);
+    assert.match(res.stderr, /^BLOCKED:/);
+    assert.ok(!fs.existsSync(path.join(root, '.agents', 'ticket-runs')), 'and it wrote nothing');
+  } finally {
+    rmDir(root);
+  }
+});
+
 test('init --help and an unknown flag print usage and write nothing', () => {
   const root = repo(NODE_REPO);
   try {

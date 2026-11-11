@@ -103,6 +103,12 @@ suite once hid a regression here, and why `tests/helpers.js` scrubs that variabl
 
 ## Every install — do these once per repo
 
+**The short way: open a new session in the repo and type `/ticket-loop:setup`.** It does steps
+1 to 3 below for you, asks before writing the profile, and then proves the gates block: once by
+feeding each one a real violation in a throwaway repo, and once with a tool call the write
+guard has to refuse, which shows this session is running the hooks. The steps below are the
+same thing by hand, and the reference for what each one means.
+
 `<SKILL_DIR>` below is where the installed skill lives. As a plugin that is
 `~/.claude/plugins/cache/ticket-loop-harness/ticket-loop/<version>/skills/ticket-loop`
 (`claude plugin list` shows the version; use the newest folder). By hand it is

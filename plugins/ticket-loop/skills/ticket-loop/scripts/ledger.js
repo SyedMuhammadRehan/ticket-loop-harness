@@ -1032,6 +1032,39 @@ function cmdRequire(runDir, stage) {
   console.log(`ledger: stage "${stage}" receipt present (seq ${hit.seq}, ${hit.at})`);
 }
 
+// A stage passed over leaves a sealed reason, so the record shows a decision where a gate would
+// have been and `next` can tell "skipped" from "not reached".
+const MIN_SKIP_REASON = 8;
+function cmdSkip(runDir, stage, reason) {
+  requireChain(runDir);
+  requireOpen(runDir, 'skip');
+  const refuse = (why) => {
+    console.error(`ledger skip: ${why}`);
+    process.exit(1);
+  };
+  const skippable = Object.keys(require('./next.js').SKIPPABLE);
+  if (!skippable.includes(stage)) refuse(`"${stage}" cannot be skipped; only ${skippable.join(', ')} can`);
+  if (chain.ofKind(runDir, 'gate').some((r) => r.payload.stage === stage)) refuse(`"${stage}" already has a gate receipt; it happened`);
+  if (chain.ofKind(runDir, 'skip').some((r) => r.payload.stage === stage)) refuse(`"${stage}" is already recorded as skipped`);
+  const why = String(reason || '').trim();
+  if (why.replace(/[^a-z0-9]/gi, '').length < MIN_SKIP_REASON) refuse(`need the reason "${stage}" does not apply to this ticket`);
+  chain.append(runDir, 'skip', { stage, reason: why });
+  console.log(`ledger: stage "${stage}" skipped — ${why}`);
+}
+
+// Read-only, and never an error for an ordinary state: the playbook asks this before every stage.
+function cmdNext(runDir, asJson) {
+  const next = require('./next.js');
+  const missing = next.stageFilesMissing();
+  if (missing.length) {
+    console.error(`ledger next: the playbook's stage files are missing (${missing.join(', ')}); reinstall the plugin.`);
+    process.exit(1);
+  }
+  if (chain.exists(runDir)) requireChain(runDir);
+  const state = next.nextStep(runDir, { isClosed, counters, completeness, readConfig });
+  process.stdout.write(asJson ? JSON.stringify(state, null, 2) + '\n' : next.render(state));
+}
+
 // The frozen contract's criteria: done.approved.md, then what the harness appended to
 // done-additions.md. A wrapped bullet is one criterion, as validate_done reads it, since the
 // `| run:` tag often lands on a continuation line.
@@ -2355,6 +2388,8 @@ function main() {
   const model = takeFlag(argv, '--model')[0];
   const outFile = takeFlag(argv, '--out')[0];
   const sliceFiles = takeFlag(argv, '--files');
+  const asJson = argv.includes('--json');
+  if (asJson) argv.splice(argv.indexOf('--json'), 1);
   const [cmd, runDir, ...rest] = argv;
 
   // Takes no runDir: it is the compatibility probe the hooks run before trusting this script.
@@ -2369,7 +2404,9 @@ function main() {
     console.error(
       'usage: ledger.js init <runDir> [baseSha] [--restart] | dispatch <runDir> [label] | replan <runDir> [reason]\n' +
         '       ledger.js qascope <runDir> | qascope --base <ref> [--worktree <path>]\n' +
+        '       ledger.js next <runDir> [--json]  (the stage the run is at and the stage file to read)\n' +
         '       ledger.js gate <runDir> <stage> [--evidence <file>]... | require <runDir> <stage>\n' +
+        '       ledger.js skip <runDir> <survey|design|approach> "<why it does not apply>"\n' +
         '       ledger.js red <runDir> <id> --cwd <worktree>  (before implementing: the test must fail)\n' +
         '       ledger.js check <runDir> <id> <PASS|FAIL|SKIPPED> --by <command|observed|human|asserted> [note]\n' +
         '                 --by command also takes --cwd <dir> [--timeout-ms <n>]: the ledger runs the frozen run: command\n' +
@@ -2400,6 +2437,10 @@ function main() {
       return cmdGate(runDir, rest[0], evidence);
     case 'require':
       return cmdRequire(runDir, rest[0]);
+    case 'skip':
+      return cmdSkip(runDir, rest[0], rest.slice(1).join(' '));
+    case 'next':
+      return cmdNext(runDir, asJson);
     case 'red':
       return cmdRed(runDir, rest[0], { cwd: checkCwd, timeoutMs });
     case 'check':
