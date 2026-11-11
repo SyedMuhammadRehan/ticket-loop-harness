@@ -9,7 +9,7 @@ One command, then it's available in **every** project you open:
 
 ```
 /plugin marketplace add SyedMuhammadRehan/ticket-loop-harness
-/plugin install ticket-loop
+/plugin install ticket-loop@ticket-loop-harness
 ```
 
 The plugin ships the skill, the scripts, and the hooks (registered automatically via
