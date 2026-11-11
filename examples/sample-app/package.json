@@ -1,0 +1,9 @@
+{
+  "name": "todo-sample",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A tiny repo for a first ticket-loop run. No dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

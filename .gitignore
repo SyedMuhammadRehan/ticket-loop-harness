@@ -10,3 +10,6 @@
 *.log
 node_modules/
 .claude/worktrees/
+
+# eval run output
+plugins/ticket-loop/evals/results/
