@@ -9,6 +9,12 @@ way), `observed` (the running system was exercised and seen; `playwright:`/`brow
 from source or a summary; can back only SKIPPED). Mirror each result into `ledger.md`'s
 check-history table.
 
+A pass by command is held against the tip of `ticket/<TICKET>`: it counts only while the tip's
+tracked files are the ones the command ran on. Commit first, then check. After any later commit
+that changes a file (a QA fix, a cleanup), run every command criterion again, not only the ones
+the change touched; `ledger.js verify` marks a pass the tip has moved past `"atHead": false`,
+and the run does not pass while one is.
+
 1. `{verify.analyze}` → zero errors (skip when null).
 2. `{verify.test}` → full suite green. Goldens or snapshots excluded from it are SKIPPED
    (local-only convention) and go under "not verified", never inside COMPLETE.
