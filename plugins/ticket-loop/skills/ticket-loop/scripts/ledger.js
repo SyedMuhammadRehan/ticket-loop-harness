@@ -1256,6 +1256,35 @@ function treeOf(cwd) {
   return hash.digest('hex');
 }
 
+// The git tree a commit of the worktree's tracked files would have. A pass on uncommitted work
+// and the commit made from it share this id, as do a squash and an empty commit; a commit sha
+// would differ for each. Built in a copy of the index, so the worktree's own index is not staged.
+function contentOf(cwd) {
+  const git = (args, env) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 60000, env });
+  const indexPath = git(['rev-parse', '--git-path', 'index']);
+  if (indexPath.status !== 0) return null;
+  const scratch = path.join(os.tmpdir(), `tl-index-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
+  try {
+    const index = path.resolve(cwd, indexPath.stdout.trim());
+    if (fs.existsSync(index)) fs.copyFileSync(index, scratch);
+    const env = { ...process.env, GIT_INDEX_FILE: scratch };
+    if (git(['add', '-u'], env).status !== 0) return null;
+    const tree = git(['write-tree'], env);
+    return tree.status === 0 ? tree.stdout.trim() : null;
+  } catch {
+    return null;
+  } finally {
+    for (const f of [scratch, `${scratch}.lock`]) fs.rmSync(f, { force: true });
+  }
+}
+
+// The tree at the tip of the run's branch: what a push or a merge of it would ship.
+function shippedTree(runDir) {
+  const branch = `ticket/${path.basename(path.resolve(runDir))}`;
+  const out = gitLines(repoRootOf(runDir), ['rev-parse', '--verify', '--quiet', `${branch}^{tree}`]);
+  return out && out[0] ? { branch, tree: out[0].trim() } : null;
+}
+
 // Tests first, as a receipt: the criterion's frozen command, run by the ledger before the
 // implementation, sealed only when it fails. A test that already passes proves nothing about the
 // change it was written for.
@@ -1353,7 +1382,8 @@ function cmdCheck(runDir, id, result, method, note, opts = {}) {
     );
     process.exit(1);
   }
-  const ran = by === 'command' ? { ...commandResult(runDir, criterion, normalized, opts), tree: treeOf(opts.cwd) } : null;
+  const ran =
+    by === 'command' ? { ...commandResult(runDir, criterion, normalized, opts), tree: treeOf(opts.cwd), content: contentOf(opts.cwd) } : null;
   chain.append(runDir, 'check', { id: criterion.id, result: normalized, by, kind, note: note || null, ...(ran || {}) });
   const history = chain.ofKind(runDir, 'check').filter((r) => r.payload.id === criterion.id).map((r) => r.payload.result);
   console.log(
@@ -2229,18 +2259,27 @@ function completeness(runDir) {
   const verdict = (chain.last(runDir, 'verdict') || { payload: {} }).payload.verdict || null;
   const checks = chain.ofKind(runDir, 'check');
   const reds = chain.ofKind(runDir, 'red');
+  const head = shippedTree(runDir);
   const criteria = frozenCriteria(runDir).map((c) => {
     const last = checks.filter((r) => r.payload.id === c.id).pop();
     const testFirst = testFirstOf(c, last, reds);
-    return { id: c.id, result: last ? last.payload.result : 'unchecked', by: last ? last.payload.by : null, ...(testFirst ? { testFirst } : {}) };
+    // Only a pass by command saw files; one recorded before content was sealed has nothing to compare.
+    const bound = head && last && last.payload.result === 'PASS' && last.payload.by === 'command' && last.payload.content;
+    return {
+      id: c.id,
+      result: last ? last.payload.result : 'unchecked',
+      by: last ? last.payload.by : null,
+      ...(testFirst ? { testFirst } : {}),
+      ...(bound ? { atHead: last.payload.content === head.tree } : {}),
+    };
   });
   const requireTestFirst = readConfig(runDir).requireTestFirst === true;
   const passed =
     PASSING_VERDICTS.includes(verdict) &&
     criteria.length > 0 &&
-    criteria.every((c) => c.result === 'PASS' && c.by !== 'asserted') &&
+    criteria.every((c) => c.result === 'PASS' && c.by !== 'asserted' && c.atHead !== false) &&
     (!requireTestFirst || criteria.every((c) => c.testFirst !== 'missing'));
-  return { verdict, frozenCriteria: criteria.length, criteria, requireTestFirst, passed };
+  return { verdict, frozenCriteria: criteria.length, criteria, requireTestFirst, head, passed };
 }
 
 function cmdVerify(runDir) {

@@ -375,6 +375,12 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   presence of `report.md`, releases the dispatch budget and the control-plane freeze. Deleting
   `closed.json` reopens nothing: the ledger still refuses, `close` rewrites the marker from the
   chain, and `verify` reports the removal.
+- **A pass belongs to the commit that ships** — a check by command seals the git tree of the
+  worktree's tracked files as the command saw them. `ledger.js verify` compares it with the tip
+  of `ticket/<TICKET>` and marks a pass the tip has moved past `"atHead": false`; a run with one
+  does not pass, so `publish.js` and the signed bundle refuse it. A squash or an empty commit
+  keeps the pass, because the files are the same. Passes by a person or by observation, and
+  untracked files, are outside this — see "Yours to uphold".
 - **What each dispatch was handed is recorded** — the filled prompt is visible only to
   `dispatch_guard`, which measures it and seals the size with the dispatch receipt, so
   `ledger.js cost` reports total/max/average prompt size and how many exceeded
@@ -699,6 +705,11 @@ breaches, and that is judgement.
   matches the Agent tool's completion notice. The prompt-size floor means an unreported dispatch
   is not free, but it is far below what a dispatch really costs. Read the figure against the
   notice when it matters.
+- **That nothing untracked made a check pass.** The tree a pass is held to covers tracked files
+  only, so a file the command read that was never committed is not in it, and the tip can match
+  without it. A pass `--by human` or `--by observed` is not held to a commit at all: whether it
+  still describes the tip after a later commit is the judge's question, and yours. A run whose
+  branch is not `ticket/<TICKET>` has no tip to compare and is not held either.
 - **The re-plan cap.** `ledger.js replan` refuses past `maxReplans`, but only when the
   orchestrator calls it; no hook sees a re-plan happen.
 - **That the stop gate's give-up is read as a failure.** After three consecutive blocked stops
