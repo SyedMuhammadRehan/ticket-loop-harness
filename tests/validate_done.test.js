@@ -115,6 +115,16 @@ test('runtime criteria may use a non-command runner', () => {
   }
 });
 
+test('a run: line that is a command and then a runner fails', () => {
+  expectInvalid(
+    VALID_DRAFT.replace(
+      '- [ ] C3 (manual): eyeball the empty state',
+      '- [ ] C3 (runtime): no console errors on /profile | run: flutter build web --profile then playwright:profile-error'
+    ),
+    'criterion C3 mixes a shell command with "playwright:"'
+  );
+});
+
 // --- approach.md contract (Stage 5) ---
 
 const VALID_APPROACH = `# Approach — T-1

@@ -27,6 +27,9 @@ const KINDS = ['test', 'analyzer', 'runtime', 'token', 'manual'];
 const MIN_OUT_OF_SCOPE_REASON = 8;
 // Non-shell criterion runners that are checked by a tool rather than a config command.
 const NON_COMMAND_RUNNERS = /^(playwright|browser|manual):/i;
+// A runner named after a command: the line reads as a shell command, so it can pass only
+// --by command, and no shell can execute it.
+const MIXED_RUNNER = /\s(playwright|browser|manual):\S/i;
 
 const runDir = process.argv[2];
 if (!runDir) {
@@ -152,6 +155,15 @@ for (const l of nonManual) {
   const run = runOf(l);
   if (!run) continue;
   if (NON_COMMAND_RUNNERS.test(run)) continue;
+  const mixed = run.match(MIXED_RUNNER);
+  if (mixed) {
+    errors.push(
+      `criterion ${idOf(l) || '?'} mixes a shell command with "${mixed[1]}:" in one run: line ("${run}") — ` +
+        `the ledger runs a whole line as a command or records an observation, never both. ` +
+        `Split it into two criteria, or start the line with the runner`
+    );
+    continue;
+  }
   const expected = expectedFor[kind === 'token' ? 'test' : kind];
   if (!expected) continue; // nothing configured to compare against; load_config already warns
   const id = idOf(l) || '?';
