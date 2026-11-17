@@ -1258,18 +1258,17 @@ function treeOf(cwd) {
 
 // The git tree a commit of the worktree's tracked files would have. A pass on uncommitted work
 // and the commit made from it share this id, as do a squash and an empty commit; a commit sha
-// would differ for each. Built in a copy of the index, so the worktree's own index is not staged.
+// would differ for each. Built in a scratch index, so the worktree's own index is not staged.
+// The scratch index is read from HEAD, never copied: a copy carries the stat cache under a new
+// file time, and git then takes a same-size edit made in that instant for unchanged.
 function contentOf(cwd) {
-  const git = (args, env) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 60000, env });
-  const indexPath = git(['rev-parse', '--git-path', 'index']);
-  if (indexPath.status !== 0) return null;
   const scratch = path.join(os.tmpdir(), `tl-index-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
+  const env = { ...process.env, GIT_INDEX_FILE: scratch };
+  const git = (args) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 120000, env });
   try {
-    const index = path.resolve(cwd, indexPath.stdout.trim());
-    if (fs.existsSync(index)) fs.copyFileSync(index, scratch);
-    const env = { ...process.env, GIT_INDEX_FILE: scratch };
-    if (git(['add', '-u'], env).status !== 0) return null;
-    const tree = git(['write-tree'], env);
+    if (git(['read-tree', 'HEAD']).status !== 0) return null;
+    if (git(['add', '-u']).status !== 0) return null;
+    const tree = git(['write-tree']);
     return tree.status === 0 ? tree.stdout.trim() : null;
   } catch {
     return null;
