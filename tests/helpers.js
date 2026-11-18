@@ -33,6 +33,8 @@ function runScript(scriptPath, args = [], opts = {}) {
   if (!opts.env || !('TICKET_LOOP_POLICY' in opts.env)) env.TICKET_LOOP_POLICY = path.join(os.tmpdir(), 'ticket-loop-no-policy.json');
   // Nor may a notify config on that machine send real messages from the suite.
   if (!opts.env || !('TICKET_LOOP_NOTIFY' in opts.env)) env.TICKET_LOOP_NOTIFY = path.join(os.tmpdir(), 'ticket-loop-no-notify.json');
+  // Nor may the session logs of the person running the suite be read as a fixture's cost.
+  if (!opts.env || !('CLAUDE_CONFIG_DIR' in opts.env)) env.CLAUDE_CONFIG_DIR = path.join(os.tmpdir(), 'ticket-loop-no-claude-config');
   return spawnSync(process.execPath, [scriptPath, ...args], {
     encoding: 'utf8',
     cwd: opts.cwd,

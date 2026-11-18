@@ -75,6 +75,23 @@ test('a pass on uncommitted work counts once the branch tip holds that work', ()
   }
 });
 
+test('a new file staged before the check is part of what the check ran on', () => {
+  const { root, runDir } = frozenRunOnBranch();
+  try {
+    fs.writeFileSync(path.join(root, 'feature.js'), 'module.exports = require("./helper.js"); // ok\n');
+    fs.writeFileSync(path.join(root, 'helper.js'), 'module.exports = "ok";\n');
+    git(root, ['add', 'helper.js']);
+    pass(root, runDir, 'C1');
+    pass(root, runDir, 'C2');
+    approve(root, runDir);
+
+    git(root, ['commit', '-qam', 'the feature and its helper']);
+    assert.strictEqual(atHead(done(root, runDir), 'C1'), true, 'committing exactly what was checked, new file included, keeps the pass');
+  } finally {
+    rmDir(root);
+  }
+});
+
 test('a commit after the pass leaves the pass behind until the check runs again', () => {
   const { root, runDir } = frozenRunOnBranch();
   try {
