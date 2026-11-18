@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const chain = require('./chain.js');
 
 const MAX_BODY_CHARS = 60000;
 
@@ -97,7 +98,8 @@ function handoff(argv, cwd = process.cwd()) {
   if (!fs.existsSync(path.join(absRun, 'closed.json'))) return { error: `${runDir} is not closed; hand off a finished run` };
   const ticket = path.basename(absRun);
   const branch = `ticket/${ticket}`;
-  let base = flag(argv, '--base');
+  const stackedOn = stackOf(absRun);
+  let base = flag(argv, '--base') || stackedOn;
   if (!base) {
     try {
       base = JSON.parse(read(path.join(cwd, '.agents', 'ticket-loop.config.json'))).hooks.stopGate.baseRef;
@@ -116,7 +118,17 @@ function handoff(argv, cwd = process.cwd()) {
   const remote = remoteOf(git(wt, ['remote', 'get-url', 'origin']));
   const title = titleOf(ticket, read(path.join(absRun, 'ticket-brief.md')));
   fs.writeFileSync(out, body(ticket, read(path.join(absRun, 'report.md')), bundle, bundleRel));
-  return { ticket, branch, base, title, platform: remote.platform, bodyFile: out, attested: !!bundle, commands: commands(remote, branch, base, title, out) };
+  return { ticket, branch, base, stackedOn, title, platform: remote.platform, bodyFile: out, attested: !!bundle, commands: commands(remote, branch, base, title, out) };
+}
+
+// A stacked run's pull request goes into the branch it was built on, so the diff is this ticket's alone.
+function stackOf(runDir) {
+  try {
+    const init = chain.first(runDir, 'init');
+    return (init && init.payload.stackedOn && init.payload.stackedOn.ref) || null;
+  } catch {
+    return null;
+  }
 }
 
 function main() {
@@ -126,6 +138,7 @@ function main() {
     process.exit(1);
   }
   console.log(`handoff: ${result.ticket} -> ${result.platform} pull request into ${result.base}`);
+  if (result.stackedOn) console.log(`  stacked on ${result.stackedOn}: merge that first, then retarget this one`);
   console.log(`  title: ${result.title}`);
   console.log(`  description written to ${result.bodyFile}${result.attested ? '' : ' (no signed bundle: the merge check will refuse this branch)'}`);
   console.log('  nothing was pushed; when you are ready, run:');

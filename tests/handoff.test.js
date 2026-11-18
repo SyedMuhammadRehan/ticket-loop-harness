@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { SCRIPTS_DIR, mkTmpDir, rmDir, runScript } = require('./helpers.js');
+const { SCRIPTS_DIR, mkTmpDir, rmDir, runScript, ledger } = require('./helpers.js');
 const { remoteOf, titleOf } = require(path.join(SCRIPTS_DIR, 'handoff.js'));
 
 const HANDOFF = path.join(SCRIPTS_DIR, 'handoff.js');
@@ -79,6 +79,18 @@ test('the commands match the platform the remote is on', (t) => {
     assert.match(res.stdout, expect, res.stdout);
     assert.match(res.stdout, /git push -u origin ticket\/T-1/);
   }
+});
+
+test('a run stacked on another branch opens its pull request into that branch', (t) => {
+  const s = setup(t, { remote: 'git@github.com:acme/shop.git' });
+  t.after(() => fs.rmSync(s.body, { force: true }));
+  git(s.root, 'branch', 'ticket/BELOW', 'main');
+  const init = ledger(s.root, ['init', s.runDir, git(s.root, 'rev-parse', 'main'), '--stack-on', 'ticket/BELOW']);
+  assert.strictEqual(init.status, 0, init.stderr);
+  const res = handoff(s);
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.match(res.stdout, /gh pr create --base ticket\/BELOW --head ticket\/T-1/, 'the diff shown is this ticket only, not the one below it');
+  assert.match(res.stdout, /stacked on ticket\/BELOW: merge that first/);
 });
 
 test('an open run is not handed off, and a branch without a bundle is warned about', (t) => {

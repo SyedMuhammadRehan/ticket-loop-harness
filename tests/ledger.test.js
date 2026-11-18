@@ -1282,6 +1282,43 @@ test('a phone approval backs one act, and only while it is fresh', () => {
 
 // --- a run starts from the profile's base branch ---
 
+test('a run stacked on another branch starts only from that branch tip, and records it', () => {
+  const { root, runDir } = mkRun({ verify: { test: 'x' }, hooks: { stopGate: { extensions: ['.js'], baseRef: 'main' } } });
+  try {
+    fs.rmSync(path.join(root, '.git'), { recursive: true, force: true });
+    const g = (...args) => {
+      const r = require('node:child_process').spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+      assert.strictEqual(r.status, 0, r.stderr);
+      return r.stdout.trim();
+    };
+    g('init', '-q', '-b', 'main');
+    g('config', 'user.email', 't@t');
+    g('config', 'user.name', 't');
+    fs.writeFileSync(path.join(root, 'a.txt'), '1\n');
+    g('add', 'a.txt');
+    g('commit', '-qm', 'base');
+    const mainTip = g('rev-parse', 'HEAD');
+    g('checkout', '-q', '-b', 'ticket/CON-1375');
+    fs.writeFileSync(path.join(root, 'a.txt'), '2\n');
+    g('commit', '-qam', 'the ticket below');
+    const belowTip = g('rev-parse', 'HEAD');
+
+    const notItsTip = ledger(root, ['init', runDir, mainTip, '--stack-on', 'ticket/CON-1375']);
+    assert.strictEqual(notItsTip.status, 1, 'a base that is not the named branch tip is not stacked on it');
+    assert.match(notItsTip.stderr, /not the tip of ticket\/CON-1375/);
+    const noSuchBranch = ledger(root, ['init', runDir, belowTip, '--stack-on', 'ticket/CON-9999']);
+    assert.strictEqual(noSuchBranch.status, 1);
+    assert.match(noSuchBranch.stderr, /ticket\/CON-9999 is not a branch/);
+    assert.ok(!chain.exists(runDir), 'nothing is initialised on a refused stack');
+
+    const stacked = ledger(root, ['init', runDir, belowTip, '--stack-on', 'ticket/CON-1375']);
+    assert.strictEqual(stacked.status, 0, stacked.stderr);
+    assert.deepStrictEqual(chain.first(runDir, 'init').payload.stackedOn, { ref: 'ticket/CON-1375', sha: belowTip });
+  } finally {
+    rmDir(root);
+  }
+});
+
 test('init refuses a base that is not the tip of the base branch unless a reason is given', () => {
   const { root, runDir } = mkRun({ verify: { test: 'x' }, hooks: { stopGate: { extensions: ['.js'], baseRef: 'main' } } });
   try {

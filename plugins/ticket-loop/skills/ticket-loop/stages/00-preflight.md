@@ -28,13 +28,17 @@ the worktree if it is missing, and skip step 5. `next` then says which stage to 
    `node <SKILL_DIR>/scripts/ledger.js archive <runDir>`, `git branch -D ticket/<TICKET>`,
    then `init --restart` in step 5). Never auto-delete; if `worktree remove` refuses, show
    the dirty files and let the human decide. Then `git worktree add <wt> -b ticket/<TICKET> <baseRef>`
-   from the profile's `hooks.stopGate.baseRef`, never the branch you are on; its tip is the base SHA;
+   from the profile's `hooks.stopGate.baseRef`, never the branch you are on; its tip is the base SHA.
+   When the person started the run with `--on <branch>` (this ticket builds on another that has
+   not merged), the worktree comes from `<branch>` instead and step 5 passes `--stack-on <branch>`.
+   Only the person names that branch; never pick one because the code you need is on it — ask;
    `node <SKILL_DIR>/scripts/worktree_deps.js <wt>` prints `linked`, `present` or `install`,
    and only `install` means run `{verify.pubGet}`; then `{verify.codegen}` (skip null values).
    Any failure here → STOP. Never fall back to the user's tree.
 5. `node <SKILL_DIR>/scripts/ledger.js init <runDir> <base-sha>` (add `--restart` after an
    archive; under `--dry-run` the base is `git rev-parse HEAD`; it refuses a base off the base branch
-   unless the person gives `--off-base "<why>"`). If `publish.allowed` is not empty, ask the person
+   unless the person gives `--off-base "<why>"`; with `--on <branch>` add `--stack-on <branch>`, and
+   it refuses a base that is not that branch's tip). If `publish.allowed` is not empty, ask the person
    each allowed act SEPARATELY (push the branch? open the PR/MR? update the ticket?) and record the answers:
    `ledger.js consent <runDir> --push yes|no --pr yes|no --ticket yes|no "<who answered>"`. It seals the profile hash,
    writes `budget.json` and the `ledger.md` skeleton; if it warns there is no config to seal, STOP.

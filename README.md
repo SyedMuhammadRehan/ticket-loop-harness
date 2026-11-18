@@ -207,6 +207,7 @@ Then, in a new session inside the repo:
 /ticket-loop:setup                 # writes the profile, tries every gate, says what is left
 /ticket-loop <TICKET-ID> --dry-run # reads + plans, no code; leaves the run open
 /ticket-loop <TICKET-ID>           # full run
+/ticket-loop <TICKET-ID> --on ticket/<OTHER>  # build on another ticket's unmerged branch
 ```
 
 `/ticket-loop:setup` shows the profile it would write from your manifests and asks before
@@ -660,7 +661,10 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
 - **A run starts from the right place, and checks run in it** — the worktree is created from the
   profile's base branch, and `ledger.js init` refuses a base commit that is not that branch's tip
   unless the person gives `--off-base "<why>"`, so a session sitting on another branch cannot carry
-  its commits into the ticket branch. Every check runs through `run_in.js <wt> <command>`, so tools
+  its commits into the ticket branch. A ticket that builds on another one not yet merged is
+  started with `--on <branch>`: the base must then be that branch's tip, the chain records both,
+  and `handoff.js` opens the pull request into that branch so its diff is this ticket alone.
+  Which branch to stack on is the person's word; the harness checks only that the base is its tip. Every check runs through `run_in.js <wt> <command>`, so tools
   that resolve their config from the working directory see the worktree on every stack; one
   quoted command string reaches the shell as written, so `a && b` profiles run both halves there.
 - **A targeted test run fits the command line** — the stop gate runs mapped test files in batches
