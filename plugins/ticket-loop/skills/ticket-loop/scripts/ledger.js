@@ -6,7 +6,7 @@
 // nothing, and `verify` reports the disagreement. The caps themselves are recorded in the
 // chain's init receipt, so raising them by editing a file no longer works.
 //
-//   ledger.js init <runDir> [baseSha] [--restart] [--off-base "<why>"]  create the chain (refuses to reset)
+//   ledger.js init <runDir> [baseSha] [--restart] [--off-base "<why>" | --stack-on <branch>]  create the chain (refuses to reset)
 //   ledger.js dispatch <runDir> [label]            +1 dispatch; exit 2 at the cap
 //   ledger.js replan <runDir> [reason]             +1 re-plan;  exit 2 at the cap
 //   ledger.js gate <runDir> <stage> [--evidence f] record that a stage completed
@@ -405,8 +405,25 @@ function policyDisplaced() {
   return `this machine has an org policy at ${machine}, but ${policy.ENV_POLICY} names ${named}. Unset it; the machine's policy governs.`;
 }
 
+// A ticket built on another one that has not merged yet. The base is checked against the named
+// branch, so the record says what the work sits on rather than only why it moved.
+function stackProblem(runDir, baseSha, ref) {
+  const root = repoRootOf(runDir);
+  const tip = gitLines(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${ref}^{commit}`]);
+  if (!tip || !tip[0]) return `--stack-on ${ref}: ${ref} is not a branch of the repo at ${root}`;
+  const given = gitLines(root, ['rev-parse', '--verify', '--quiet', `${baseSha}^{commit}`]);
+  if (given && given[0] && given[0].trim() === tip[0].trim()) return null;
+  return (
+    `base ${String(baseSha || 'none').slice(0, 12)} is not the tip of ${ref} (${tip[0].trim().slice(0, 12)}).\n` +
+    `  Create the worktree from it: git worktree add <wt> -b ticket/<TICKET> ${ref}`
+  );
+}
+
 function cmdInit(runDir, baseSha, opts) {
-  const refusal = runDirProblem(runDir) || baseProblem(runDir, baseSha, opts.offBase) || policyDisplaced();
+  const refusal =
+    runDirProblem(runDir) ||
+    (opts.stackOn ? stackProblem(runDir, baseSha, opts.stackOn) : baseProblem(runDir, baseSha, opts.offBase)) ||
+    policyDisplaced();
   if (refusal) {
     console.error(`ledger init: ${refusal}`);
     process.exit(1);
@@ -484,6 +501,7 @@ function cmdInit(runDir, baseSha, opts) {
   chain.append(runDir, 'init', {
     baseSha: baseSha || null,
     ...(opts.offBase ? { offBase: opts.offBase } : {}),
+    ...(opts.stackOn ? { stackedOn: { ref: opts.stackOn, sha: gitLines(repoRootOf(runDir), ['rev-parse', `${baseSha}^{commit}`])[0].trim() } } : {}),
     maxDispatches: MAX_DISPATCHES,
     maxReplans: MAX_REPLANS,
     evidence: configSealed,
@@ -2394,6 +2412,7 @@ function main() {
   const restart = argv.includes('--restart');
   if (restart) argv.splice(argv.indexOf('--restart'), 1);
   const offBase = takeFlag(argv, '--off-base')[0];
+  const stackOn = takeFlag(argv, '--stack-on')[0];
   const source = takeFlag(argv, '--source')[0];
   const promptChars = takeFlag(argv, '--prompt-chars')[0];
   const checkMethod = takeFlag(argv, '--by')[0];
@@ -2466,7 +2485,7 @@ function main() {
 
   switch (cmd) {
     case 'init':
-      return cmdInit(runDir, rest[0], { restart, offBase });
+      return cmdInit(runDir, rest[0], { restart, offBase, stackOn });
     case 'dispatch':
       return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session, model });
     case 'replan':
