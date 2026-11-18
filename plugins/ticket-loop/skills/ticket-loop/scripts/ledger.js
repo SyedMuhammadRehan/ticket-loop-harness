@@ -1275,18 +1275,21 @@ function treeOf(cwd) {
   return hash.digest('hex');
 }
 
-// The git tree a commit of the worktree's tracked files would have. A pass on uncommitted work
-// and the commit made from it share this id, as do a squash and an empty commit; a commit sha
-// would differ for each. Built in a scratch index, so the worktree's own index is not staged.
-// The scratch index is read from HEAD, never copied: a copy carries the stat cache under a new
-// file time, and git then takes a same-size edit made in that instant for unchanged.
+// The git tree a commit of the worktree's tracked files would have, staged new files included. A
+// pass on uncommitted work and the commit made from it share this id, as do a squash and an empty
+// commit; a commit sha would differ for each. Built in a scratch index, so the worktree's own
+// index is not staged. The scratch index takes only the real index's file list and hashes each
+// file afresh: a copied index carries its stat cache under a new file time, and git then takes a
+// same-size edit made in that instant for unchanged.
 function contentOf(cwd) {
   const scratch = path.join(os.tmpdir(), `tl-index-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   const env = { ...process.env, GIT_INDEX_FILE: scratch };
-  const git = (args) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 120000, env });
+  const git = (args, opts = {}) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 120000, env, ...opts });
   try {
+    const tracked = git(['ls-files', '-z'], { env: process.env });
+    if (tracked.status !== 0) return null;
     if (git(['read-tree', 'HEAD']).status !== 0) return null;
-    if (git(['add', '-u']).status !== 0) return null;
+    if (tracked.stdout && git(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: tracked.stdout }).status !== 0) return null;
     const tree = git(['write-tree']);
     return tree.status === 0 ? tree.stdout.trim() : null;
   } catch {
