@@ -495,8 +495,13 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   dispatch it belongs to. `ledger.js cost` sums them by role and says how many dispatches went
   unmeasured. A figure that fails to parse, or is zero, is refused. Every dispatch is charged at
   least its prompt (characters / 4, measured by the hook), reported or not, so leaving out
-  `--tokens` does not make a dispatch free. The orchestrator's own turns are not observable from
-  inside the run.
+  `--tokens` does not make a dispatch free. What the whole run cost, the orchestrator's own turns
+  included, comes from Claude Code's session logs: `ledger.js cost` reads every model call that the
+  sessions sealed in the chain made inside the run's window, counts each once, and reports the
+  main session and its agents apart, with the context each call carried. A session whose log is
+  not on this machine is named as missing, never counted as free. On CON-1375 the typed figures
+  said 111,630 tokens; the logs said 86 million, almost all of it 500,000 tokens of earlier
+  history re-sent on every call.
 - **A re-review reads the delta** — every `qascope` seals the tree and file set it scoped, so
   after a verdict the next `qascope` can tell whether the fix stayed inside what that judge
   read. When it did, and changed no risk path since that judge read it, the scope is `DELTA`:

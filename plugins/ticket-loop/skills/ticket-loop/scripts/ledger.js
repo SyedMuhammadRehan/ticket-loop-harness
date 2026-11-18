@@ -44,6 +44,7 @@ const attest = require('./attest.js');
 const policy = require('./policy.js');
 const { withoutBom } = require('./load_config.js');
 const { digestOf, FORMAT: ATTESTATION_FORMAT } = require('./verify_bundle.js');
+const { usageOf } = require('./transcript_cost.js');
 
 // Bumped when the contract between the hooks and this script changes (chain-backed counters,
 // --source de-duplication, the closed.json end-of-run marker). dispatch_guard refuses to trust
@@ -2062,13 +2063,19 @@ function cmdCost(runDir, worktree) {
 
   const dispatches = dispatchCount(runDir).count;
   const tokens = tokenStats(runDir);
+  const closeRec = chain.first(runDir, 'close');
+  const sessionLogs = recs.length
+    ? usageOf(sessionStats(runDir).sessions, { from: recs[0].at, to: closeRec ? closeRec.at : null })
+    : null;
   process.stdout.write(
     JSON.stringify(
       {
         note:
-          'tokens are the subagent totals the Agent tool reported, sealed on dispatch outcomes; tokensFloor is what the ' +
-          'prompts alone cost (characters / 4), and the ceiling charges each dispatch the larger of the two. The ' +
-          'orchestrator\'s own turns are not observable, so every figure is a floor. Everything else is a proxy from the chain and git',
+          'sessionLogs is what the run cost: every model call of the sessions sealed in the chain, inside the run window, ' +
+          'read from Claude Code\'s own logs, main session and agents apart; contextAvg is what each call sent in. ' +
+          'A session listed under missing has no log on this machine and is not counted. tokens are the subagent totals ' +
+          'the orchestrator typed on dispatch outcomes, which the dispatch ceiling uses. Everything else is a proxy from the chain and git',
+        sessionLogs,
         dispatches,
         dispatchesDied: diedCount(runDir),
         tokensFloor: tokens.floor,

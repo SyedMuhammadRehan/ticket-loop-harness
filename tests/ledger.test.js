@@ -527,7 +527,8 @@ test('cost derives spend from the sealed chain, and invents no token count', () 
     assert.strictEqual(cost.tokens.total, null);
     assert.strictEqual(cost.tokens.measured, 0);
     assert.strictEqual(cost.tokens.unmeasured, 2);
-    assert.match(cost.note, /not observable/);
+    assert.match(cost.note, /no log on this machine and is not counted/);
+    assert.strictEqual(cost.sessionLogs.main.calls, 0, 'no session is sealed, so no call is charged to the run');
   } finally {
     rmDir(root);
   }

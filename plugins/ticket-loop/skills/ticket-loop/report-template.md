@@ -41,10 +41,13 @@ Restarts: {none | retired chain.N.jsonl at <seal> — say why the run was restar
 ## Cost
 
 Paste the output of `node <SKILL_DIR>/scripts/ledger.js cost <runDir> --worktree {WORKTREE}`.
-Its `tokens` block is the subagent totals the Agent tool reported, sealed on each dispatch
-outcome, grouped by role; it is a floor, because the orchestrator's own turns are not
-observable. Everything else is a proxy from the sealed chain and git. Never add a figure of
-your own.
+Lead with one line from its `sessionLogs`: `Tokens: <main.total> main session (<main.calls> calls,
+<main.contextAvg> context per call) + <agents.total> agents`. That is read from Claude Code's own
+logs for the run's window. A `missing` session is named, not counted. A main-session
+`contextAvg` above 200,000 means the run carried history from earlier work: say so, because
+starting each ticket in a new session removes that cost without touching any check. The
+`tokens` block is the figures typed on dispatch outcomes. Everything else is a proxy from the
+sealed chain and git. Never add a figure of your own.
 
 ```
 {LEDGER_COST_OUTPUT}
