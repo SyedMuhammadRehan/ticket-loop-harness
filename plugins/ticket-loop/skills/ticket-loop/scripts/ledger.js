@@ -6,7 +6,7 @@
 // nothing, and `verify` reports the disagreement. The caps themselves are recorded in the
 // chain's init receipt, so raising them by editing a file no longer works.
 //
-//   ledger.js init <runDir> [baseSha] [--restart] [--off-base "<why>" | --stack-on <branch>]  create the chain (refuses to reset)
+//   ledger.js init <runDir> [baseSha] [--restart] [--off-base "<why>" | --stack-on <branch>] [--keep-context "<why>"]  create the chain (refuses to reset)
 //   ledger.js dispatch <runDir> [label]            +1 dispatch; exit 2 at the cap
 //   ledger.js replan <runDir> [reason]             +1 re-plan;  exit 2 at the cap
 //   ledger.js gate <runDir> <stage> [--evidence f] record that a stage completed
@@ -502,6 +502,7 @@ function cmdInit(runDir, baseSha, opts) {
   chain.append(runDir, 'init', {
     baseSha: baseSha || null,
     ...(opts.offBase ? { offBase: opts.offBase } : {}),
+    ...(opts.keepContext ? { keptContext: opts.keepContext } : {}),
     ...(opts.stackOn ? { stackedOn: { ref: opts.stackOn, sha: gitLines(repoRootOf(runDir), ['rev-parse', `${baseSha}^{commit}`])[0].trim() } } : {}),
     maxDispatches: MAX_DISPATCHES,
     maxReplans: MAX_REPLANS,
@@ -2423,6 +2424,7 @@ function main() {
   if (restart) argv.splice(argv.indexOf('--restart'), 1);
   const offBase = takeFlag(argv, '--off-base')[0];
   const stackOn = takeFlag(argv, '--stack-on')[0];
+  const keepContext = takeFlag(argv, '--keep-context')[0];
   const source = takeFlag(argv, '--source')[0];
   const promptChars = takeFlag(argv, '--prompt-chars')[0];
   const checkMethod = takeFlag(argv, '--by')[0];
@@ -2495,7 +2497,7 @@ function main() {
 
   switch (cmd) {
     case 'init':
-      return cmdInit(runDir, rest[0], { restart, offBase, stackOn });
+      return cmdInit(runDir, rest[0], { restart, offBase, stackOn, keepContext });
     case 'dispatch':
       return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session, model });
     case 'replan':

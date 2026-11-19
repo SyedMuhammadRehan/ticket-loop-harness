@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const policy = require('./guard_policy.js');
 const lib = require('./hook_lib.js');
+const { startVerdict } = require('./start_context.js');
 
 const LEDGER_TIMEOUT_MS = 15000;
 
@@ -134,6 +135,8 @@ function main() {
         arming()
       );
     }
+    const tooFull = startVerdict(toolInput.command, input.transcript_path, runActive ? config : lib.loadConfig(root).config);
+    if (tooFull) deny(tooFull);
   }
 
   process.exit(0);
