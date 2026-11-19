@@ -36,11 +36,23 @@ function logsOf(sessionId, configDir) {
 }
 
 function emptyTally() {
-  return { calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, contextAvg: 0, contextMax: 0, total: 0 };
+  return { calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, contextAvg: 0, contextMax: 0, total: 0, linesWritten: 0 };
+}
+
+const lineCount = (s) => (typeof s === 'string' && s ? s.split('\n').length : 0);
+
+// Lines of code a tool call writes: what reaches the context of whoever wrote it.
+function linesOf(block) {
+  const i = block.input || {};
+  if (block.name === 'Write') return lineCount(i.content);
+  if (block.name === 'Edit') return lineCount(i.new_string);
+  if (block.name === 'MultiEdit') return (i.edits || []).reduce((n, e) => n + lineCount(e && e.new_string), 0);
+  return 0;
 }
 
 function tally(files, from, to) {
   const calls = new Map();
+  const writes = new Map();
   for (const file of files) {
     let text = '';
     try {
@@ -60,9 +72,13 @@ function tally(files, from, to) {
       const at = Date.parse(entry.timestamp);
       if (!usage || !(at >= from && at <= to)) continue;
       calls.set(`${file}|${entry.message.id || entry.uuid}`, usage);
+      for (const block of entry.message.content || []) {
+        if (block && block.type === 'tool_use' && block.id) writes.set(`${file}|${block.id}`, linesOf(block));
+      }
     }
   }
   const t = emptyTally();
+  for (const n of writes.values()) t.linesWritten += n;
   for (const u of calls.values()) {
     const input = u.input_tokens || 0;
     const cacheRead = u.cache_read_input_tokens || 0;

@@ -499,7 +499,8 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   `--tokens` does not make a dispatch free. What the whole run cost, the orchestrator's own turns
   included, comes from Claude Code's session logs: `ledger.js cost` reads every model call that the
   sessions sealed in the chain made inside the run's window, counts each once, and reports the
-  main session and its agents apart, with the context each call carried. A session whose log is
+  main session and its agents apart, with the context each call carried and the lines of code
+  each wrote. A session whose log is
   not on this machine is named as missing, never counted as free. On CON-1375 the typed figures
   said 111,630 tokens; the logs said 86 million, almost all of it 500,000 tokens of earlier
   history re-sent on every call.
