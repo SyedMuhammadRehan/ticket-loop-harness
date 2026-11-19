@@ -65,6 +65,8 @@ const DEFAULTS = {
   // A run untouched for this long, by a session that never wrote to it, is named as abandoned
   // by the hooks it still arms. They keep enforcing; the number only decides when they say so.
   staleRunHours: 24,
+  // Context a session may already carry when a run starts; 0 = no check.
+  maxStartContext: 200000,
 };
 
 const VALID_DESIGN_SOURCES = ['none', 'figma', 'openapi'];
@@ -268,6 +270,10 @@ function resolve(start = process.cwd()) {
   if (!Number.isInteger(cfg.staleRunHours) || cfg.staleRunHours < 0) {
     warnings.push(`invalid staleRunHours "${cfg.staleRunHours}" — must be an integer >= 0; forcing ${DEFAULTS.staleRunHours}`);
     cfg.staleRunHours = DEFAULTS.staleRunHours;
+  }
+  if (!Number.isInteger(cfg.maxStartContext) || cfg.maxStartContext < 0) {
+    warnings.push(`invalid maxStartContext "${cfg.maxStartContext}" — must be an integer >= 0; forcing ${DEFAULTS.maxStartContext}`);
+    cfg.maxStartContext = DEFAULTS.maxStartContext;
   }
   warnings.push(...stopGateWarnings(cfg));
   warnings.push(...verifyTestWarnings(cfg));

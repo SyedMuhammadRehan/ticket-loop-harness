@@ -305,6 +305,7 @@ function describeOpenDispatch(o) {
 const HARNESS_HOOK_FILES = [
   'stop_gate.js', 'freeze_guard.js', 'dispatch_guard.js', 'post_edit.js',
   'read_hint.js', 'subagent_return.js', 'session_start.js', 'notify_hook.js', 'guard_policy.js', 'hook_lib.js', 'hygiene.js',
+  'start_context.js',
 ];
 
 function settingsHookCommands(file) {

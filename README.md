@@ -172,6 +172,7 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `publish.allowed` / `publish.platform` | what a finished run may publish: any of `push` (the ticket branch only), `pr` (open the PR/MR), `ticket` (comment and move to review). Empty by default, so the loop hands off and publishes nothing. Each allowed act is asked separately at the start of every run. `platform` names GitHub or GitLab for a self-hosted remote whose URL does not say which |
 | `approvalMinutes` | how long a phone answer stays usable to back a clearance or raise (default 60); each answer backs one act |
 | `staleRunHours` | how long an open run may sit idle before the hooks call it ABANDONED when another session meets it (default 24). The gates keep enforcing either way; this only decides the wording |
+| `maxStartContext` | how much context a session may already carry when a run starts (default 200000 tokens; 0 turns the check off). Over it, the write guard refuses `ledger.js init` and says to start a new session, because every call in the run would re-send that earlier work. `--keep-context "<why>"` starts it anyway and records why |
 | `attribution.commitTrailer` | repo policy on AI attribution: a trailer string appended to every worktree commit (for teams that require disclosure), or `null` (default) for clean commits with none. The implementer is also barred from AI-style narration comments — new code must be indistinguishable from the code around it |
 
 Copy one profile out of `config.example.json` to `.agents/ticket-loop.config.json` and edit.

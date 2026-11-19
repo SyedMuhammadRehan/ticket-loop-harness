@@ -35,7 +35,10 @@ the worktree if it is missing, and skip step 5. `next` then says which stage to 
    `node <SKILL_DIR>/scripts/worktree_deps.js <wt>` prints `linked`, `present` or `install`,
    and only `install` means run `{verify.pubGet}`; then `{verify.codegen}` (skip null values).
    Any failure here → STOP. Never fall back to the user's tree.
-5. `node <SKILL_DIR>/scripts/ledger.js init <runDir> <base-sha>` (add `--restart` after an
+5. If the write guard refuses `init` because the session already carries too much context, STOP:
+   tell the person to start a new session (or `/clear`) and run the ticket again there. Add
+   `--keep-context "<their reason>"` only when the person says to keep this session.
+   `node <SKILL_DIR>/scripts/ledger.js init <runDir> <base-sha>` (add `--restart` after an
    archive; under `--dry-run` the base is `git rev-parse HEAD`; it refuses a base off the base branch
    unless the person gives `--off-base "<why>"`; with `--on <branch>` add `--stack-on <branch>`, and
    it refuses a base that is not that branch's tip). If `publish.allowed` is not empty, ask the person
