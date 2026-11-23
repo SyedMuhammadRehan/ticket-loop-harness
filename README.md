@@ -397,7 +397,10 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
 - **Dispatch budget, enforced at the dispatch** — `dispatch_guard.js` is a `PreToolUse` hook on
   the subagent tool. It counts every subagent call and refuses the tool at the cap. Not calling
   `ledger.js` buys no extra tries, and the count and the record are taken under one lock, so
-  parallel dispatches cannot overshoot it. (The re-plan cap is not hook-enforced: see "Yours to
+  parallel dispatches cannot overshoot it. An agent started by another Claude session in the
+  same repo is recorded as `foreign-dispatch` and not counted, but only when that session's own
+  log is readable and shows it never ran a ledger command for the run; with no log to read,
+  every dispatch counts, so hiding the log buys nothing. (The re-plan cap is not hook-enforced: see "Yours to
   uphold".)
 - **The work stays yours to publish** — while a run is active the guard refuses `git push`,
   `git merge`, `git rebase`, `gh pr create|merge`, and history rewrites by other names:
