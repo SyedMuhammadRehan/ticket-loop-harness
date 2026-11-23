@@ -13,7 +13,7 @@
 
 Status: {COMPLETE | INCOMPLETE — <why>}   ← the WORK: did every criterion pass
 Branch: {BRANCH} (worktree {WORKTREE}) — merge/push are manual
-Duration: {WALL_CLOCK} | Dispatches: {N}/{MAX} ({N} died, {N} over prompt budget — see Cost) | Re-plans: {N}/{MAX}
+Duration: {WALL_CLOCK} | Dispatches: {N}/{MAX} ({N} died, {N} over prompt budget — see Cost; {foreignDispatches} from other sessions, not counted) | Re-plans: {N}/{MAX}
 Toolchain: {TOOLCHAIN_LINE from stage 0}
 Profile: stack={STACK}, ticketSource={TICKET_SOURCE}, designSource={DESIGN_SOURCE}
 Verify commands: analyze=`{VERIFY_ANALYZE}` test=`{VERIFY_TEST}`
@@ -46,7 +46,11 @@ Lead with one line from its `sessionLogs`: `Tokens: <main.total> main session (<
 logs for the run's window. A `missing` session is named, not counted. A main-session
 `contextAvg` above 200,000 means the run carried history from earlier work: say so, because
 starting each ticket in a new session removes that cost without touching any check. The
-`tokens` block is the figures typed on dispatch outcomes. Everything else is a proxy from the
+`tokens` block is the figures typed on dispatch outcomes. Add a second line: `Code written:
+<main.linesWritten> lines by the main session, <agents.linesWritten> by agents`. Every line the
+main session writes is re-sent on each of its later calls; when it wrote a feature-sized slice
+itself (more than `dispatchPolicy.minSliceLines`), say which slices and why they were not
+dispatched. Everything else is a proxy from the
 sealed chain and git. Never add a figure of your own.
 
 ```

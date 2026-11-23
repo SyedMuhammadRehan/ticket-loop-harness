@@ -126,6 +126,50 @@ function spoofedJudge(toolInput) {
   return carriesJudgePrompt(toolInput) && !JUDGE_AGENT.test(agentTypeOf(toolInput));
 }
 
+// Whether a session's own log shows a ledger call for this run: true, false, or null when the log
+// cannot be read. A session of the run always calls the ledger for it (`next` first, `dispatch`
+// before every agent); another Claude session in the same repo never does. Only a command the
+// session ran counts: the hooks' own notes, stored in every session's log, name these commands too.
+const MAX_LOG_BYTES = 64 * 1024 * 1024;
+function sessionTouchedRun(transcriptPath, runDir) {
+  if (typeof transcriptPath !== 'string' || !transcriptPath) return null;
+  let text;
+  try {
+    const fd = fs.openSync(transcriptPath, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const length = Math.min(size, MAX_LOG_BYTES);
+      const buf = Buffer.alloc(length);
+      fs.readSync(fd, buf, 0, length, size - length);
+      text = buf.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+  const ticket = path.basename(path.resolve(runDir)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const call = new RegExp(`ledger\\.js[^\\n]*?ticket-runs[\\\\/]+${ticket}(?![A-Za-z0-9_.-])`, 'i');
+  return text.split('\n').some((line) => {
+    if (!line.includes('ledger.js') || !line.includes('"tool_use"')) return false;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return false;
+    }
+    if (entry.type !== 'assistant' || !entry.message || !Array.isArray(entry.message.content)) return false;
+    return entry.message.content.some((b) => b && b.type === 'tool_use' && b.input && typeof b.input.command === 'string' && call.test(b.input.command));
+  });
+}
+
+// Not this run's agent: a session the run has never recorded, whose readable log never called the
+// ledger for it. Anything less certain counts, so hiding or losing the log buys no dispatches.
+function isForeignSession(status, sessionId, transcriptPath, runDir) {
+  if (!status || !sessionId || (status.sessions || []).includes(sessionId)) return false;
+  return sessionTouchedRun(transcriptPath, runDir) === false;
+}
+
 // A refusal this dispatch must not pass, or null.
 function budgetRefusal(status, toolInput, runDir) {
   if (isJudge(toolInput) && status.blockVerdicts >= MAX_QA_BLOCKS) {
@@ -223,6 +267,19 @@ async function main() {
   }
   const { config } = lib.loadConfig(root);
   const { status } = lib.runStatus(ledger, runDir, root, LEDGER_TIMEOUT_MS);
+  if (isForeignSession(status, input.session_id, input.transcript_path, runDir)) {
+    spawnSync(
+      process.execPath,
+      [ledger, 'dispatch', runDir, labelFor(toolInput), '--source', 'hook', '--foreign', '--session', String(input.session_id), '--prompt-chars', String(promptCharsOf(toolInput))],
+      { encoding: 'utf8', cwd: root, timeout: LEDGER_TIMEOUT_MS }
+    );
+    const name = path.basename(runDir);
+    const note =
+      `ticket-loop: this agent is not counted against run ${name}: this session has made no ledger call for it. ` +
+      `If this session is working on ${name}, run "ledger.js next ${runDir}" first, then dispatch.`;
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: note } }) + '\n');
+    process.exit(0);
+  }
   const refusal = status ? budgetRefusal(status, toolInput, runDir) : null;
   if (refusal) {
     console.error(`BLOCKED: ${refusal.text}\n  This dispatch was not counted.`);
@@ -281,4 +338,4 @@ if (require.main === module) {
     process.exit(2);
   });
 }
-module.exports = { activeRuns, findLedger, labelFor, spoofedJudge, isJudge, ledgerProtocol, unresolvedContext, dispatchContext, unfilledPlaceholders, budgetRefusal, MAX_QA_BLOCKS, REQUIRED_LEDGER_PROTOCOL };
+module.exports = { activeRuns, findLedger, labelFor, sessionTouchedRun, spoofedJudge, isJudge, ledgerProtocol, unresolvedContext, dispatchContext, unfilledPlaceholders, budgetRefusal, MAX_QA_BLOCKS, REQUIRED_LEDGER_PROTOCOL };

@@ -81,6 +81,35 @@ test('ledger cost reports the run sessions from their logs, inside the run windo
   }
 });
 
+test('lines of code written are counted for the main session and its agents apart, each edit once', () => {
+  const dir = logs();
+  try {
+    const project = path.join(dir, 'projects', 'C--some-repo');
+    const edit = (id, at, toolId, block) =>
+      JSON.stringify({ type: 'assistant', timestamp: at, message: { id, content: [{ type: 'tool_use', id: toolId, ...block }], usage: usage(1000, 1) } });
+    fs.appendFileSync(
+      path.join(project, `${SESSION}.jsonl`),
+      '\n' +
+        [
+          edit('msg_w', '2026-11-17T10:40:00.000Z', 'tu_1', { name: 'Write', input: { file_path: 'a.js', content: 'l1\nl2\nl3' } }),
+          edit('msg_w', '2026-11-17T10:40:00.000Z', 'tu_1', { name: 'Write', input: { file_path: 'a.js', content: 'l1\nl2\nl3' } }),
+          edit('msg_e', '2026-11-17T10:41:00.000Z', 'tu_2', { name: 'Edit', input: { file_path: 'a.js', old_string: 'x', new_string: 'y1\ny2' } }),
+          edit('msg_m', '2026-11-17T10:42:00.000Z', 'tu_3', { name: 'MultiEdit', input: { file_path: 'b.js', edits: [{ new_string: 'z' }, { new_string: 'z1\nz2' }] } }),
+          edit('msg_late', '2026-11-17T11:30:00.000Z', 'tu_4', { name: 'Write', input: { file_path: 'c.js', content: 'outside the window' } }),
+        ].join('\n')
+    );
+    fs.appendFileSync(
+      path.join(project, SESSION, 'subagents', 'agent-x.jsonl'),
+      '\n' + edit('msg_ag', '2026-11-17T10:15:00.000Z', 'tu_5', { name: 'Write', input: { file_path: 'd.js', content: 'a\nb\nc\nd' } })
+    );
+    const u = usageOf([SESSION], WINDOW, dir);
+    assert.strictEqual(u.main.linesWritten, 3 + 2 + 1 + 2, 'one Write logged twice is one Write, and a later one is not this run');
+    assert.strictEqual(u.agents.linesWritten, 4);
+  } finally {
+    rmDir(dir);
+  }
+});
+
 test('a session with no log is named, not counted as free', () => {
   const dir = logs();
   try {

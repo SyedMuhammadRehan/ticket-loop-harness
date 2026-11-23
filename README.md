@@ -397,7 +397,10 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
 - **Dispatch budget, enforced at the dispatch** — `dispatch_guard.js` is a `PreToolUse` hook on
   the subagent tool. It counts every subagent call and refuses the tool at the cap. Not calling
   `ledger.js` buys no extra tries, and the count and the record are taken under one lock, so
-  parallel dispatches cannot overshoot it. (The re-plan cap is not hook-enforced: see "Yours to
+  parallel dispatches cannot overshoot it. An agent started by another Claude session in the
+  same repo is recorded as `foreign-dispatch` and not counted, but only when that session's own
+  log is readable and shows it never ran a ledger command for the run; with no log to read,
+  every dispatch counts, so hiding the log buys nothing. (The re-plan cap is not hook-enforced: see "Yours to
   uphold".)
 - **The work stays yours to publish** — while a run is active the guard refuses `git push`,
   `git merge`, `git rebase`, `gh pr create|merge`, and history rewrites by other names:
@@ -499,7 +502,8 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   `--tokens` does not make a dispatch free. What the whole run cost, the orchestrator's own turns
   included, comes from Claude Code's session logs: `ledger.js cost` reads every model call that the
   sessions sealed in the chain made inside the run's window, counts each once, and reports the
-  main session and its agents apart, with the context each call carried. A session whose log is
+  main session and its agents apart, with the context each call carried and the lines of code
+  each wrote. A session whose log is
   not on this machine is named as missing, never counted as free. On CON-1375 the typed figures
   said 111,630 tokens; the logs said 86 million, almost all of it 500,000 tokens of earlier
   history re-sent on every call.

@@ -223,7 +223,9 @@ function diedCount(runDir) {
 // current session started is still enforced, but the hooks can say whose it is.
 function sessionStats(runDir) {
   const records = chain.records(runDir);
-  const sessions = [...new Set(records.map((r) => r.payload && r.payload.session).filter(Boolean))];
+  // A foreign dispatch names a session that is not this run's; counting it here would make that
+  // session the run's own at its next dispatch and charge its log to the run's cost.
+  const sessions = [...new Set(records.filter((r) => r.kind !== 'foreign-dispatch').map((r) => r.payload && r.payload.session).filter(Boolean))];
   const lastRecordAt = records.length ? records[records.length - 1].at : null;
   const idleMinutes = lastRecordAt ? Math.max(0, Math.round((Date.now() - Date.parse(lastRecordAt)) / 60000)) : null;
   return { sessions, lastRecordAt, idleMinutes };
@@ -247,6 +249,7 @@ function counters(runDir) {
   return {
     dispatches: d.count,
     dispatchesDied: diedCount(runDir),
+    foreignDispatches: chain.ofKind(runDir, 'foreign-dispatch').length,
     open,
     stalled: open.filter((o) => o.stalled).length,
     ...sessionStats(runDir),
@@ -552,6 +555,20 @@ function cmdDispatch(runDir, label, opts) {
   requireOpen(runDir, 'dispatch');
   const { maxDispatches } = caps(runDir);
   const promptChars = Number(opts && opts.promptChars);
+  // Another session's agent, seen by the hook in this repo: on the record, outside the budget.
+  if (opts && opts.foreign) {
+    if (opts.source !== 'hook') {
+      console.error('ledger dispatch: --foreign is recorded only by the dispatch hook');
+      process.exit(1);
+    }
+    chain.append(runDir, 'foreign-dispatch', {
+      label: label || null,
+      session: opts.session || null,
+      promptChars: Number.isFinite(promptChars) && promptChars >= 0 ? promptChars : null,
+    });
+    console.log(`ledger: another session's dispatch recorded, not counted against ${path.basename(path.resolve(runDir))}`);
+    return;
+  }
   const payload = {
     label: label || null,
     source: opts && opts.source ? opts.source : 'script',
@@ -2425,6 +2442,8 @@ function main() {
   const offBase = takeFlag(argv, '--off-base')[0];
   const stackOn = takeFlag(argv, '--stack-on')[0];
   const keepContext = takeFlag(argv, '--keep-context')[0];
+  const foreign = argv.includes('--foreign');
+  if (foreign) argv.splice(argv.indexOf('--foreign'), 1);
   const source = takeFlag(argv, '--source')[0];
   const promptChars = takeFlag(argv, '--prompt-chars')[0];
   const checkMethod = takeFlag(argv, '--by')[0];
@@ -2499,7 +2518,7 @@ function main() {
     case 'init':
       return cmdInit(runDir, rest[0], { restart, offBase, stackOn, keepContext });
     case 'dispatch':
-      return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session, model });
+      return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session, model, foreign });
     case 'replan':
       return cmdReplan(runDir, rest.join(' '));
     case 'gate':
