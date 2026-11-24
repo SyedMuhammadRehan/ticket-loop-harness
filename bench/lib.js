@@ -19,8 +19,22 @@ const PROFILE = {
   memoryFile: null,
   deps: { dir: 'node_modules', lockfile: null },
   attribution: { commitTrailer: null },
-  hooks: { stopGate: { extensions: ['.js'], mode: 'full', worktrees: 'all', baseRef: 'main', timeoutMs: 300000 } },
+  hooks: { stopGate: { extensions: ['.js'], mode: 'full', worktrees: 'run', baseRef: 'main', timeoutMs: 300000 } },
 };
+
+// Each copy names its own worktrees, so two copies of a ticket never claim the same folder.
+const worktreePrefixFor = (dest) => `../${path.basename(path.resolve(dest))}-ticket-`;
+
+// Where a copy's run of `name` builds, from the profile the copy carries.
+function worktreeOf(repo, name) {
+  let prefix = '../depot-ticket-';
+  try {
+    prefix = JSON.parse(fs.readFileSync(path.join(repo, '.agents', 'ticket-loop.config.json'), 'utf8')).worktreePrefix || prefix;
+  } catch {
+    // An older copy without a readable profile used the shared prefix.
+  }
+  return path.resolve(repo, `${prefix}${name}`);
+}
 const GITIGNORE = '.agents/ticket-runs/\n.claude/hooks/state/\nnode_modules/\n';
 
 const ticketIds = () => fs.readdirSync(TICKETS).filter((f) => /^T\d+\.md$/.test(f)).map((f) => f.replace('.md', '')).sort();
@@ -41,7 +55,8 @@ function makeRepo(dest) {
   fs.cpSync(APP, dest, { recursive: true });
   fs.cpSync(TICKETS, path.join(dest, 'tickets'), { recursive: true });
   fs.mkdirSync(path.join(dest, '.agents'), { recursive: true });
-  fs.writeFileSync(path.join(dest, '.agents', 'ticket-loop.config.json'), JSON.stringify(PROFILE, null, 2) + '\n');
+  const profile = { ...PROFILE, worktreePrefix: worktreePrefixFor(dest) };
+  fs.writeFileSync(path.join(dest, '.agents', 'ticket-loop.config.json'), JSON.stringify(profile, null, 2) + '\n');
   fs.writeFileSync(path.join(dest, '.gitignore'), GITIGNORE);
   git(dest, ['init', '-q', '-b', 'main']);
   git(dest, ['add', '-A']);
@@ -80,4 +95,4 @@ const runOracle = (ticket, checkout) => run(['--test', path.join(ORACLE, `${tick
 const runSuite = (checkout) => run(['--test'], checkout);
 const runLint = (checkout) => run([path.join('scripts', 'lint.js')], checkout);
 
-module.exports = { BENCH, makeRepo, applySolution, runOracle, runSuite, runLint, ticketIds, oracleIds, expected, git };
+module.exports = { BENCH, makeRepo, worktreeOf, worktreePrefixFor, applySolution, runOracle, runSuite, runLint, ticketIds, oracleIds, expected, git };

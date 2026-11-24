@@ -151,6 +151,23 @@ test('a ticket that should stop is scored on having changed nothing', () => {
   }
 });
 
+// Two copies of the same ticket once both claimed ../depot-ticket-T08; the second run stopped at
+// preflight on the first one's worktree.
+test('each copy names its own worktrees, checks only the running ticket, and is scored from its own', () => {
+  const base = mkTmpDir('tl-bench');
+  try {
+    const one = bench.makeRepo(path.join(base, 'depot-a'));
+    const two = bench.makeRepo(path.join(base, 'depot-b'));
+    const profileOf = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.agents', 'ticket-loop.config.json'), 'utf8'));
+    assert.notStrictEqual(profileOf(one).worktreePrefix, profileOf(two).worktreePrefix);
+    assert.strictEqual(profileOf(one).hooks.stopGate.worktrees, 'run');
+    assert.strictEqual(bench.worktreeOf(one, 'T08'), path.join(base, 'depot-a-ticket-T08'));
+    assert.strictEqual(bench.worktreeOf(two, 'T08'), path.join(base, 'depot-b-ticket-T08'));
+  } finally {
+    rmDir(base);
+  }
+});
+
 test('the generator refuses to write over a folder', () => {
   const { base, dir } = repo();
   try {

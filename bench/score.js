@@ -83,7 +83,7 @@ function score(ticket, repo, opts = {}) {
   const key = bench.expected()[ticket];
   if (!key) throw new Error(`${ticket} is not a bench ticket (${bench.ticketIds().join(', ')})`);
   const runName = opts.run || ticket;
-  const worktree = path.resolve(repo, `../depot-ticket-${runName}`);
+  const worktree = bench.worktreeOf(repo, runName);
   const checkout = path.resolve(opts.checkout || (fs.existsSync(worktree) ? worktree : repo));
   const checks = [];
   const add = (name, ok, detail) => checks.push({ name, ok, detail: detail || '' });
