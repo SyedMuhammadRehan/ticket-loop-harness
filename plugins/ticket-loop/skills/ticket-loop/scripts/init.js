@@ -169,7 +169,7 @@ function buildProfile(root) {
   const s = stacks[0];
   const base = defaultBranch(root);
   const ticket = ticketSource(root);
-  const stopGate = { extensions: s.extensions, mode: 'full', worktrees: 'all', baseRef: base, timeoutMs: 300000 };
+  const stopGate = { extensions: s.extensions, mode: 'full', worktrees: 'run', baseRef: base, timeoutMs: 300000 };
   if (s.exclude) stopGate.exclude = s.exclude;
   const hooks = { stopGate };
   if (s.postEdit) hooks.postEdit = { extensions: s.extensions, ...(s.exclude ? { exclude: s.exclude } : {}), ...Object.fromEntries(Object.entries(s.postEdit).filter(([, v]) => v)) };

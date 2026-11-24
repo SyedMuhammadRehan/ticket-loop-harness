@@ -6,7 +6,7 @@
 // nothing, and `verify` reports the disagreement. The caps themselves are recorded in the
 // chain's init receipt, so raising them by editing a file no longer works.
 //
-//   ledger.js init <runDir> [baseSha] [--restart] [--off-base "<why>" | --stack-on <branch>] [--keep-context "<why>"]  create the chain (refuses to reset)
+//   ledger.js init <runDir> [baseSha] [--restart] [--off-base "<why>" | --stack-on <branch>] [--keep-context "<why>"] [--follow-up-of <TICKET>]  create the chain (refuses to reset)
 //   ledger.js dispatch <runDir> [label]            +1 dispatch; exit 2 at the cap
 //   ledger.js replan <runDir> [reason]             +1 re-plan;  exit 2 at the cap
 //   ledger.js gate <runDir> <stage> [--evidence f] record that a stage completed
@@ -423,7 +423,33 @@ function stackProblem(runDir, baseSha, ref) {
   );
 }
 
+// A follow-up stands on a first run that finished with a record that can be trusted, and on that
+// run's branch, so its own checks re-prove the whole branch rather than a part of it.
+function followUpProblem(runDir, parentId, opts) {
+  const parent = path.join(path.dirname(path.resolve(runDir)), parentId);
+  if (path.basename(path.resolve(runDir)) === parentId) return `a follow-up of ${parentId} needs a run dir of its own, such as ${parentId}-f1`;
+  if (!chain.exists(parent)) return `--follow-up-of ${parentId}: there is no run ${parentId} beside ${runDir}`;
+  if (!chain.first(parent, 'close')) return `--follow-up-of ${parentId}: ${parentId} is not closed. Finish it first; a follow-up is for a change asked after the run ended`;
+  if (!integrityReport(parent).intact) return `--follow-up-of ${parentId}: the record of ${parentId} is not intact (ledger.js verify ${parent}), so there is nothing sound to build on`;
+  if (opts.stackOn !== `ticket/${parentId}`) return `a follow-up of ${parentId} starts from that run's branch: pass --stack-on ticket/${parentId}`;
+  return null;
+}
+
+// The first run's checks a command decides; a person's look and an observed check are not re-run.
+function carriedCriteria(parentDir) {
+  return frozenCriteria(parentDir)
+    .filter((c) => c.kind !== 'manual' && c.run && !NON_COMMAND_RUNNERS.test(c.run))
+    .map((c) => ({ id: c.id, run: c.run }));
+}
+
 function cmdInit(runDir, baseSha, opts) {
+  if (opts.followUpOf) {
+    const problem = followUpProblem(runDir, opts.followUpOf, opts);
+    if (problem) {
+      console.error(`ledger init: ${problem}`);
+      process.exit(1);
+    }
+  }
   const refusal =
     runDirProblem(runDir) ||
     (opts.stackOn ? stackProblem(runDir, baseSha, opts.stackOn) : baseProblem(runDir, baseSha, opts.offBase)) ||
@@ -506,6 +532,12 @@ function cmdInit(runDir, baseSha, opts) {
     baseSha: baseSha || null,
     ...(opts.offBase ? { offBase: opts.offBase } : {}),
     ...(opts.keepContext ? { keptContext: opts.keepContext } : {}),
+    ...(opts.followUpOf
+      ? (() => {
+          const parent = path.join(path.dirname(path.resolve(runDir)), opts.followUpOf);
+          return { followUpOf: { ticket: opts.followUpOf, closeSeal: chain.first(parent, 'close').hmac, carried: carriedCriteria(parent) } };
+        })()
+      : {}),
     ...(opts.stackOn ? { stackedOn: { ref: opts.stackOn, sha: gitLines(repoRootOf(runDir), ['rev-parse', `${baseSha}^{commit}`])[0].trim() } } : {}),
     maxDispatches: MAX_DISPATCHES,
     maxReplans: MAX_REPLANS,
@@ -2442,6 +2474,7 @@ function main() {
   const offBase = takeFlag(argv, '--off-base')[0];
   const stackOn = takeFlag(argv, '--stack-on')[0];
   const keepContext = takeFlag(argv, '--keep-context')[0];
+  const followUpOf = takeFlag(argv, '--follow-up-of')[0];
   const foreign = argv.includes('--foreign');
   if (foreign) argv.splice(argv.indexOf('--foreign'), 1);
   const source = takeFlag(argv, '--source')[0];
@@ -2516,7 +2549,7 @@ function main() {
 
   switch (cmd) {
     case 'init':
-      return cmdInit(runDir, rest[0], { restart, offBase, stackOn, keepContext });
+      return cmdInit(runDir, rest[0], { restart, offBase, stackOn, keepContext, followUpOf });
     case 'dispatch':
       return cmdDispatch(runDir, rest.join(' '), { source, promptChars, session, model, foreign });
     case 'replan':

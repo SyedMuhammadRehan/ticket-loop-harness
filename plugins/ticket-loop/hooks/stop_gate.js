@@ -13,7 +13,7 @@
 //       "extensions": [".ts", ".tsx"],
 //       "exclude": "\\.(gen|generated|d)\\.ts$",
 //       "mode": "targeted",                          // "targeted" | "full"
-//       "worktrees": "all",                          // "all" | "ticket" | "cwd"
+//       "worktrees": "run",                          // "run" | "all" | "ticket" | "cwd"
 //       "baseRef": "main",                           // branch point for committed changes
 //       "branchPrefixes": ["refs/heads/ticket/"],    // only used by worktrees:"ticket"
 //       "requireMatchingTest": false,                // targeted: block if a source file has no test
@@ -109,13 +109,21 @@ function parseWorktrees(porcelain) {
 }
 
 // Default "all" so a detached-HEAD worktree, or one on feature/* rather than ticket/*, is
-// still covered. Clean trees cost nothing to include.
-function treesToCheck(root, conf) {
+// still covered. "run" is only the worktrees of the runs in flight: a repo keeps one worktree per
+// ticket, and each is far ahead of the base, so "all" tests every other ticket's code at each stop.
+function treesToCheck(root, conf, runNames = []) {
   const mode = conf.worktrees || 'all';
   const trees = [path.resolve(root)];
   if (mode === 'cwd') return trees;
 
   const res = git(root, ['worktree', 'list', '--porcelain']);
+  if (mode === 'run') {
+    if (res.status !== 0) return [];
+    const branches = new Set(runNames.map((n) => `refs/heads/ticket/${n}`));
+    return parseWorktrees(res.stdout || '')
+      .filter((wt) => wt.branch && branches.has(wt.branch) && fs.existsSync(wt.path))
+      .map((wt) => path.resolve(wt.path));
+  }
   if (res.status !== 0) return trees;
 
   const prefixes = conf.branchPrefixes || DEFAULT_BRANCH_PREFIXES;
@@ -611,7 +619,7 @@ async function main() {
     const dispatches = runActive ? openDispatchFailures(root, runs, sessionId, config.staleRunHours) : { failures: [], notes: [] };
     for (const note of dispatches.notes) console.error(note);
     failures.push(...dispatches.failures);
-    for (const tree of treesToCheck(root, conf)) {
+    for (const tree of treesToCheck(root, conf, activeRuns.map((r) => path.basename(r.dir)))) {
       const result = verifyTree(tree, conf, verifyTest, runActive, deadline);
       if (result.note) console.error(result.note);
       if (!result.ok) failures.push({ message: `stop_gate: tests FAILED in ${tree}:\n${result.tail}` });

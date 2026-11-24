@@ -166,7 +166,7 @@ per-repo profile at `.agents/ticket-loop.config.json`:
 | `memoryFile` | cross-run lessons file the loop reads at the start and appends to at the end (`null` disables) |
 | `models` | model per dispatch role (`survey` / `implementer` / `fixer` / `qa`), each defaulting to `inherit` = the session model. Opt-in cost tiering: downgrade `survey` first (read-only, caught downstream), `implementer` second (verification + QA backstop it), `qa` last or never — it is the backstop. `dispatch_guard` records the model each dispatch was handed and `verify` reports a role that ran on a tier the profile did not name |
 | `qaScope.smallDiffLines` | a committed diff at or under this many changed lines (default 60) touching no `riskPaths` gets a *focused* QA read (changed files + their consumers + the contract) instead of a codebase sweep; `0` = always sweep. Scope never shrinks verdict authority, and risk-path touches always get the full read |
-| `hooks.postEdit` / `hooks.stopGate` | what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile. `stopGate` also takes `baseRef` (the branch point committed slices are diffed against), `worktrees` (`all`/`ticket`/`cwd`), `requireMatchingTest` (block source changes no test covers), and `maxCommandChars` (targeted test files run in batches under this command length; the default keeps Windows under cmd.exe's limit) |
+| `hooks.postEdit` / `hooks.stopGate` | what the plugin's hooks format/analyze on each edit, and which tests must be green before a "done" claim — per stack, from the same profile. `stopGate` also takes `baseRef` (the branch point committed slices are diffed against), `worktrees` (`run`, the default from setup: only the worktrees of the runs in flight; `all`: every worktree of the repo, which with a worktree per ticket tests every other ticket at each stop; `ticket`; `cwd`), `requireMatchingTest` (block source changes no test covers), and `maxCommandChars` (targeted test files run in batches under this command length; the default keeps Windows under cmd.exe's limit) |
 | `dispatchPolicy` | `minSliceLines` (default 50) and `promptBudgetChars` (default 32000) are advisory and reported by `ledger.js cost`. `stallMinutes` (default 30) is how long a dispatch may stay out without returning before `status`, `verify` and the next dispatch call it STALLED |
 | `dispatchPolicy.maxRunTokens` | optional token ceiling per run (default none). At 80 percent the next dispatch is warned; at 100 percent `dispatch_guard` refuses it and messages the person; `ledger.js raise <runDir> --tokens <n> "<reason>"`, given on a person's word, lifts it. The org policy can cap it |
 | `publish.allowed` / `publish.platform` | what a finished run may publish: any of `push` (the ticket branch only), `pr` (open the PR/MR), `ticket` (comment and move to review). Empty by default, so the loop hands off and publishes nothing. Each allowed act is asked separately at the start of every run. `platform` names GitHub or GitLab for a self-hosted remote whose URL does not say which |
@@ -209,6 +209,7 @@ Then, in a new session inside the repo:
 /ticket-loop <TICKET-ID> --dry-run # reads + plans, no code; leaves the run open
 /ticket-loop <TICKET-ID>           # full run
 /ticket-loop <TICKET-ID> --on ticket/<OTHER>  # build on another ticket's unmerged branch
+/ticket-loop <TICKET-ID> --follow-up "<change>"  # a change asked after the run closed
 ```
 
 `/ticket-loop:setup` shows the profile it would write from your manifests and asks before
@@ -674,6 +675,10 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   its commits into the ticket branch. A ticket that builds on another one not yet merged is
   started with `--on <branch>`: the base must then be that branch's tip, the chain records both,
   and `handoff.js` opens the pull request into that branch so its diff is this ticket alone.
+  A change asked after a run closed is a follow-up run stacked the same way (`--follow-up`):
+  `init --follow-up-of` refuses unless the first run is closed with an intact record, and
+  `validate_done.js` refuses a follow-up done-list that drops any of the first run's command
+  checks, so the follow-up's tip proves the whole branch while the first record stays closed.
   Which branch to stack on is the person's word; the harness checks only that the base is its tip. Every check runs through `run_in.js <wt> <command>`, so tools
   that resolve their config from the working directory see the worktree on every stack; one
   quoted command string reaches the shell as written, so `a && b` profiles run both halves there.

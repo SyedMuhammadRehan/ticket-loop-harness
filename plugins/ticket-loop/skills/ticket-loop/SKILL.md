@@ -1,6 +1,6 @@
 ---
 name: ticket-loop
-description: Use when the user types /ticket-loop <TICKET-ID or task text>, optionally with --dry-run, --update-jira or --on <branch> (build on another ticket's unmerged branch), or asks to take a Jira, GitHub, GitLab or Trello ticket (or a pasted task) all the way to a reviewed branch with hook-enforced gates, adversarial QA and an evidence report. The target repo must carry .agents/ticket-loop.config.json.
+description: Use when the user types /ticket-loop <TICKET-ID or task text>, optionally with --dry-run, --update-jira, --on <branch> (build on another ticket's unmerged branch) or --follow-up "<request>" (a change asked after the ticket's run closed), or asks to take a Jira, GitHub, GitLab or Trello ticket (or a pasted task) all the way to a reviewed branch with hook-enforced gates, adversarial QA and an evidence report. The target repo must carry .agents/ticket-loop.config.json.
 ---
 
 # Ticket Loop

@@ -266,6 +266,31 @@ test('worktrees: "cwd" narrows the scope back for repos that want it', () => {
   }
 });
 
+// A repo collects a worktree per ticket. Testing every one at each stop of a run spent minutes on
+// other tickets' code, and could reach the running ticket last or not at all.
+test('worktrees: "run" verifies the running ticket\'s worktree and no other', () => {
+  const env = setupRepo({ stopGate: { extensions: ['.py'], mode: 'full', baseRef: 'main', worktrees: 'run' } });
+  const old = path.join(env.base, 'ticket-OLD');
+  markRunActive(env.main);
+  try {
+    git(env.main, 'worktree', 'add', '-q', old, '-b', 'ticket/OLD');
+    for (const tree of [old, env.main]) {
+      fs.writeFileSync(path.join(tree, 'src', 'app.py'), 'x = 3\n');
+      fs.writeFileSync(path.join(tree, 'FAIL'), '');
+    }
+    assert.strictEqual(gate(env.main).status, 0, 'another ticket and the main checkout are not this run');
+
+    fs.writeFileSync(path.join(env.wt, 'src', 'app.py'), 'x = 2\n');
+    fs.writeFileSync(path.join(env.wt, 'FAIL'), '');
+    const res = gate(env.main);
+    assert.strictEqual(res.status, 2, `the running ticket is verified as before:\n${res.stderr}`);
+    assert.ok(res.stderr.includes('ticket-T-1'), res.stderr);
+  } finally {
+    spawnSync('git', ['worktree', 'remove', '--force', old], { cwd: env.main, encoding: 'utf8' });
+    teardown(env);
+  }
+});
+
 // Two independent defenses cover a tiny timeoutMs: the floor, and timeout-treated-as-RED.
 // A red suite blocks under either, so it cannot tell them apart — only a GREEN suite isolates
 // the floor: without it, 50ms kills the test command and an honest pass is reported as RED.
