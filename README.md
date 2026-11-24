@@ -209,6 +209,7 @@ Then, in a new session inside the repo:
 /ticket-loop <TICKET-ID> --dry-run # reads + plans, no code; leaves the run open
 /ticket-loop <TICKET-ID>           # full run
 /ticket-loop <TICKET-ID> --on ticket/<OTHER>  # build on another ticket's unmerged branch
+/ticket-loop <TICKET-ID> --follow-up "<change>"  # a change asked after the run closed
 ```
 
 `/ticket-loop:setup` shows the profile it would write from your manifests and asks before
@@ -674,6 +675,10 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   its commits into the ticket branch. A ticket that builds on another one not yet merged is
   started with `--on <branch>`: the base must then be that branch's tip, the chain records both,
   and `handoff.js` opens the pull request into that branch so its diff is this ticket alone.
+  A change asked after a run closed is a follow-up run stacked the same way (`--follow-up`):
+  `init --follow-up-of` refuses unless the first run is closed with an intact record, and
+  `validate_done.js` refuses a follow-up done-list that drops any of the first run's command
+  checks, so the follow-up's tip proves the whole branch while the first record stays closed.
   Which branch to stack on is the person's word; the harness checks only that the base is its tip. Every check runs through `run_in.js <wt> <command>`, so tools
   that resolve their config from the working directory see the worktree on every stack; one
   quoted command string reaches the shell as written, so `a && b` profiles run both halves there.

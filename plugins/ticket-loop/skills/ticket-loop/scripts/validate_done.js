@@ -226,6 +226,22 @@ for (const dup of duplicateHeadings(['Criteria', 'Tokens', 'Out of scope'], text
   errors.push(`done.draft.md: duplicate "## ${dup}" heading — only the first would be validated`);
 }
 
+// A follow-up re-checks the first run at its own tip: each of that run's command checks must be a
+// criterion here, by the same command, or the follow-up could pass while breaking what was proven.
+const followUp = chain.exists(runDir) ? ((chain.first(runDir, 'init') || { payload: {} }).payload.followUpOf || null) : null;
+if (followUp) {
+  const bare = (cmd) => String(cmd || '').trim().replace(/^`(.+)`$/, '$1');
+  const runs = new Set(criteria.map(runOf).filter(Boolean).map(bare));
+  for (const c of followUp.carried || []) {
+    if (!runs.has(bare(c.run))) {
+      errors.push(
+        `follow-up of ${followUp.ticket} drops its ${c.id} ("${c.run}") — carry each of the first run's command ` +
+          `checks forward as a criterion with the same run:, so the follow-up's tip proves them again`
+      );
+    }
+  }
+}
+
 // --- Approach contract -----------------------------------------------------------------
 // Presence of approach.md cannot be what enables the contract, or declaring a ticket
 // "trivial" waives it for free. A survey artifact is the orchestrator's own judgement that

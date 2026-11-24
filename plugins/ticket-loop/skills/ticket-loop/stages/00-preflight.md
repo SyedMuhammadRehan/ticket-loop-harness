@@ -4,6 +4,16 @@
 worktree is missing, as after a `--dry-run`): do steps 1–3 to load the profile, step 4 to create
 the worktree if it is missing, and skip step 5. `next` then says which stage to continue at.
 
+**A follow-up** (`--follow-up "<request>"`, or the person asks for more changes on a ticket whose
+run is CLOSED: offer this, never a restart). It is a run of its own: `<TICKET>` becomes
+`<TICKET>-f<N>` (the next free N), its worktree comes from the tip of `ticket/<first ticket>`, and
+step 5 adds `--stack-on ticket/<first ticket> --follow-up-of <first ticket>`. The request is the
+ticket. At intake, always ask the person ONE question showing the new criteria you propose and the
+first run's checks carried forward, and wait for yes or a correction. Then `skip survey`,
+`skip design` and `skip approach`, each "follow-up of <first ticket>". Stage 6's done-list carries
+every command check of the first run with its `run:` unchanged, plus the new criteria; the
+validator refuses one that drops any. The judge reviews the follow-up's diff from its base.
+
 1. `node <SKILL_DIR>/scripts/load_config.js`. Record `stack`, the resolved verify commands,
    and the first line of the stack's `--version` output for the report. STOP and ask when:
    - `configFound` is false: show `node <SKILL_DIR>/scripts/init.js --dry-run`, and write it with
