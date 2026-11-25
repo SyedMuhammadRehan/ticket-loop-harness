@@ -118,6 +118,12 @@ belongs in the record.}
 - {FLAKY_VERIFIER flags, with the check history above as evidence}
 - {anything marked SKIPPED and why: LOGIC-ONLY run, Playwright unavailable, app launch failure}
 
+## Papercuts
+
+From `node <SKILL_DIR>/scripts/ledger.js papercuts <runDir>`: one line per entry,
+`<title>: <happened> → <fix>`, and every `malformed` entry named with what it is missing. "None"
+when the count is 0. Never leave one out: they are how the harness gets fixed.
+
 ## Manual actions still required
 
 - Review the branch and merge (the loop never pushes or merges)

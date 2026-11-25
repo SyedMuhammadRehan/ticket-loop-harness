@@ -282,6 +282,17 @@ two tiers:
 This is the difference between an agent that repeats the same mistakes and one that gets better
 with every ticket. Managed by `scripts/memory.js` (zero-dep).
 
+## Papercuts — the harness reports its own friction
+
+When the harness gets in a session's way (a script that fails on its documented usage, a refusal
+that looks wrong, a stage step that does not fit), the session writes it down in the run's
+`papercuts.md`: what it was trying, what it ran, what it expected, what happened, what it did
+instead, and what would fix it. The run report lists them, `ledger.js cost` counts them, and
+`ledger.js papercuts --repo <repoRoot>` gathers every run's papercuts, closed runs included, for
+whoever maintains the harness. A papercut never excuses skipping a gate. Filing one is the
+session's judgement, not something a hook can force: a run with none may have had no friction,
+or may not have said.
+
 ## `/qa-check` — the review without the loop
 
 Most changes do not need a frozen contract and an hour. `/qa-check <what this was meant to do>`
