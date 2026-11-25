@@ -45,6 +45,7 @@ const policy = require('./policy.js');
 const { withoutBom } = require('./load_config.js');
 const { digestOf, FORMAT: ATTESTATION_FORMAT } = require('./verify_bundle.js');
 const { usageOf } = require('./transcript_cost.js');
+const papercuts = require('./papercuts.js');
 
 // Bumped when the contract between the hooks and this script changes (chain-backed counters,
 // --source de-duplication, the closed.json end-of-run marker). dispatch_guard refuses to trust
@@ -2129,6 +2130,7 @@ function cmdCost(runDir, worktree) {
           'A session listed under missing has no log on this machine and is not counted. tokens are the subagent totals ' +
           'the orchestrator typed on dispatch outcomes, which the dispatch ceiling uses. Everything else is a proxy from the chain and git',
         sessionLogs,
+        papercuts: (({ count, malformed }) => ({ count, malformed: malformed.length }))(papercuts.readRun(runDir)),
         dispatches,
         dispatchesDied: diedCount(runDir),
         tokensFloor: tokens.floor,
@@ -2509,6 +2511,7 @@ function main() {
   const model = takeFlag(argv, '--model')[0];
   const outFile = takeFlag(argv, '--out')[0];
   const sliceFiles = takeFlag(argv, '--files');
+  const repoRoot = takeFlag(argv, '--repo')[0];
   const asJson = argv.includes('--json');
   if (asJson) argv.splice(argv.indexOf('--json'), 1);
   const [cmd, runDir, ...rest] = argv;
@@ -2519,6 +2522,16 @@ function main() {
     return;
   }
   if (cmd === 'keygen') return cmdKeygen();
+  // Read-only, and with --repo it spans every run, so it needs no chain and no single runDir.
+  if (cmd === 'papercuts') {
+    if (!repoRoot && !runDir) {
+      console.error('usage: ledger.js papercuts <runDir> | papercuts --repo <repoRoot>');
+      process.exit(1);
+    }
+    const listed = repoRoot ? papercuts.readRepo(path.resolve(repoRoot)) : { runDir, ...papercuts.readRun(runDir) };
+    process.stdout.write(JSON.stringify(listed, null, 2) + '\n');
+    return;
+  }
 
   // `qascope --base <ref>` reviews a diff with no run behind it, so it takes no runDir.
   if (!cmd || (!runDir && !(cmd === 'qascope' && baseRef))) {

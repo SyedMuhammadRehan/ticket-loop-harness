@@ -40,6 +40,12 @@ guard refuses `mkdir` and shell writes there: edit its files with Edit/Write, an
 them. Counters, check results, verdicts and gates live in a sealed chain under
 `<gitdir>/ticket-loop/<TICKET>/`, written only by `ledger.js`; `budget.json` is a read-only
 mirror and `ledger.md` the human narrative.
+**Papercuts.** When the harness itself gets in your way (a script failing on its documented
+usage, a refusal you believe is wrong, a stage step that does not fit), add an entry to
+`<runDir>/papercuts.md` with the Write/Edit tool, when it happens, once per problem:
+`## <what got in the way>`, then `- trying:`, `- ran:`, `- expected:`, `- happened:`, `- instead:`,
+`- fix:`. Then still do what the gate asks: a papercut never excuses skipping a check, a
+clearance or a stage. It is for the harness, not the ticket's own code.
 **Asking the person.** When `_meta.notify.canReply`, ask in the session AND with
 `notify.js ask "<q naming the glob>" --option .. --option .. --run <runDir>` (approval seq →
 `ledger.js clear ... --approval <seq>`); no answer means park that slice and do the rest.
