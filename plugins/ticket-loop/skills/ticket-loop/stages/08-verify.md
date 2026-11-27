@@ -6,8 +6,8 @@ Methods: `command` (add `--cwd <wt>`: the ledger runs the frozen `run:` command 
 root and prints the exit code that decides; a criterion with a shell `run:` passes no other
 way), `observed` (the running system was exercised and seen; `playwright:`/`browser:` criteria),
 `human` (a person confirmed; the only way a `(manual)` criterion passes), `asserted` (concluded
-from source or a summary; can back only SKIPPED). Mirror each result into `ledger.md`'s
-check-history table.
+from source or a summary; can back only SKIPPED). The chain is the check history; do not copy
+results into `ledger.md` by hand.
 
 A pass by command is held against the tip of `ticket/<TICKET>`: it counts only while the tip's
 tracked files are the ones the command ran on. Commit first, then check. After any later commit
@@ -20,7 +20,9 @@ and the run does not pass while one is.
    (local-only convention) and go under "not verified", never inside COMPLETE.
 3. Token criteria (when `designSource != none`): run their named test files.
 4. Runtime criteria (SKIPPED when LOGIC-ONLY or Playwright is down): launch the app per the
-   repo's run conventions; per criterion navigate to the route, require a clean
+   repo's run conventions, in a desktop browser context (set the viewport, and check the user
+   agent is not a mobile one: some apps render a touch layout that ignores clicks); per
+   criterion navigate to the route, require a clean
    `browser_console_messages` (no errors, no "RenderFlex overflowed"), assert key elements via
    `browser_snapshot`, and `browser_take_screenshot` at 1440px and 768px →
    `screenshots/runtime_<check>_<width>.png`. A launch that fails three times marks every

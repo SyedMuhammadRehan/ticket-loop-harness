@@ -194,7 +194,7 @@ function judged(root, runDir, verdict) {
   assert.strictEqual(ledger(root, ['dispatch', runDir, 'ticket-loop:ticket-loop-qa: contract [focused]', '--source', 'hook']).status, 0);
   const res = ledger(root, ['verdict', runDir, verdict, '--inputs', path.join(runDir, 'done.approved.md')]);
   assert.strictEqual(res.status, 0, res.stderr);
-  const seq = JSON.parse(ledger(root, ['status', runDir]).stdout).open[0].seqs[0];
+  const seq = chain.last(path.join(root, runDir), 'verdict').payload.dispatchSeq;
   assert.strictEqual(ledger(root, ['outcome', runDir, String(seq), 'ok', verdict]).status, 0);
 }
 

@@ -42,6 +42,23 @@ was assembled by the orchestrator, so check it against the tree yourself with
 `git -C {WORKTREE_PATH} status --short`; a changed file the diff you were handed leaves out is a
 **[BLOCK] finding**.
 
+## What the ledger already ran — read it, do not repeat it
+
+Run `node {SCRIPTS_DIR}/ledger.js verify {RUN_DIR}` yourself and read `completeness.criteria`.
+These results are not the builder's word: for a criterion with `"by": "command"`, the ledger
+ran the frozen `run:` command itself and sealed its exit code, and `"atHead": true` means it ran
+on exactly the files at the tip of the ticket branch. Those are proven; do not run them again.
+Re-running a sealed suite or analyzer costs minutes and adds nothing you can judge with.
+
+Each of these is a finding, never something to quietly re-check: a criterion with
+`"atHead": false` (the branch moved after it passed), `"by": "asserted"`, a result that is not
+PASS, or `"passed": false` for a reason the report does not explain.
+
+Spend your time on what only you can do: whether these are the right checks, whether a test
+would still pass on a wrong implementation, and whether the change meets every acceptance
+criterion. Run your own commands only for something no sealed check covers, and keep them to
+the changed files and folders.
+
 ## Judge, in order
 
 1. AC coverage: does the diff actually satisfy EACH acceptance criterion? Point to the

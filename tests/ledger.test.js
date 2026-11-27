@@ -1029,20 +1029,22 @@ test('a hook-only dispatch, with no playbook call before it, stays its own unmea
 // look like from outside.
 
 test('a dispatch with no outcome is listed as open, and close refuses until it is resolved', () => {
-  const { root, runDir, qaSeq } = reportedRun();
+  const { root, runDir } = reportedRun();
   try {
+    assert.strictEqual(ledger(root, ['dispatch', runDir, 'implementer: C2', '--source', 'hook']).status, 0);
+    const workerSeq = chain.last(runDir, 'dispatch').seq;
     let status = JSON.parse(ledger(root, ['status', runDir]).stdout);
-    assert.strictEqual(status.open.length, 1);
-    assert.deepStrictEqual(status.open[0].seqs, [qaSeq]);
+    assert.strictEqual(status.open.length, 1, 'the judge sealed its verdict; the implementer is the one still out');
+    assert.deepStrictEqual(status.open[0].seqs, [workerSeq]);
     assert.strictEqual(status.open[0].seenAt, null);
 
     const refused = ledger(root, ['close', runDir]);
     assert.strictEqual(refused.status, 3, refused.stderr);
-    assert.ok(refused.stderr.includes(`seq ${qaSeq}`), refused.stderr);
+    assert.ok(refused.stderr.includes(`seq ${workerSeq}`), refused.stderr);
     assert.ok(refused.stderr.includes('outcome'), 'the refusal says what to record');
     assert.ok(!fs.existsSync(path.join(runDir, 'closed.json')));
 
-    assert.strictEqual(ledger(root, ['outcome', runDir, String(qaSeq), 'ok', 'APPROVE']).status, 0);
+    assert.strictEqual(ledger(root, ['outcome', runDir, String(workerSeq), 'ok', 'done']).status, 0);
     status = JSON.parse(ledger(root, ['status', runDir]).stdout);
     assert.deepStrictEqual(status.open, []);
     assert.strictEqual(ledger(root, ['close', runDir]).status, 0);
