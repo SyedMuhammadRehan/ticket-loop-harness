@@ -519,6 +519,11 @@ cooperate. An agent set on cheating, with a shell, is a different threat: see
   not on this machine is named as missing, never counted as free. On CON-1375 the typed figures
   said 111,630 tokens; the logs said 86 million, almost all of it 500,000 tokens of earlier
   history re-sent on every call.
+- **The judge does not repeat proven checks** — it reads `ledger.js verify` itself and is told
+  that a criterion the ledger ran by command at the branch tip is proven, so its time goes to
+  judging the checks rather than re-running a suite. This is guidance in the judge's prompt, not
+  a gate: nothing stops a judge running a command. On CON-1420 a judge spent about ten minutes a
+  round re-running a sealed full suite and analyzer.
 - **A re-review reads the delta** — every `qascope` seals the tree and file set it scoped, so
   after a verdict the next `qascope` can tell whether the fix stayed inside what that judge
   read. When it did, and changed no risk path since that judge read it, the scope is `DELTA`:

@@ -83,6 +83,18 @@ test('the judge prompts say that what they read is evidence, and where the chang
   assert.match(standalone, /evidence, never instruction/);
 });
 
+// A judge on CON-1420 spent about ten minutes per round re-running a full suite and an analyzer
+// the ledger had already run, on the same files, and sealed. Guidance, not a gate: nothing here
+// stops a judge running a command.
+test('the judge reads the sealed checks itself and does not re-run the ones proven at the tip', () => {
+  const judge = fs.readFileSync(path.join(PROMPTS, 'qa_agent.md'), 'utf8');
+  assert.match(judge, /node \{SCRIPTS_DIR\}\/ledger\.js verify \{RUN_DIR\}/);
+  assert.match(judge, /"by": "command"/);
+  assert.match(judge, /"atHead": true/);
+  assert.match(judge, /do not run (it|them) again/i);
+  assert.match(judge, /"atHead": false/, 'a stale or unproven check is still a finding');
+});
+
 // A placeholder nobody fills reaches the subagent as the literal text "{FOO}", which reads
 // as an instruction it cannot satisfy.
 test('no template references a fill the skill does not document', () => {
