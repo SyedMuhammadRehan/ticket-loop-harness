@@ -86,6 +86,8 @@ const JUDGE_ROLE = /ticket-loop-qa/;
 const PASSING_VERDICTS = ['APPROVE', 'APPROVE_WITH_COMMENTS'];
 // Criteria checked by a tool rather than a shell command; validate_done exempts the same set.
 const NON_COMMAND_RUNNERS = /^(playwright|browser|manual):/i;
+// Criteria whose command is a test that can be seen failing before the change.
+const RED_KINDS = ['test', 'token'];
 
 // The riskPaths globs, matched the way the guard matches them. Kept here rather than imported
 // from the hooks: scripts and hooks install to different places, and a require across that
@@ -557,9 +559,7 @@ function cmdInit(runDir, baseSha, opts) {
         `base: ${baseSha || 'unknown'}\n` +
         `started: ${new Date().toISOString()}\n` +
         `counters: sealed receipt chain (ledger.js status) — budget.json is a mirror, ledger.md is a narrative\n` +
-        `## Check history\n` +
-        `| check | results (oldest→newest) |\n` +
-        `|---|---|\n` +
+        `check history: the sealed check receipts (ledger.js verify)\n` +
         `## Attempts\n`
     );
   }
@@ -1000,7 +1000,9 @@ function stallMinutes(runDir) {
 // judged by how long it has gone without one, from its last mark or, with none, its launch.
 function openDispatches(runDir, now = Date.now()) {
   const atOf = new Map(chain.records(runDir).map((r) => [r.seq, r.at]));
-  const outcomes = new Set(chain.ofKind(runDir, 'outcome').map((r) => r.payload.dispatchSeq));
+  // A judge's sealed verdict is its outcome: it seals before it returns, and may stay in the
+  // session talking to the person long after.
+  const outcomes = new Set([...chain.ofKind(runDir, 'outcome'), ...chain.ofKind(runDir, 'verdict')].map((r) => r.payload.dispatchSeq));
   const lastSeen = new Map();
   for (const r of chain.ofKind(runDir, 'returned')) lastSeen.set(r.payload.dispatchSeq, r.at);
   const stallMs = stallMinutes(runDir) * 60000;
@@ -1369,7 +1371,7 @@ function cmdRed(runDir, id, opts = {}) {
   };
   const criterion = frozenCriterion(runDir, id);
   if (!criterion) refuse(`not a criterion of the frozen contract (${FROZEN_CONTRACT.join(', ')} in ${runDir})`);
-  if (criterion.kind !== 'test') refuse(`it is a (${criterion.kind}) criterion; a red run is for (test) criteria`);
+  if (!RED_KINDS.includes(criterion.kind)) refuse(`it is a (${criterion.kind}) criterion; a red run is for (test) and (token) criteria`);
   if (!criterion.run || NON_COMMAND_RUNNERS.test(criterion.run)) refuse(`the frozen contract gives it no shell command to run`);
   if (!opts.cwd || !fs.existsSync(opts.cwd) || !fs.statSync(opts.cwd).isDirectory()) {
     refuse(`--cwd <dir> must name the worktree the test runs in${opts.cwd ? `; ${opts.cwd} is not one` : ''}`);
@@ -1396,7 +1398,7 @@ function cmdRed(runDir, id, opts = {}) {
 // Proven when a red run for the criterion precedes its latest PASS by command and the worktree
 // changed in between.
 function testFirstOf(criterion, lastCheck, reds) {
-  if (criterion.kind !== 'test') return null;
+  if (!RED_KINDS.includes(criterion.kind)) return null;
   const passed = lastCheck && lastCheck.payload.result === 'PASS' && lastCheck.payload.tree;
   if (!passed) return 'missing';
   const proof = reds.some((r) => r.payload.id === criterion.id && r.seq < lastCheck.seq && r.payload.tree && r.payload.tree !== lastCheck.payload.tree);
@@ -2074,6 +2076,19 @@ function mirrorClearances(runDir) {
   }
 }
 
+// The checkout of the run's branch, found through git rather than the profile's prefix, so a
+// worktree created anywhere is found. Null when the branch is checked out nowhere.
+function runWorktree(runDir) {
+  const branch = `branch refs/heads/ticket/${path.basename(path.resolve(runDir))}`;
+  const lines = gitLines(repoRootOf(runDir), ['worktree', 'list', '--porcelain']) || [];
+  let current = null;
+  for (const line of lines) {
+    if (line.startsWith('worktree ')) current = line.slice('worktree '.length).trim();
+    else if (line.trim() === branch && current) return current;
+  }
+  return null;
+}
+
 function cmdCost(runDir, worktree) {
   // The command whose whole purpose is making claims checkable must not report numbers off an
   // unverified history: on a missing chain the counts would read as a confident zero.
@@ -2097,7 +2112,7 @@ function cmdCost(runDir, worktree) {
 
   let diff = null;
   if (baseSha) {
-    const res = spawnSync('git', ['-C', worktree || '.', 'diff', '--numstat', `${baseSha}..HEAD`], {
+    const res = spawnSync('git', ['-C', worktree || runWorktree(runDir) || '.', 'diff', '--numstat', `${baseSha}..HEAD`], {
       encoding: 'utf8',
       timeout: 30000,
     });
